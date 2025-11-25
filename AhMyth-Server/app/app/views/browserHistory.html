@@ -1,0 +1,341 @@
+<div class="browser-panel">
+    <!-- Header -->
+    <div class="browser-header">
+        <div class="browser-header__info">
+            <h3 class="browser-header__title">
+                <i class="globe icon" style="color: #2196f3;"></i>
+                Browser History
+            </h3>
+            <p class="browser-header__subtitle">View browsing history, bookmarks and searches</p>
+        </div>
+        <div class="browser-header__actions">
+            <button class="btn btn--primary" ng-click="getHistory()">
+                <i class="sync icon"></i>
+                Refresh
+            </button>
+            <button class="btn btn--secondary" ng-click="exportHistory()">
+                <i class="download icon"></i>
+                Export
+            </button>
+        </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="browser-tabs">
+        <button class="browser-tab" ng-class="{'active': activeTab === 'history'}" ng-click="activeTab = 'history'">
+            <i class="history icon"></i> History
+        </button>
+        <button class="browser-tab" ng-class="{'active': activeTab === 'bookmarks'}" ng-click="activeTab = 'bookmarks'">
+            <i class="bookmark icon"></i> Bookmarks
+        </button>
+        <button class="browser-tab" ng-class="{'active': activeTab === 'searches'}" ng-click="activeTab = 'searches'">
+            <i class="search icon"></i> Searches
+        </button>
+    </div>
+
+    <!-- Filter -->
+    <div class="browser-filter">
+        <div class="filter-search">
+            <i class="search icon"></i>
+            <input type="text" ng-model="searchQuery" placeholder="Search...">
+        </div>
+    </div>
+
+    <!-- Content -->
+    <div class="browser-content" infinite-scroll="increaseLimit()">
+        
+        <!-- History List -->
+        <div class="history-list" ng-show="activeTab === 'history'">
+            <div class="history-item" ng-repeat="item in filteredHistory = (history | filter:searchQuery | limitTo:barLimit)">
+                <div class="history-item__icon">
+                    <i class="globe icon"></i>
+                </div>
+                <div class="history-item__content">
+                    <div class="history-item__title">
+                        <a href="{{item.url}}" target="_blank">{{item.title || item.url}}</a>
+                    </div>
+                    <div class="history-item__url">{{item.url}}</div>
+                    <div class="history-item__meta">
+                        <span class="meta-item">
+                            <i class="clock icon"></i>
+                            {{item.date | date:'medium'}}
+                        </span>
+                        <span class="meta-item" ng-if="item.visits">
+                            <i class="eye icon"></i>
+                            {{item.visits}} visits
+                        </span>
+                    </div>
+                </div>
+            </div>
+            <div class="empty-state" ng-if="history.length === 0 && !isLoading">
+                <i class="history icon"></i>
+                <p>No history found</p>
+            </div>
+        </div>
+
+        <!-- Bookmarks List -->
+        <div class="bookmarks-list" ng-show="activeTab === 'bookmarks'">
+            <div class="bookmark-item" ng-repeat="item in filteredBookmarks = (bookmarks | filter:searchQuery | limitTo:barLimit)">
+                <div class="bookmark-item__icon">
+                    <i class="bookmark icon"></i>
+                </div>
+                <div class="bookmark-item__content">
+                    <div class="bookmark-item__title">
+                        <a href="{{item.url}}" target="_blank">{{item.title || item.url}}</a>
+                    </div>
+                    <div class="bookmark-item__url">{{item.url}}</div>
+                    <div class="bookmark-item__meta">
+                        <span class="meta-item">
+                            <i class="clock icon"></i>
+                            Created: {{item.created | date:'mediumDate'}}
+                        </span>
+                    </div>
+                </div>
+            </div>
+            <div class="empty-state" ng-if="bookmarks.length === 0 && !isLoading">
+                <i class="bookmark outline icon"></i>
+                <p>No bookmarks found</p>
+            </div>
+        </div>
+
+        <!-- Searches List -->
+        <div class="searches-list" ng-show="activeTab === 'searches'">
+            <div class="search-item" ng-repeat="item in filteredSearches = (searches | filter:searchQuery | limitTo:barLimit)">
+                <div class="search-item__icon">
+                    <i class="search icon"></i>
+                </div>
+                <div class="search-item__content">
+                    <div class="search-item__query">{{item.query}}</div>
+                    <div class="search-item__meta">
+                        <span class="meta-item">
+                            <i class="clock icon"></i>
+                            {{item.date | date:'medium'}}
+                        </span>
+                    </div>
+                </div>
+            </div>
+            <div class="empty-state" ng-if="searches.length === 0 && !isLoading">
+                <i class="search icon"></i>
+                <p>No search history found</p>
+            </div>
+        </div>
+
+        <!-- Loading -->
+        <div class="browser-loading" ng-if="isLoading">
+            <div class="spinner"></div>
+            <p>Loading data...</p>
+        </div>
+    </div>
+</div>
+
+<style>
+    .browser-panel {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .browser-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+    }
+    
+    .browser-header__title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin: 0;
+    }
+    
+    .browser-header__subtitle {
+        margin: 4px 0 0;
+        font-size: 12px;
+        color: var(--text-muted);
+    }
+    
+    .browser-header__actions {
+        display: flex;
+        gap: 10px;
+    }
+    
+    /* Tabs */
+    .browser-tabs {
+        display: flex;
+        gap: 4px;
+        margin-bottom: 16px;
+        border-bottom: 1px solid var(--border-color);
+        padding-bottom: 1px;
+    }
+    
+    .browser-tab {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 10px 16px;
+        background: transparent;
+        border: none;
+        border-bottom: 2px solid transparent;
+        color: var(--text-secondary);
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    
+    .browser-tab:hover {
+        color: var(--text-primary);
+        background: var(--bg-tertiary);
+    }
+    
+    .browser-tab.active {
+        color: var(--accent-primary);
+        border-bottom-color: var(--accent-primary);
+    }
+    
+    /* Filter */
+    .browser-filter {
+        margin-bottom: 16px;
+    }
+    
+    .filter-search {
+        position: relative;
+    }
+    
+    .filter-search i {
+        position: absolute;
+        left: 12px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: var(--text-muted);
+    }
+    
+    .filter-search input {
+        width: 100%;
+        padding: 10px 14px 10px 36px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        color: var(--text-primary);
+        font-size: 13px;
+    }
+    
+    /* Content */
+    .browser-content {
+        flex: 1;
+        overflow-y: auto;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+        padding: 8px;
+    }
+    
+    .history-item, .bookmark-item, .search-item {
+        display: flex;
+        gap: 12px;
+        padding: 12px;
+        border-radius: var(--radius-md);
+        margin-bottom: 4px;
+        transition: all 0.2s ease;
+    }
+    
+    .history-item:hover, .bookmark-item:hover, .search-item:hover {
+        background: var(--bg-elevated);
+    }
+    
+    .history-item__icon, .bookmark-item__icon, .search-item__icon {
+        width: 36px;
+        height: 36px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg-tertiary);
+        border-radius: var(--radius-sm);
+        color: var(--text-secondary);
+        flex-shrink: 0;
+    }
+    
+    .history-item__content, .bookmark-item__content, .search-item__content {
+        flex: 1;
+        min-width: 0;
+    }
+    
+    .history-item__title a, .bookmark-item__title a {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-primary);
+        text-decoration: none;
+        display: block;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    
+    .history-item__title a:hover, .bookmark-item__title a:hover {
+        color: var(--accent-primary);
+        text-decoration: underline;
+    }
+    
+    .history-item__url, .bookmark-item__url {
+        font-size: 11px;
+        color: var(--text-muted);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        margin-bottom: 4px;
+    }
+    
+    .history-item__meta, .bookmark-item__meta, .search-item__meta {
+        display: flex;
+        gap: 12px;
+    }
+    
+    .meta-item {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 10px;
+        color: var(--text-muted);
+    }
+    
+    .search-item__query {
+        font-size: 13px;
+        color: var(--text-primary);
+        margin-bottom: 4px;
+    }
+    
+    /* Empty & Loading */
+    .empty-state, .browser-loading {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px;
+        text-align: center;
+        color: var(--text-muted);
+    }
+    
+    .empty-state i {
+        font-size: 48px;
+        opacity: 0.3;
+        margin-bottom: 16px;
+    }
+    
+    .browser-loading .spinner {
+        width: 40px;
+        height: 40px;
+        border: 3px solid var(--bg-tertiary);
+        border-top-color: var(--accent-primary);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        margin-bottom: 16px;
+    }
+    
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+</style>
