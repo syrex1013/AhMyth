@@ -1,0 +1,400 @@
+<div class="notifications-panel">
+    <!-- Header -->
+    <div class="notifications-header">
+        <div class="notifications-header__info">
+            <h3 class="notifications-header__title">
+                <i class="bell icon" style="color: #9c27b0;"></i>
+                Notification Reader
+            </h3>
+            <div class="notifications-stats" ng-if="notificationCount">
+                <span class="stat-badge">
+                    <i class="bell icon"></i> {{notificationCount}} captured
+                </span>
+            </div>
+        </div>
+        <div class="notifications-header__actions">
+            <button class="btn btn--primary" ng-click="getNotifications()">
+                <i class="sync icon"></i>
+                Refresh
+            </button>
+            <button class="btn btn--secondary" ng-click="getActiveNotifications()">
+                <i class="bell outline icon"></i>
+                Active Only
+            </button>
+            <button class="btn btn--secondary" ng-click="clearNotifications()">
+                <i class="trash icon"></i>
+                Clear
+            </button>
+            <button class="btn btn--secondary" ng-click="exportNotifications()">
+                <i class="download icon"></i>
+                Export
+            </button>
+        </div>
+    </div>
+
+    <!-- Status -->
+    <div class="notifications-status" ng-class="{'notifications-status--enabled': notificationEnabled}">
+        <div class="status-indicator">
+            <span class="status-dot" ng-class="{'status-dot--active': notificationEnabled}"></span>
+            <span>{{notificationEnabled ? 'Notification Listener Active' : 'Notification Access Required'}}</span>
+        </div>
+    </div>
+
+    <!-- Filter -->
+    <div class="notifications-filter">
+        <div class="filter-search">
+            <i class="search icon"></i>
+            <input type="text" ng-model="searchNotif" placeholder="Search notifications...">
+        </div>
+        <div class="filter-app">
+            <select ng-model="filterApp">
+                <option value="">All Apps</option>
+                <option ng-repeat="app in uniqueApps" value="{{app}}">{{app}}</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- Notifications List -->
+    <div class="notifications-list" infinite-scroll="increaseLimit()">
+        <div class="notification-item" ng-repeat="notif in filteredNotifications = (notifications | filter:searchNotif | filter:{appName: filterApp} | limitTo:barLimit)">
+            <div class="notification-item__icon">
+                <i class="bell icon"></i>
+            </div>
+            <div class="notification-item__content">
+                <div class="notification-item__header">
+                    <span class="notification-app">{{notif.appName}}</span>
+                    <span class="notification-action" ng-class="'action--' + notif.action.toLowerCase()">{{notif.action}}</span>
+                </div>
+                <div class="notification-item__title" ng-if="notif.title" ng-bind="notif.title"></div>
+                <div class="notification-item__text" ng-if="notif.text" ng-bind="notif.text"></div>
+                <div class="notification-item__bigtext" ng-if="notif.bigText && notif.bigText !== notif.text" ng-bind="notif.bigText"></div>
+                <div class="notification-item__meta">
+                    <span class="meta-item">
+                        <i class="clock icon"></i>
+                        {{notif.timestamp | date:'medium'}}
+                    </span>
+                    <span class="meta-item" ng-if="notif.category">
+                        <i class="tag icon"></i>
+                        {{notif.category}}
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Empty State -->
+        <div class="notifications-empty" ng-if="notifications.length === 0 && !isLoading">
+            <div class="notifications-empty__icon">
+                <i class="bell slash icon"></i>
+            </div>
+            <h4>No Notifications Captured</h4>
+            <p>Enable Notification Access on the device to start capturing notifications</p>
+            <div class="setup-steps">
+                <p>Go to Settings > Apps > Special Access > Notification Access</p>
+            </div>
+        </div>
+
+        <div class="notifications-loading" ng-if="isLoading">
+            <div class="spinner"></div>
+            <p>Loading notifications...</p>
+        </div>
+    </div>
+</div>
+
+<style>
+    .notifications-panel {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .notifications-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+        flex-wrap: wrap;
+        gap: 12px;
+    }
+    
+    .notifications-header__title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin: 0;
+    }
+    
+    .notifications-stats {
+        margin-left: 12px;
+    }
+    
+    .stat-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        background: rgba(156, 39, 176, 0.15);
+        border-radius: var(--radius-sm);
+        font-size: 11px;
+        color: #9c27b0;
+    }
+    
+    .notifications-header__actions {
+        display: flex;
+        gap: 10px;
+    }
+    
+    .notifications-status {
+        display: flex;
+        align-items: center;
+        padding: 12px 16px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        margin-bottom: 16px;
+    }
+    
+    .notifications-status--enabled {
+        background: rgba(0, 214, 143, 0.1);
+        border-color: rgba(0, 214, 143, 0.3);
+    }
+    
+    .status-indicator {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 13px;
+        color: var(--text-secondary);
+    }
+    
+    .status-dot {
+        width: 10px;
+        height: 10px;
+        background: var(--text-muted);
+        border-radius: 50%;
+    }
+    
+    .status-dot--active {
+        background: var(--accent-success);
+        animation: pulse 2s infinite;
+    }
+    
+    .notifications-filter {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 16px;
+    }
+    
+    .filter-search {
+        flex: 1;
+        position: relative;
+    }
+    
+    .filter-search i {
+        position: absolute;
+        left: 12px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: var(--text-muted);
+    }
+    
+    .filter-search input {
+        width: 100%;
+        padding: 10px 14px 10px 36px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        color: var(--text-primary);
+        font-size: 13px;
+    }
+    
+    .filter-app select {
+        padding: 10px 14px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        color: var(--text-primary);
+        font-size: 13px;
+    }
+    
+    .notifications-list {
+        flex: 1;
+        overflow-y: auto;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+        padding: 8px;
+    }
+    
+    .notification-item {
+        display: flex;
+        gap: 14px;
+        padding: 14px;
+        border-radius: var(--radius-md);
+        margin-bottom: 6px;
+        background: var(--bg-tertiary);
+        transition: all 0.2s ease;
+    }
+    
+    .notification-item:hover {
+        background: var(--bg-elevated);
+    }
+    
+    .notification-item__icon {
+        width: 40px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(156, 39, 176, 0.15);
+        border-radius: var(--radius-sm);
+        color: #9c27b0;
+        flex-shrink: 0;
+    }
+    
+    .notification-item__content {
+        flex: 1;
+        min-width: 0;
+    }
+    
+    .notification-item__header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 6px;
+    }
+    
+    .notification-app {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+    
+    .notification-action {
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+    
+    .action--posted {
+        background: rgba(0, 214, 143, 0.15);
+        color: var(--accent-success);
+    }
+    
+    .action--removed {
+        background: rgba(255, 59, 92, 0.15);
+        color: var(--accent-danger);
+    }
+    
+    .action--existing {
+        background: rgba(0, 149, 255, 0.15);
+        color: var(--accent-info);
+    }
+    
+    .notification-item__title {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 4px;
+    }
+    
+    .notification-item__text {
+        font-size: 13px;
+        color: var(--text-secondary);
+        margin-bottom: 4px;
+    }
+    
+    .notification-item__bigtext {
+        font-size: 12px;
+        color: var(--text-muted);
+        background: var(--bg-secondary);
+        padding: 8px;
+        border-radius: var(--radius-sm);
+        margin-bottom: 8px;
+    }
+    
+    .notification-item__meta {
+        display: flex;
+        gap: 16px;
+    }
+    
+    .meta-item {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 11px;
+        color: var(--text-muted);
+    }
+    
+    .notifications-empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px;
+        text-align: center;
+    }
+    
+    .notifications-empty__icon {
+        width: 80px;
+        height: 80px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg-tertiary);
+        border-radius: 50%;
+        margin-bottom: 16px;
+    }
+    
+    .notifications-empty__icon i {
+        font-size: 36px;
+        color: var(--text-muted);
+    }
+    
+    .notifications-empty h4 {
+        margin: 0 0 8px;
+        font-size: 16px;
+        color: var(--text-primary);
+    }
+    
+    .setup-steps {
+        padding: 12px 16px;
+        background: var(--bg-secondary);
+        border-radius: var(--radius-md);
+        margin-top: 16px;
+        font-size: 12px;
+        color: var(--text-secondary);
+    }
+    
+    .notifications-loading {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px;
+    }
+    
+    .notifications-loading .spinner {
+        width: 40px;
+        height: 40px;
+        border: 3px solid var(--bg-tertiary);
+        border-top-color: #9c27b0;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        margin-bottom: 16px;
+    }
+    
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+    
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+</style>
+

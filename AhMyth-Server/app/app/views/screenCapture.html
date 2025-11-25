@@ -1,0 +1,484 @@
+<div class="screen-panel">
+    <!-- Header -->
+    <div class="screen-header">
+        <div class="screen-header__info">
+            <h3 class="screen-header__title">
+                <i class="desktop icon" style="color: #e91e63;"></i>
+                Remote Display
+            </h3>
+            <p class="screen-header__subtitle">Live screen capture and streaming</p>
+        </div>
+        <div class="screen-header__actions">
+            <div class="quality-selector">
+                <label>Quality:</label>
+                <select ng-model="screenQuality" ng-change="setQuality(screenQuality)">
+                    <option value="30">Low (30%)</option>
+                    <option value="50" selected>Medium (50%)</option>
+                    <option value="70">High (70%)</option>
+                    <option value="90">Best (90%)</option>
+                </select>
+            </div>
+            <button class="btn btn--primary" ng-click="captureScreen()" ng-disabled="!isScreenEnabled">
+                <i class="camera icon"></i>
+                Capture Screen
+            </button>
+            <button class="btn btn--secondary" ng-click="getScreenInfo()">
+                <i class="info circle icon"></i>
+                Screen Info
+            </button>
+        </div>
+    </div>
+
+    <!-- Screen Status -->
+    <div class="screen-status" ng-class="{'screen-status--enabled': isScreenEnabled, 'screen-status--disabled': !isScreenEnabled}">
+        <div class="screen-status__indicator">
+            <span class="status-dot" ng-class="{'status-dot--active': isScreenEnabled}"></span>
+            <span class="status-label">{{isScreenEnabled ? 'Screen Capture Available' : 'MediaProjection Required'}}</span>
+        </div>
+        <div class="screen-status__info" ng-if="screenInfo">
+            <span class="info-badge">
+                <i class="expand icon"></i>
+                {{screenInfo.width}} × {{screenInfo.height}}
+            </span>
+            <span class="info-badge">
+                <i class="tachometer alternate icon"></i>
+                {{screenInfo.refreshRate}} Hz
+            </span>
+        </div>
+    </div>
+
+    <!-- Screen View -->
+    <div class="screen-view">
+        <!-- Captured Screenshot -->
+        <div class="screen-preview" ng-if="screenImage">
+            <img ng-src="data:image/jpeg;base64,{{screenImage}}" alt="Screen Capture">
+            <div class="screen-preview__overlay">
+                <div class="preview-info">
+                    <span><i class="clock icon"></i> {{captureTime | date:'medium'}}</span>
+                    <span><i class="database icon"></i> {{imageSize}}</span>
+                </div>
+                <div class="preview-actions">
+                    <button class="preview-action-btn" ng-click="captureScreen()" title="Refresh">
+                        <i class="sync icon"></i>
+                    </button>
+                    <button class="preview-action-btn" ng-click="saveScreenshot()" title="Save">
+                        <i class="download icon"></i>
+                    </button>
+                    <button class="preview-action-btn" ng-click="fullscreen()" title="Fullscreen">
+                        <i class="expand icon"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Placeholder -->
+        <div class="screen-placeholder" ng-if="!screenImage && !isLoading">
+            <div class="screen-placeholder__icon">
+                <i class="desktop icon"></i>
+                <div class="screen-rings">
+                    <span class="ring"></span>
+                    <span class="ring"></span>
+                </div>
+            </div>
+            <h4>Remote Display</h4>
+            <p>Click "Capture Screen" to take a screenshot of the device's display</p>
+            <div class="screen-requirements">
+                <h5>Requirements:</h5>
+                <ul>
+                    <li><i class="check circle icon"></i> MediaProjection permission must be granted</li>
+                    <li><i class="check circle icon"></i> Screen capture initiated from device</li>
+                    <li><i class="info circle icon"></i> Hidden from user after initial permission</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Loading -->
+        <div class="screen-loading" ng-if="isLoading">
+            <div class="spinner"></div>
+            <p>Capturing screen...</p>
+        </div>
+    </div>
+
+    <!-- Stream Controls -->
+    <div class="stream-controls" ng-if="screenImage">
+        <button class="btn btn--secondary" ng-click="startStreaming()" ng-hide="isStreaming">
+            <i class="play icon"></i>
+            Start Live Stream
+        </button>
+        <button class="btn btn--danger" ng-click="stopStreaming()" ng-show="isStreaming">
+            <i class="stop icon"></i>
+            Stop Stream
+        </button>
+        <div class="stream-info" ng-if="isStreaming">
+            <span class="streaming-badge">
+                <span class="pulse-dot"></span>
+                LIVE
+            </span>
+            <span>{{frameRate}} FPS</span>
+        </div>
+    </div>
+</div>
+
+<style>
+    .screen-panel {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .screen-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+        flex-wrap: wrap;
+        gap: 12px;
+    }
+    
+    .screen-header__title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin: 0;
+    }
+    
+    .screen-header__subtitle {
+        margin: 4px 0 0;
+        font-size: 12px;
+        color: var(--text-muted);
+    }
+    
+    .screen-header__actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    .quality-selector {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: var(--text-secondary);
+    }
+    
+    .quality-selector select {
+        padding: 8px 12px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        color: var(--text-primary);
+        font-size: 12px;
+    }
+    
+    /* Status Bar */
+    .screen-status {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 16px;
+        border-radius: var(--radius-md);
+        margin-bottom: 16px;
+    }
+    
+    .screen-status--enabled {
+        background: rgba(0, 214, 143, 0.1);
+        border: 1px solid rgba(0, 214, 143, 0.3);
+    }
+    
+    .screen-status--disabled {
+        background: rgba(255, 171, 0, 0.1);
+        border: 1px solid rgba(255, 171, 0, 0.3);
+    }
+    
+    .screen-status__indicator {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    .status-dot {
+        width: 10px;
+        height: 10px;
+        background: var(--accent-warning);
+        border-radius: 50%;
+    }
+    
+    .status-dot--active {
+        background: var(--accent-success);
+        animation: pulse 2s infinite;
+    }
+    
+    .screen-status__info {
+        display: flex;
+        gap: 12px;
+    }
+    
+    .info-badge {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        background: var(--bg-secondary);
+        border-radius: var(--radius-sm);
+        font-size: 11px;
+        color: var(--text-secondary);
+    }
+    
+    /* Screen View */
+    .screen-view {
+        flex: 1;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+    }
+    
+    .screen-preview {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+    }
+    
+    .screen-preview img {
+        max-width: 100%;
+        max-height: 100%;
+        object-fit: contain;
+        border-radius: var(--radius-md);
+    }
+    
+    .screen-preview__overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: transparent;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        padding: 16px;
+        opacity: 0;
+        transition: all 0.3s ease;
+    }
+    
+    .screen-preview:hover .screen-preview__overlay {
+        opacity: 1;
+        background: rgba(0, 0, 0, 0.4);
+    }
+    
+    .preview-info {
+        display: flex;
+        gap: 16px;
+        font-size: 12px;
+        color: white;
+    }
+    
+    .preview-info span {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    
+    .preview-actions {
+        display: flex;
+        justify-content: center;
+        gap: 12px;
+    }
+    
+    .preview-action-btn {
+        width: 48px;
+        height: 48px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg-card);
+        border: none;
+        border-radius: 50%;
+        color: var(--text-primary);
+        font-size: 18px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    
+    .preview-action-btn:hover {
+        background: var(--accent-primary);
+        color: var(--bg-primary);
+        transform: scale(1.1);
+    }
+    
+    /* Placeholder */
+    .screen-placeholder {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: 40px;
+        color: var(--text-muted);
+    }
+    
+    .screen-placeholder__icon {
+        position: relative;
+        width: 100px;
+        height: 100px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 24px;
+    }
+    
+    .screen-placeholder__icon > i {
+        font-size: 48px;
+        color: var(--text-secondary);
+        z-index: 1;
+    }
+    
+    .screen-rings {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+    }
+    
+    .ring {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        border: 2px solid #e91e63;
+        border-radius: 50%;
+        opacity: 0;
+        animation: ring 3s infinite;
+    }
+    
+    .ring:nth-child(2) { animation-delay: 1.5s; }
+    
+    @keyframes ring {
+        0% { width: 50px; height: 50px; opacity: 0.6; }
+        100% { width: 150px; height: 150px; opacity: 0; }
+    }
+    
+    .screen-placeholder h4 {
+        margin: 0 0 8px;
+        font-size: 18px;
+        color: var(--text-primary);
+    }
+    
+    .screen-placeholder p {
+        max-width: 320px;
+        margin-bottom: 24px;
+    }
+    
+    .screen-requirements {
+        text-align: left;
+        padding: 16px 20px;
+        background: var(--bg-secondary);
+        border-radius: var(--radius-md);
+    }
+    
+    .screen-requirements h5 {
+        margin: 0 0 12px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+    }
+    
+    .screen-requirements ul {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+    }
+    
+    .screen-requirements li {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: var(--text-secondary);
+        margin-bottom: 8px;
+    }
+    
+    .screen-requirements li i.check { color: var(--accent-success); }
+    .screen-requirements li i.info { color: var(--accent-info); }
+    
+    /* Loading */
+    .screen-loading {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 40px;
+    }
+    
+    .screen-loading .spinner {
+        width: 48px;
+        height: 48px;
+        border: 4px solid var(--bg-tertiary);
+        border-top-color: #e91e63;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        margin-bottom: 16px;
+    }
+    
+    /* Stream Controls */
+    .stream-controls {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        padding: 16px;
+        background: var(--bg-tertiary);
+        border-radius: var(--radius-lg);
+        margin-top: 16px;
+    }
+    
+    .stream-info {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        font-size: 13px;
+        color: var(--text-secondary);
+    }
+    
+    .streaming-badge {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        background: rgba(255, 59, 92, 0.15);
+        border-radius: var(--radius-sm);
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--accent-danger);
+    }
+    
+    .pulse-dot {
+        width: 8px;
+        height: 8px;
+        background: var(--accent-danger);
+        border-radius: 50%;
+        animation: pulse 1s infinite;
+    }
+    
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.4; }
+    }
+    
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+</style>
+

@@ -1,20 +1,469 @@
-<div class="ui {{load}} basic segment h100 " style="overflow-y:auto;overflow-x: auto;white-space:nowrap; height: 400px;">
-    <div class="ui grid center aligned h100">
-        <div class="row h20">
-            <div class="sixteen wide column">
-                <select class="ui dropdown" ng-options="item.name for item in cameras" ng-model="selectedCam"></select>
-                <button class="ui labeled icon black button" ng-click="snap()"><i class="photo icon"></i>Snap</button>
+<div class="camera-panel" ng-class="{'loading-state': load === 'loading'}">
+    <!-- Header -->
+    <div class="camera-header">
+        <div class="camera-header__title">
+            <i class="camera icon" style="color: #ff3b5c;"></i>
+            <span>Camera Capture</span>
+        </div>
+        <div class="camera-header__info" ng-if="cameras && cameras.length">
+            <span class="camera-count">
+                <i class="video icon"></i> {{cameras.length}} camera(s) available
+            </span>
+        </div>
+    </div>
+
+    <!-- Camera Controls -->
+    <div class="camera-controls">
+        <div class="camera-selector">
+            <label class="camera-selector__label">Select Camera</label>
+            <div class="camera-buttons">
+                <button class="camera-btn" ng-repeat="cam in cameras" 
+                        ng-click="selectCamera(cam)"
+                        ng-class="{'camera-btn--active': selectedCam && selectedCam.id === cam.id}">
+                    <i ng-class="{'camera icon': cam.id == 0, 'camera retro icon': cam.id != 0}"></i>
+                    <span>{{cam.name || (cam.id == 0 ? 'Back Camera' : 'Front Camera')}}</span>
+                </button>
             </div>
         </div>
-        <div class="row h80">
-            <div class="sixteen wide column h100" style="display: flex; justify-content: center;">
-                <div class="ui h100 image ">
-                    <a class="ui red ribbon label" ng-show="isSaveShown" ng-click="savePhoto()">
-                        <i class="save icon"></i> Save
-                    </a>
-                    <img style="height: 100%;" src="./assets/img/imageHolder.png" ng-src="{{imgUrl}}"></img>
+        
+        <div class="camera-actions">
+            <button class="btn btn--primary btn--capture" ng-click="snap()" ng-disabled="!selectedCam || load === 'loading'">
+                <div class="capture-icon">
+                    <i class="camera icon"></i>
                 </div>
+                <span>Capture Photo</span>
+            </button>
+            <button class="btn btn--secondary" ng-click="savePhoto()" ng-show="isSaveShown">
+                <i class="download icon"></i>
+                Save to Device
+            </button>
+        </div>
+    </div>
+
+    <!-- Camera View -->
+    <div class="camera-view-container">
+        <div class="camera-view">
+            <!-- Captured Image -->
+            <div class="camera-preview" ng-if="imgUrl">
+                <img ng-src="{{imgUrl}}" alt="Captured Image">
+                <div class="camera-preview__overlay">
+                    <div class="preview-actions">
+                        <button class="preview-action-btn" ng-click="snap()" title="Recapture">
+                            <i class="redo icon"></i>
+                        </button>
+                        <button class="preview-action-btn" ng-click="savePhoto()" title="Save">
+                            <i class="download icon"></i>
+                        </button>
+                        <button class="preview-action-btn" ng-click="fullscreen()" title="Fullscreen">
+                            <i class="expand icon"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Placeholder -->
+            <div class="camera-placeholder" ng-if="!imgUrl && load !== 'loading'">
+                <div class="camera-placeholder__icon">
+                    <i class="camera icon"></i>
+                    <div class="camera-lens"></div>
+                </div>
+                <h4>Ready to Capture</h4>
+                <p>Select a camera and click "Capture Photo" to take a snapshot from the device</p>
+                <div class="camera-tips">
+                    <div class="tip">
+                        <i class="lightbulb icon"></i>
+                        <span>Camera permission must be granted on the device</span>
+                    </div>
+                    <div class="tip">
+                        <i class="lightbulb icon"></i>
+                        <span>Back camera usually provides higher quality</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Loading -->
+            <div class="camera-loading" ng-if="load === 'loading'">
+                <div class="camera-loading__animation">
+                    <div class="shutter"></div>
+                    <i class="camera icon"></i>
+                </div>
+                <p>Capturing image...</p>
+                <span class="loading-hint">This may take a few seconds</span>
+            </div>
+        </div>
+        
+        <!-- Image Info Panel -->
+        <div class="camera-info-panel" ng-if="imgUrl">
+            <h4><i class="info circle icon"></i> Capture Details</h4>
+            <div class="info-item">
+                <span class="info-label">Camera</span>
+                <span class="info-value">{{selectedCam.name || 'Unknown'}}</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Captured</span>
+                <span class="info-value">{{captureTime | date:'medium'}}</span>
+            </div>
+            <div class="info-item" ng-if="imgSize">
+                <span class="info-label">File Size</span>
+                <span class="info-value">{{imgSize}}</span>
             </div>
         </div>
     </div>
 </div>
+
+<style>
+    .camera-panel {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .camera-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+    }
+    
+    .camera-header__title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+    
+    .camera-count {
+        font-size: 12px;
+        color: var(--text-secondary);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    
+    /* Camera Controls */
+    .camera-controls {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 24px;
+        padding: 20px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+        margin-bottom: 16px;
+    }
+    
+    .camera-selector__label {
+        display: block;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 10px;
+    }
+    
+    .camera-buttons {
+        display: flex;
+        gap: 10px;
+    }
+    
+    .camera-btn {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 18px;
+        background: var(--bg-secondary);
+        border: 2px solid var(--border-color);
+        border-radius: var(--radius-md);
+        color: var(--text-secondary);
+        font-size: 13px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    
+    .camera-btn:hover {
+        border-color: var(--accent-primary);
+        color: var(--text-primary);
+    }
+    
+    .camera-btn--active {
+        background: rgba(0, 212, 170, 0.1);
+        border-color: var(--accent-primary);
+        color: var(--accent-primary);
+    }
+    
+    .camera-btn i {
+        font-size: 18px;
+    }
+    
+    .camera-actions {
+        display: flex;
+        gap: 10px;
+    }
+    
+    .btn--capture {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 14px 24px;
+    }
+    
+    .capture-icon {
+        width: 32px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(255,255,255,0.2);
+        border-radius: 50%;
+    }
+    
+    /* Camera View */
+    .camera-view-container {
+        flex: 1;
+        display: flex;
+        gap: 16px;
+        min-height: 0;
+    }
+    
+    .camera-view {
+        flex: 1;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+    }
+    
+    .camera-preview {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+        position: relative;
+    }
+    
+    .camera-preview img {
+        max-width: 100%;
+        max-height: 100%;
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-lg);
+    }
+    
+    .camera-preview__overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0,0,0,0);
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        padding: 24px;
+        opacity: 0;
+        transition: all 0.3s ease;
+    }
+    
+    .camera-preview:hover .camera-preview__overlay {
+        opacity: 1;
+        background: rgba(0,0,0,0.3);
+    }
+    
+    .preview-actions {
+        display: flex;
+        gap: 12px;
+    }
+    
+    .preview-action-btn {
+        width: 48px;
+        height: 48px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg-card);
+        border: none;
+        border-radius: 50%;
+        color: var(--text-primary);
+        font-size: 18px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    
+    .preview-action-btn:hover {
+        background: var(--accent-primary);
+        color: var(--bg-primary);
+        transform: scale(1.1);
+    }
+    
+    .camera-placeholder {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: var(--text-muted);
+        text-align: center;
+        padding: 40px;
+    }
+    
+    .camera-placeholder__icon {
+        position: relative;
+        width: 100px;
+        height: 100px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg-secondary);
+        border-radius: 20px;
+        margin-bottom: 24px;
+    }
+    
+    .camera-placeholder__icon i {
+        font-size: 48px;
+        opacity: 0.4;
+    }
+    
+    .camera-lens {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        width: 12px;
+        height: 12px;
+        background: var(--accent-danger);
+        border-radius: 50%;
+        animation: blink 2s infinite;
+    }
+    
+    @keyframes blink {
+        0%, 50%, 100% { opacity: 1; }
+        25%, 75% { opacity: 0.3; }
+    }
+    
+    .camera-placeholder h4 {
+        margin: 0 0 8px;
+        font-size: 18px;
+        color: var(--text-primary);
+    }
+    
+    .camera-placeholder p {
+        max-width: 320px;
+        margin-bottom: 24px;
+    }
+    
+    .camera-tips {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+    
+    .camera-tips .tip {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: var(--text-muted);
+    }
+    
+    .camera-tips .tip i {
+        color: var(--accent-warning);
+    }
+    
+    /* Loading Animation */
+    .camera-loading {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 40px;
+    }
+    
+    .camera-loading__animation {
+        position: relative;
+        width: 80px;
+        height: 80px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 20px;
+    }
+    
+    .camera-loading__animation i {
+        font-size: 40px;
+        color: var(--text-primary);
+    }
+    
+    .shutter {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        border: 4px solid var(--accent-primary);
+        border-radius: 50%;
+        animation: shutter 1s infinite;
+    }
+    
+    @keyframes shutter {
+        0%, 100% { transform: scale(1); opacity: 1; }
+        50% { transform: scale(1.2); opacity: 0.5; }
+    }
+    
+    .loading-hint {
+        font-size: 11px;
+        color: var(--text-muted);
+        margin-top: 8px;
+    }
+    
+    /* Info Panel */
+    .camera-info-panel {
+        width: 220px;
+        padding: 20px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+        flex-shrink: 0;
+    }
+    
+    .camera-info-panel h4 {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin: 0 0 16px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .camera-info-panel h4 i {
+        color: var(--accent-info);
+    }
+    
+    .info-item {
+        margin-bottom: 12px;
+    }
+    
+    .info-label {
+        display: block;
+        font-size: 10px;
+        font-weight: 600;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 4px;
+    }
+    
+    .info-value {
+        font-size: 13px;
+        color: var(--text-primary);
+    }
+</style>

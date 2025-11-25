@@ -24,5 +24,9 @@
         "build:win": "npm run build:win32 && npm run build:win64",
         "build:win32": "npx electron-builder --win --ia32",
         "build:win64": "npx electron-builder --win --x64"
+    },
+    "dependencies": {
+        "socket.io": "^4.8.1",
+        "socket.io-client": "^4.8.1"
     }
 }

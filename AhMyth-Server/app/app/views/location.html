@@ -1,15 +1,153 @@
-<div class="ui segment h100 {{load}}">
-    <div class="ui grid center aligned h100">
-        <div class="row h20">
-            <div class="column">
-                <button class="ui labeled icon black button" ng-click="Refresh()"><i class="refresh icon"></i>Refresh</button>
-            </div>
-        </div>
+<div class="view-container">
+    <div class="view-header">
+        <h3 class="view-header__title">
+            <i class="map marker alternate icon"></i>
+            Location
+        </h3>
+        <button class="btn btn--primary" ng-click="Refresh()">
+            <i class="sync icon"></i>
+            Refresh
+        </button>
+    </div>
 
-        <div class="row h80">
-            <div class="column h100">
-                <div class="h100" id="mapid"></div>
+    <div class="loading-state" ng-if="load === 'loading'">
+        <div class="spinner"></div>
+        <p>Fetching GPS location...</p>
+    </div>
+
+    <div class="location-layout" ng-if="load !== 'loading'">
+        <div class="map-container">
+            <div id="mapid"></div>
+        </div>
+        
+        <div class="location-info">
+            <div class="info-card" ng-if="currentLocation">
+                <div class="info-card__header">Coordinates</div>
+                <div class="info-card__body">
+                    <div class="info-row">
+                        <span class="info-row__label">Latitude</span>
+                        <span class="info-row__value">{{currentLocation.lat}}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-row__label">Longitude</span>
+                        <span class="info-row__value">{{currentLocation.lng}}</span>
+                    </div>
+                    <div class="info-row" ng-if="currentLocation.accuracy">
+                        <span class="info-row__label">Accuracy</span>
+                        <span class="info-row__value">{{currentLocation.accuracy}}</span>
+                    </div>
+                    <div class="info-row" ng-if="lastUpdate">
+                        <span class="info-row__label">Last Update</span>
+                        <span class="info-row__value">{{lastUpdate}}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="info-card" ng-if="!currentLocation">
+                <div class="info-card__body">
+                    <p style="color: var(--text-muted); text-align: center; padding: 20px 0;">
+                        Waiting for location data...
+                    </p>
+                </div>
             </div>
         </div>
     </div>
 </div>
+
+<style>
+    .view-container {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .view-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+        flex-shrink: 0;
+    }
+    
+    .view-header__title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+    
+    .view-header__title i {
+        color: var(--accent-primary);
+    }
+    
+    .location-layout {
+        flex: 1;
+        display: grid;
+        grid-template-columns: 1fr 220px;
+        gap: 16px;
+        min-height: 0;
+    }
+    
+    .map-container {
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        overflow: hidden;
+    }
+    
+    #mapid {
+        width: 100%;
+        height: 100%;
+        min-height: 300px;
+    }
+    
+    .location-info {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+    
+    .info-card {
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        overflow: hidden;
+    }
+    
+    .info-card__header {
+        padding: 10px 14px;
+        background: var(--bg-tertiary);
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-primary);
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .info-card__body {
+        padding: 12px 14px;
+    }
+    
+    .info-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 6px 0;
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .info-row:last-child {
+        border-bottom: none;
+    }
+    
+    .info-row__label {
+        font-size: 11px;
+        color: var(--text-secondary);
+    }
+    
+    .info-row__value {
+        font-size: 11px;
+        font-family: var(--font-mono);
+        color: var(--text-primary);
+    }
+</style>

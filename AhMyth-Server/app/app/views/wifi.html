@@ -1,0 +1,181 @@
+<div class="view-container">
+    <div class="view-header">
+        <h3 class="view-header__title">
+            <i class="wifi icon"></i>
+            WiFi Information
+        </h3>
+        <button class="btn btn--primary" ng-click="getWiFiInfo()">
+            <i class="sync icon"></i>
+            Refresh
+        </button>
+    </div>
+
+    <div class="info-grid" ng-if="wifiInfo">
+        <div class="info-card">
+            <div class="info-card__header">Network</div>
+            <div class="info-card__body">
+                <div class="info-row">
+                    <span class="info-row__label">SSID</span>
+                    <span class="info-row__value">{{wifiInfo.ssid}}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-row__label">BSSID</span>
+                    <span class="info-row__value">{{wifiInfo.bssid}}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-row__label">State</span>
+                    <span class="info-row__value">{{wifiInfo.wifiState}}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-row__label">Link Speed</span>
+                    <span class="info-row__value">{{wifiInfo.linkSpeed}} Mbps</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="info-card">
+            <div class="info-card__header">Connection</div>
+            <div class="info-card__body">
+                <div class="info-row">
+                    <span class="info-row__label">IP Address</span>
+                    <span class="info-row__value">{{wifiInfo.ipAddress}}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-row__label">MAC Address</span>
+                    <span class="info-row__value">{{wifiInfo.macAddress}}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-row__label">Network ID</span>
+                    <span class="info-row__value">{{wifiInfo.networkId}}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-row__label">RSSI</span>
+                    <span class="info-row__value">{{wifiInfo.rssi}} dBm</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="info-card" ng-if="wifiInfo.dhcp">
+            <div class="info-card__header">DHCP</div>
+            <div class="info-card__body">
+                <div class="info-row">
+                    <span class="info-row__label">Gateway</span>
+                    <span class="info-row__value">{{wifiInfo.dhcp.gateway}}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-row__label">DNS 1</span>
+                    <span class="info-row__value">{{wifiInfo.dhcp.dns1}}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-row__label">DNS 2</span>
+                    <span class="info-row__value">{{wifiInfo.dhcp.dns2}}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-row__label">Netmask</span>
+                    <span class="info-row__value">{{wifiInfo.dhcp.netmask}}</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="empty-state" ng-if="!wifiInfo">
+        <i class="wifi icon"></i>
+        <p>Click Refresh to load WiFi information</p>
+    </div>
+</div>
+
+<style>
+    .view-container {
+        height: 100%;
+    }
+    
+    .view-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+    }
+    
+    .view-header__title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+    
+    .view-header__title i {
+        color: var(--accent-primary);
+    }
+    
+    .info-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+    }
+    
+    .info-card {
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        overflow: hidden;
+    }
+    
+    .info-card__header {
+        padding: 10px 14px;
+        background: var(--bg-tertiary);
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-primary);
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .info-card__body {
+        padding: 12px 14px;
+    }
+    
+    .info-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 6px 0;
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .info-row:last-child {
+        border-bottom: none;
+    }
+    
+    .info-row__label {
+        font-size: 12px;
+        color: var(--text-secondary);
+    }
+    
+    .info-row__value {
+        font-size: 12px;
+        font-family: var(--font-mono);
+        color: var(--text-primary);
+    }
+    
+    .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 20px;
+        text-align: center;
+        color: var(--text-muted);
+    }
+    
+    .empty-state i {
+        font-size: 48px;
+        margin-bottom: 12px;
+        opacity: 0.5;
+    }
+    
+    .empty-state p {
+        margin: 0;
+        font-size: 13px;
+    }
+</style>

@@ -1,15 +1,496 @@
-<div class="ui segment {{load}} full" style="overflow-y:auto;overflow-x: auto;white-space:nowrap; height: 400px;" id="parent">
-    <div class="ui list" style="overflow-y:auto;white-space:nowrap;" infinite-scroll="increaseLimit()" infinite-scroll-container='"#parent"'>
-        <div class="item" ng-repeat="file in files | limitTo:barLimit | orderBy:['-isDir','name']">
-
-            <a ng-click="getFiles(file.path)" ng-if="file.isDir">
-                <i class="folder icon"></i> {{file.name}}
-            </a>
-            <div class="ui label" ng-if="!file.isDir">
-                <i class="file icon"></i> {{file.name}} &nbsp;&nbsp;
-                <a ng-click="saveFile(file.path)"><i class="save red icon"></i></a>
+<div class="files-panel" ng-class="{'loading-state': load === 'loading'}">
+    <!-- Header -->
+    <div class="files-header">
+        <div class="files-header__info">
+            <h3 class="files-header__title">
+                <i class="folder open icon" style="color: #00d4aa;"></i>
+                File Manager
+            </h3>
+            <div class="files-stats" ng-if="files.length">
+                <span class="files-stat">
+                    <i class="folder icon"></i> {{folderCount || 0}} folders
+                </span>
+                <span class="files-stat">
+                    <i class="file icon"></i> {{fileCount || 0}} files
+                </span>
+                <span class="files-stat" ng-if="totalSize">
+                    <i class="database icon"></i> {{formatSize(totalSize)}}
+                </span>
             </div>
+        </div>
+        <div class="files-header__actions">
+            <button class="btn btn--secondary" ng-click="goBack()" ng-disabled="!canGoBack">
+                <i class="arrow left icon"></i>
+                Back
+            </button>
+            <button class="btn btn--secondary" ng-click="goHome()">
+                <i class="home icon"></i>
+                Home
+            </button>
+            <button class="btn btn--primary" ng-click="refreshDir()">
+                <i class="sync icon"></i>
+                Refresh
+            </button>
+        </div>
+    </div>
 
+    <!-- Breadcrumb Navigation -->
+    <div class="files-breadcrumb" ng-if="currentPath">
+        <span class="breadcrumb-item" ng-click="goToPath('/')">
+            <i class="hdd icon"></i>
+            Root
+        </span>
+        <span class="breadcrumb-separator">/</span>
+        <span class="breadcrumb-item" ng-repeat="part in pathParts track by $index" ng-click="goToPath(part.path)">
+            {{part.name}}
+            <span class="breadcrumb-separator" ng-if="!$last">/</span>
+        </span>
+    </div>
+
+    <!-- Current Path Display -->
+    <div class="files-path-bar">
+        <i class="folder open outline icon"></i>
+        <span class="path-text" ng-bind="currentPath || '/sdcard'"></span>
+        <button class="btn btn--icon btn--ghost" ng-click="copyPath()" title="Copy Path">
+            <i class="copy icon"></i>
+        </button>
+    </div>
+
+    <!-- Files List -->
+    <div class="files-list-wrapper" infinite-scroll="increaseLimit()">
+        <!-- Quick Access -->
+        <div class="quick-access" ng-if="!currentPath || currentPath === '/'">
+            <h4 class="quick-access__title">
+                <i class="star icon"></i>
+                Quick Access
+            </h4>
+            <div class="quick-access__grid">
+                <div class="quick-access__item" ng-click="getFiles('/sdcard')">
+                    <i class="sd card icon"></i>
+                    <span>SD Card</span>
+                </div>
+                <div class="quick-access__item" ng-click="getFiles('/sdcard/DCIM')">
+                    <i class="camera icon"></i>
+                    <span>DCIM</span>
+                </div>
+                <div class="quick-access__item" ng-click="getFiles('/sdcard/Download')">
+                    <i class="download icon"></i>
+                    <span>Downloads</span>
+                </div>
+                <div class="quick-access__item" ng-click="getFiles('/sdcard/Documents')">
+                    <i class="file alternate icon"></i>
+                    <span>Documents</span>
+                </div>
+                <div class="quick-access__item" ng-click="getFiles('/sdcard/Pictures')">
+                    <i class="images icon"></i>
+                    <span>Pictures</span>
+                </div>
+                <div class="quick-access__item" ng-click="getFiles('/sdcard/Music')">
+                    <i class="music icon"></i>
+                    <span>Music</span>
+                </div>
+                <div class="quick-access__item" ng-click="getFiles('/sdcard/Movies')">
+                    <i class="video icon"></i>
+                    <span>Videos</span>
+                </div>
+                <div class="quick-access__item" ng-click="getFiles('/sdcard/WhatsApp')">
+                    <i class="whatsapp icon"></i>
+                    <span>WhatsApp</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="files-grid" ng-if="files.length > 0">
+            <div class="file-item" ng-repeat="file in files | limitTo:barLimit" 
+                 ng-click="file.isDir ? getFiles(file.path) : null"
+                 ng-class="{'file-item--folder': file.isDir, 'file-item--file': !file.isDir}">
+                <div class="file-item__icon" ng-class="getFileIconClass(file)">
+                    <i ng-class="getFileIcon(file)"></i>
+                </div>
+                <div class="file-item__info">
+                    <span class="file-item__name" ng-bind="file.name"></span>
+                    <div class="file-item__meta">
+                        <span class="file-meta" ng-if="!file.isDir">
+                            <i class="database icon"></i>
+                            {{formatSize(file.size)}}
+                        </span>
+                        <span class="file-meta" ng-if="file.isDir">
+                            <i class="folder icon"></i>
+                            Directory
+                        </span>
+                        <span class="file-meta" ng-if="file.lastModified">
+                            <i class="clock icon"></i>
+                            {{file.lastModified | date:'short'}}
+                        </span>
+                        <span class="file-meta file-meta--type" ng-if="!file.isDir">
+                            {{getFileType(file.name)}}
+                        </span>
+                    </div>
+                </div>
+                <div class="file-item__actions">
+                    <button class="btn btn--icon btn--secondary" ng-if="!file.isDir" 
+                            ng-click="saveFile(file.path); $event.stopPropagation();" title="Download">
+                        <i class="download icon"></i>
+                    </button>
+                    <button class="btn btn--icon btn--ghost" ng-if="file.isDir" title="Open">
+                        <i class="chevron right icon"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading State -->
+        <div class="files-loading" ng-if="load === 'loading'">
+            <div class="spinner"></div>
+            <p>Loading directory contents...</p>
+        </div>
+
+        <!-- Empty State -->
+        <div class="files-empty" ng-if="files.length === 0 && load !== 'loading' && currentPath">
+            <div class="files-empty__icon">
+                <i class="folder open outline icon"></i>
+            </div>
+            <h4>Empty Directory</h4>
+            <p>This directory is empty or you don't have permission to access its contents</p>
         </div>
     </div>
 </div>
+
+<style>
+    .files-panel {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .files-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+    }
+    
+    .files-header__title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin: 0;
+    }
+    
+    .files-stats {
+        display: flex;
+        gap: 16px;
+        margin-top: 8px;
+    }
+    
+    .files-stat {
+        font-size: 12px;
+        color: var(--text-secondary);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    
+    .files-header__actions {
+        display: flex;
+        gap: 8px;
+    }
+    
+    /* Breadcrumb */
+    .files-breadcrumb {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 4px;
+        padding: 10px 16px;
+        background: var(--bg-tertiary);
+        border-radius: var(--radius-md);
+        margin-bottom: 12px;
+        font-size: 13px;
+    }
+    
+    .breadcrumb-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--text-secondary);
+        cursor: pointer;
+        padding: 4px 8px;
+        border-radius: var(--radius-sm);
+        transition: all 0.2s ease;
+    }
+    
+    .breadcrumb-item:hover {
+        color: var(--accent-primary);
+        background: var(--bg-secondary);
+    }
+    
+    .breadcrumb-separator {
+        color: var(--text-muted);
+    }
+    
+    /* Path Bar */
+    .files-path-bar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 16px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        margin-bottom: 16px;
+    }
+    
+    .files-path-bar i {
+        color: var(--accent-primary);
+    }
+    
+    .path-text {
+        flex: 1;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: var(--text-secondary);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    
+    /* Quick Access */
+    .quick-access {
+        margin-bottom: 20px;
+        padding: 20px;
+        background: var(--bg-tertiary);
+        border-radius: var(--radius-lg);
+        border: 1px solid var(--border-color);
+    }
+    
+    .quick-access__title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-secondary);
+        margin: 0 0 16px;
+    }
+    
+    .quick-access__title i {
+        color: var(--accent-warning);
+    }
+    
+    .quick-access__grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+        gap: 10px;
+    }
+    
+    .quick-access__item {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        padding: 16px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    
+    .quick-access__item:hover {
+        border-color: var(--accent-primary);
+        transform: translateY(-2px);
+    }
+    
+    .quick-access__item i {
+        font-size: 24px;
+        color: var(--accent-primary);
+    }
+    
+    .quick-access__item span {
+        font-size: 12px;
+        color: var(--text-secondary);
+    }
+    
+    .files-list-wrapper {
+        flex: 1;
+        overflow-y: auto;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+        padding: 12px;
+    }
+    
+    .files-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+    
+    .file-item {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 12px 14px;
+        background: var(--bg-tertiary);
+        border: 1px solid transparent;
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    
+    .file-item:hover {
+        background: var(--bg-elevated);
+        border-color: var(--border-color);
+        transform: translateX(4px);
+    }
+    
+    .file-item--folder:hover {
+        border-color: var(--accent-primary);
+    }
+    
+    .file-item__icon {
+        width: 44px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: var(--radius-sm);
+        flex-shrink: 0;
+        font-size: 18px;
+    }
+    
+    .file-item__icon--folder {
+        background: rgba(0, 212, 170, 0.15);
+        color: var(--accent-primary);
+    }
+    
+    .file-item__icon--file {
+        background: rgba(0, 149, 255, 0.15);
+        color: var(--accent-info);
+    }
+    
+    .file-item__icon--image {
+        background: rgba(233, 30, 99, 0.15);
+        color: #e91e63;
+    }
+    
+    .file-item__icon--video {
+        background: rgba(156, 39, 176, 0.15);
+        color: #9c27b0;
+    }
+    
+    .file-item__icon--audio {
+        background: rgba(255, 152, 0, 0.15);
+        color: #ff9800;
+    }
+    
+    .file-item__icon--document {
+        background: rgba(33, 150, 243, 0.15);
+        color: #2196f3;
+    }
+    
+    .file-item__icon--archive {
+        background: rgba(121, 85, 72, 0.15);
+        color: #795548;
+    }
+    
+    .file-item__icon--apk {
+        background: rgba(61, 220, 132, 0.15);
+        color: #3ddc84;
+    }
+    
+    .file-item__info {
+        flex: 1;
+        min-width: 0;
+    }
+    
+    .file-item__name {
+        display: block;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-primary);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    
+    .file-item__meta {
+        display: flex;
+        gap: 16px;
+        margin-top: 4px;
+    }
+    
+    .file-meta {
+        font-size: 11px;
+        color: var(--text-muted);
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+    
+    .file-meta i {
+        font-size: 10px;
+    }
+    
+    .file-meta--type {
+        padding: 2px 8px;
+        background: var(--bg-secondary);
+        border-radius: 10px;
+        text-transform: uppercase;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+    }
+    
+    .file-item__actions {
+        flex-shrink: 0;
+        display: flex;
+        gap: 4px;
+    }
+    
+    .files-loading,
+    .files-empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px;
+        color: var(--text-muted);
+        text-align: center;
+    }
+    
+    .files-empty__icon {
+        width: 80px;
+        height: 80px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg-tertiary);
+        border-radius: 50%;
+        margin-bottom: 16px;
+    }
+    
+    .files-empty__icon i {
+        font-size: 36px;
+        opacity: 0.4;
+    }
+    
+    .files-empty h4 {
+        margin: 0 0 8px;
+        font-size: 16px;
+        color: var(--text-primary);
+    }
+    
+    .files-loading .spinner {
+        width: 40px;
+        height: 40px;
+        border: 3px solid var(--bg-tertiary);
+        border-top-color: var(--accent-primary);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        margin-bottom: 16px;
+    }
+</style>

@@ -1,38 +1,468 @@
-<div class="ui {{load}} segment h100" style="overflow: scroll; height: 400px;" id="parent">
-    <table class="ui  very compact striped table full">
-        <thead>
-            <tr>
-                <th colspan="2">
-                    <div class="ui label">
-                        <i class="mail icon"></i> <span ng-bind="logsSize"></span>
-                        <span class="detail">Logs</span>
-                    </div>
-                </th>
+<div class="calls-panel" ng-class="{'loading-state': load === 'loading'}">
+    <!-- Header -->
+    <div class="calls-header">
+        <div class="calls-header__info">
+            <h3 class="calls-header__title">
+                <i class="phone icon" style="color: #00d68f;"></i>
+                Call Logs
+            </h3>
+            <div class="calls-stats" ng-if="logsSize">
+                <span class="calls-stat">
+                    <i class="history icon"></i> {{logsSize}} calls
+                </span>
+                <span class="calls-stat calls-stat--incoming">
+                    <i class="phone volume icon"></i> {{incomingCount || 0}} incoming
+                </span>
+                <span class="calls-stat calls-stat--outgoing">
+                    <i class="phone icon"></i> {{outgoingCount || 0}} outgoing
+                </span>
+                <span class="calls-stat calls-stat--missed">
+                    <i class="phone slash icon"></i> {{missedCount || 0}} missed
+                </span>
+            </div>
+        </div>
+        <div class="calls-header__actions">
+            <div class="calls-filter">
+                <select ng-model="callFilter">
+                    <option value="">All Calls</option>
+                    <option value="1">Incoming</option>
+                    <option value="2">Outgoing</option>
+                    <option value="3">Missed</option>
+                </select>
+            </div>
+            <button class="btn btn--primary" ng-click="getCallsLog()">
+                <i class="sync icon"></i>
+                Refresh
+            </button>
+            <button class="btn btn--secondary" ng-click="SaveCalls()" ng-disabled="!callsList.length">
+                <i class="download icon"></i>
+                Export CSV
+            </button>
+        </div>
+    </div>
 
-                <th colspan="2">
-                    <div class="right aligned">
-                        <a class="ui red label" ng-click="SaveCalls()">
-                            <i class="save icon"></i> Save
-                        </a>
-                    </div>
-                </th>
-            </tr>
-        </thead>
-        <tbody infinite-scroll="increaseLimit()" infinite-scroll-container='"#parent"'>
-            <tr ng-repeat="call in callsList | limitTo:barLimit">
-                <td ng-bind="call.phoneNo"></td>
-                <td>
-                    <span ng-if="call.name==null">Unknown</span>
-                    <span ng-if="call.name!=null" ng-bind="call.name"></span>
-                </td>
-                <td ng-bind="call.duration"></td>
-                <td>
-                    <span ng-if="call.type==1">INCOMING</span>
-                    <span ng-if="call.type!=1">OUTGOING</span>
-                </td>
-            </tr>
-        </tbody>
-    </table>
+    <!-- Summary Cards -->
+    <div class="calls-summary" ng-if="callsList.length > 0">
+        <div class="summary-card summary-card--incoming">
+            <div class="summary-card__icon">
+                <i class="phone volume icon"></i>
+            </div>
+            <div class="summary-card__content">
+                <span class="summary-card__value">{{incomingCount || 0}}</span>
+                <span class="summary-card__label">Incoming</span>
+            </div>
+        </div>
+        <div class="summary-card summary-card--outgoing">
+            <div class="summary-card__icon">
+                <i class="phone icon"></i>
+            </div>
+            <div class="summary-card__content">
+                <span class="summary-card__value">{{outgoingCount || 0}}</span>
+                <span class="summary-card__label">Outgoing</span>
+            </div>
+        </div>
+        <div class="summary-card summary-card--missed">
+            <div class="summary-card__icon">
+                <i class="phone slash icon"></i>
+            </div>
+            <div class="summary-card__content">
+                <span class="summary-card__value">{{missedCount || 0}}</span>
+                <span class="summary-card__label">Missed</span>
+            </div>
+        </div>
+        <div class="summary-card summary-card--duration">
+            <div class="summary-card__icon">
+                <i class="clock icon"></i>
+            </div>
+            <div class="summary-card__content">
+                <span class="summary-card__value">{{formatTotalDuration(totalDuration)}}</span>
+                <span class="summary-card__label">Total Talk Time</span>
+            </div>
+        </div>
+    </div>
 
+    <!-- Calls Table -->
+    <div class="calls-table-wrapper" infinite-scroll="increaseLimit()">
+        <table class="data-table" ng-if="callsList.length > 0">
+            <thead>
+                <tr>
+                    <th style="width: 70px;">Type</th>
+                    <th>Contact / Number</th>
+                    <th style="width: 150px;">Date & Time</th>
+                    <th style="width: 100px;">Duration</th>
+                    <th style="width: 80px;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr ng-repeat="call in filteredCalls = (callsList | filter:{type: callFilter} | limitTo:barLimit)" 
+                    class="call-row"
+                    ng-class="{'call-row--incoming': call.type == 1, 'call-row--outgoing': call.type == 2, 'call-row--missed': call.type == 3}">
+                    <td>
+                        <span class="call-type" ng-class="getCallTypeClass(call.type)">
+                            <i ng-class="getCallTypeIcon(call.type)"></i>
+                            <span class="call-type-label">{{getCallTypeLabel(call.type)}}</span>
+                        </span>
+                    </td>
+                    <td>
+                        <div class="call-contact">
+                            <span class="call-contact__name" ng-bind="call.name || 'Unknown'"></span>
+                            <span class="call-contact__number" ng-bind="call.phoneNo"></span>
+                        </div>
+                    </td>
+                    <td>
+                        <div class="call-datetime">
+                            <span class="call-date" ng-if="call.date">{{call.date | date:'MMM d, yyyy'}}</span>
+                            <span class="call-time" ng-if="call.date">{{call.date | date:'h:mm a'}}</span>
+                        </div>
+                    </td>
+                    <td>
+                        <div class="call-duration" ng-class="{'call-duration--zero': call.duration == 0}">
+                            <i class="clock outline icon"></i>
+                            <span>{{formatDuration(call.duration)}}</span>
+                        </div>
+                    </td>
+                    <td>
+                        <div class="call-actions">
+                            <button class="btn btn--icon btn--ghost" ng-click="copyPhone(call.phoneNo)" title="Copy Number">
+                                <i class="copy icon"></i>
+                            </button>
+                            <button class="btn btn--icon btn--ghost" ng-click="sendSmsTo(call.phoneNo)" title="Send SMS">
+                                <i class="comment icon"></i>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
 
+        <!-- Loading State -->
+        <div class="calls-loading" ng-if="load === 'loading'">
+            <div class="spinner"></div>
+            <p>Fetching call logs...</p>
+        </div>
+
+        <!-- Empty State -->
+        <div class="calls-empty" ng-if="callsList.length === 0 && load !== 'loading'">
+            <div class="calls-empty__icon">
+                <i class="phone icon"></i>
+            </div>
+            <h4>No Call Logs</h4>
+            <p>Click "Refresh" to fetch call history from the device</p>
+        </div>
+    </div>
 </div>
+
+<style>
+    .calls-panel {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .calls-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+        flex-wrap: wrap;
+        gap: 12px;
+    }
+    
+    .calls-header__title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin: 0;
+    }
+    
+    .calls-stats {
+        display: flex;
+        gap: 16px;
+        margin-top: 8px;
+    }
+    
+    .calls-stat {
+        font-size: 12px;
+        color: var(--text-secondary);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    
+    .calls-stat--incoming { color: var(--accent-success); }
+    .calls-stat--outgoing { color: var(--accent-info); }
+    .calls-stat--missed { color: var(--accent-danger); }
+    
+    .calls-header__actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    .calls-filter select {
+        padding: 10px 14px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        color: var(--text-primary);
+        font-size: 13px;
+        cursor: pointer;
+    }
+    
+    .calls-filter select:focus {
+        outline: none;
+        border-color: var(--accent-primary);
+    }
+    
+    /* Summary Cards */
+    .calls-summary {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+        margin-bottom: 16px;
+    }
+    
+    .summary-card {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 16px;
+        background: var(--bg-tertiary);
+        border-radius: var(--radius-lg);
+        border: 1px solid var(--border-color);
+    }
+    
+    .summary-card__icon {
+        width: 44px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: var(--radius-md);
+        font-size: 18px;
+    }
+    
+    .summary-card--incoming .summary-card__icon {
+        background: rgba(0, 214, 143, 0.15);
+        color: var(--accent-success);
+    }
+    
+    .summary-card--outgoing .summary-card__icon {
+        background: rgba(0, 149, 255, 0.15);
+        color: var(--accent-info);
+    }
+    
+    .summary-card--missed .summary-card__icon {
+        background: rgba(255, 59, 92, 0.15);
+        color: var(--accent-danger);
+    }
+    
+    .summary-card--duration .summary-card__icon {
+        background: rgba(153, 69, 255, 0.15);
+        color: var(--accent-purple);
+    }
+    
+    .summary-card__content {
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .summary-card__value {
+        font-size: 20px;
+        font-weight: 700;
+        color: var(--text-primary);
+    }
+    
+    .summary-card__label {
+        font-size: 11px;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    
+    .calls-table-wrapper {
+        flex: 1;
+        overflow-y: auto;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+    }
+    
+    .data-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    
+    .data-table thead {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+    }
+    
+    .data-table th {
+        padding: 14px 16px;
+        background: var(--bg-secondary);
+        border-bottom: 1px solid var(--border-color);
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        text-align: left;
+    }
+    
+    .data-table td {
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .call-row:hover {
+        background: var(--bg-elevated);
+    }
+    
+    .call-row--missed {
+        border-left: 3px solid var(--accent-danger);
+    }
+    
+    .call-type {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px;
+        border-radius: var(--radius-md);
+        font-size: 11px;
+        font-weight: 600;
+    }
+    
+    .call-type--incoming {
+        background: rgba(0, 214, 143, 0.15);
+        color: var(--accent-success);
+    }
+    
+    .call-type--outgoing {
+        background: rgba(0, 149, 255, 0.15);
+        color: var(--accent-info);
+    }
+    
+    .call-type--missed {
+        background: rgba(255, 59, 92, 0.15);
+        color: var(--accent-danger);
+    }
+    
+    .call-type i {
+        font-size: 12px;
+    }
+    
+    .call-type-label {
+        display: none;
+    }
+    
+    @media (min-width: 1200px) {
+        .call-type-label {
+            display: inline;
+        }
+    }
+    
+    .call-contact {
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .call-contact__name {
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--text-primary);
+    }
+    
+    .call-contact__number {
+        font-size: 12px;
+        font-family: var(--font-mono);
+        color: var(--text-muted);
+        margin-top: 2px;
+    }
+    
+    .call-datetime {
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .call-date {
+        font-size: 13px;
+        color: var(--text-primary);
+    }
+    
+    .call-time {
+        font-size: 11px;
+        color: var(--text-muted);
+        margin-top: 2px;
+    }
+    
+    .call-duration {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-family: var(--font-mono);
+        font-size: 13px;
+        color: var(--text-primary);
+    }
+    
+    .call-duration i {
+        color: var(--text-muted);
+        font-size: 12px;
+    }
+    
+    .call-duration--zero {
+        color: var(--text-muted);
+    }
+    
+    .call-actions {
+        display: flex;
+        gap: 4px;
+    }
+    
+    .calls-loading,
+    .calls-empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px;
+        color: var(--text-muted);
+        text-align: center;
+    }
+    
+    .calls-empty__icon {
+        width: 80px;
+        height: 80px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg-tertiary);
+        border-radius: 50%;
+        margin-bottom: 16px;
+    }
+    
+    .calls-empty__icon i {
+        font-size: 36px;
+        opacity: 0.4;
+    }
+    
+    .calls-empty h4 {
+        margin: 0 0 8px;
+        font-size: 16px;
+        color: var(--text-primary);
+    }
+    
+    .calls-loading .spinner {
+        width: 40px;
+        height: 40px;
+        border: 3px solid var(--bg-tertiary);
+        border-top-color: var(--accent-primary);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        margin-bottom: 16px;
+    }
+</style>

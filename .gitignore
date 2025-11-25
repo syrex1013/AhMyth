@@ -2,7 +2,33 @@
 bower_components
 node_modules
 dist
+build
+.gradle
+.idea
+bin
+gen
+out
+
+# Android
+local.properties
+.DS_Store
+Thumbs.db
+*.iml
+*.ide
+
+# AhMyth Specific
+AhMyth-Server/app/app/Factory/Ahmyth
+AhMyth-Server/app/app/Factory/output
+final-build
+temp-apk-build
+temp-apk2
+scripts/
 
 #files
 *.tgz
 *.log
+*.apk
+*.ap_
+*.dex
+*.class
+*.smali

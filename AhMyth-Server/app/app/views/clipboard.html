@@ -1,0 +1,122 @@
+<div class="view-container">
+    <div class="view-header">
+        <h3 class="view-header__title">
+            <i class="clipboard icon"></i>
+            Clipboard
+        </h3>
+        <div class="view-header__right">
+            <button class="btn btn--primary" ng-click="getClipboardContent()">
+                <i class="sync icon"></i>
+                Refresh
+            </button>
+            <button class="btn btn--secondary" ng-click="startMonitoring()" ng-if="!isMonitoring">
+                <i class="eye icon"></i>
+                Monitor
+            </button>
+            <button class="btn btn--danger" ng-click="stopMonitoring()" ng-if="isMonitoring">
+                <i class="stop icon"></i>
+                Stop
+            </button>
+        </div>
+    </div>
+
+    <div class="clipboard-content" ng-if="clipboardText">
+        <div class="info-card">
+            <div class="info-card__header">
+                Current Clipboard Content
+                <span class="badge badge--success" ng-if="isMonitoring" style="margin-left: 10px;">Monitoring</span>
+            </div>
+            <div class="info-card__body">
+                <div class="clipboard-text">{{clipboardText}}</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="empty-state" ng-if="!clipboardText">
+        <i class="clipboard icon"></i>
+        <p>Click Refresh to get clipboard content</p>
+    </div>
+</div>
+
+<style>
+    .view-container {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .view-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+        flex-shrink: 0;
+    }
+    
+    .view-header__title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+    
+    .view-header__title i {
+        color: var(--accent-primary);
+    }
+    
+    .clipboard-content {
+        flex: 1;
+    }
+    
+    .info-card {
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        overflow: hidden;
+    }
+    
+    .info-card__header {
+        padding: 10px 14px;
+        background: var(--bg-tertiary);
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-primary);
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .info-card__body {
+        padding: 16px;
+    }
+    
+    .clipboard-text {
+        font-family: var(--font-mono);
+        font-size: 13px;
+        color: var(--text-primary);
+        white-space: pre-wrap;
+        word-break: break-all;
+    }
+    
+    .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        flex: 1;
+        text-align: center;
+        color: var(--text-muted);
+    }
+    
+    .empty-state i {
+        font-size: 48px;
+        margin-bottom: 12px;
+        opacity: 0.5;
+    }
+    
+    .empty-state p {
+        margin: 0;
+        font-size: 13px;
+    }
+</style>

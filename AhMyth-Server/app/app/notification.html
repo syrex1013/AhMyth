@@ -1,13 +1,11 @@
 <!DOCTYPE html>
-<html ng-app="myappy" class="nopadding">
+<html ng-app="myappy">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <title>New Connection</title>
 
-    <title>AhMyth</title>
-
-    <!-- Insert this line above script imports  -->
     <script>
         if (typeof module === 'object') {
             window.module = module;
@@ -15,46 +13,97 @@
         }
     </script>
 
-
     <script type="text/javascript" src="assets/js/lib/jquery-3.1.1.min.js"></script>
     <script type="text/javascript" src="../node_modules/angular/angular.js"></script>
     <script type="text/javascript" src="assets/js/controllers/NotifiCtrl.js"></script>
-    <!-- Insert this line after script imports -->
+    
     <script>
         if (window.module) module = window.module;
     </script>
 
-    <link rel="stylesheet" href="css/mystyle.css">
     <link rel="stylesheet" href="../node_modules/fomantic-ui/dist/semantic.min.css" />
 
-
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        html, body {
+            background: transparent;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+        }
+        
+        .notification {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        }
+        
+        .notification__icon {
+            width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #58a6ff;
+            border-radius: 6px;
+        }
+        
+        .notification__icon i {
+            color: #fff;
+            font-size: 16px;
+        }
+        
+        .notification__content {
+            flex: 1;
+            min-width: 0;
+        }
+        
+        .notification__title {
+            font-size: 13px;
+            font-weight: 600;
+            color: #e6edf3;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .notification__subtitle {
+            font-size: 11px;
+            color: #8b949e;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .notification__flag {
+            font-size: 20px;
+        }
+    </style>
 </head>
 
-<body ng-controller="NotifiCtrl" class="nopadding">
-<audio autoplay>
-  <source src="Audio/AhMyth-notification.mp3" type="audio/mpeg">
-</audio>
+<body ng-controller="NotifiCtrl">
+    <audio autoplay>
+        <source src="Audio/AhMyth-notification.mp3" type="audio/mpeg">
+    </audio>
 
-    <div class="ui cards">
-        <div class="red card">
-            <div class="content">
-                <span class="right floated">
-                            <i  ng-if="victimCountry != null" class="{{victimCountry}} flag"></i>
-                            <i ng-if="victimCountry == null" class="help circle icon"></i>
-                        </span>
-                <div class="header" ng-bind="victimModel">
-
-                </div>
-                <div class="meta" ng-bind="victimSocket">
-
-                </div>
-
-            </div>
+    <div class="notification">
+        <div class="notification__icon">
+            <i class="android icon"></i>
         </div>
-
-
-
-
+        <div class="notification__content">
+            <div class="notification__title" ng-bind="victimModel">New Device</div>
+            <div class="notification__subtitle" ng-bind="victimSocket">Connecting...</div>
+        </div>
+        <div class="notification__flag" ng-bind-html="getCountryEmoji(victimCountry)"></div>
+    </div>
 </body>
 
 </html>

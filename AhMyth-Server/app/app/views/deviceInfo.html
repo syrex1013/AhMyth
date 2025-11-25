@@ -1,0 +1,187 @@
+<div class="view-container">
+    <div class="view-header">
+        <h3 class="view-header__title">
+            <i class="mobile alternate icon"></i>
+            Device Information
+        </h3>
+        <button class="btn btn--primary" ng-click="getDeviceInfo()">
+            <i class="sync icon"></i>
+            Refresh
+        </button>
+    </div>
+
+    <div class="info-grid" ng-show="deviceInfo">
+        <div class="info-card">
+            <div class="info-card__header">Device</div>
+            <div class="info-card__body">
+                <div class="info-row">
+                    <span class="info-row__label">Manufacturer</span>
+                    <span class="info-row__value">{{deviceInfo.manf}}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-row__label">Model</span>
+                    <span class="info-row__value">{{deviceInfo.model}}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-row__label">Brand</span>
+                    <span class="info-row__value">{{deviceInfo.brand}}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-row__label">Product</span>
+                    <span class="info-row__value">{{deviceInfo.product}}</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="info-card">
+            <div class="info-card__header">System</div>
+            <div class="info-card__body">
+                <div class="info-row">
+                    <span class="info-row__label">Android Version</span>
+                    <span class="info-row__value">{{deviceInfo.release}}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-row__label">SDK Level</span>
+                    <span class="info-row__value">{{deviceInfo.sdk}}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-row__label">Build ID</span>
+                    <span class="info-row__value">{{deviceInfo.id}}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-row__label">Fingerprint</span>
+                    <span class="info-row__value" style="font-size: 10px;">{{deviceInfo.fingerprint}}</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="info-card">
+            <div class="info-card__header">Display</div>
+            <div class="info-card__body">
+                <div class="info-row">
+                    <span class="info-row__label">Resolution</span>
+                    <span class="info-row__value">{{deviceInfo.width}} x {{deviceInfo.height}}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-row__label">Density</span>
+                    <span class="info-row__value">{{deviceInfo.density}} dpi</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="info-card">
+            <div class="info-card__header">Memory</div>
+            <div class="info-card__body">
+                <div class="info-row">
+                    <span class="info-row__label">Total RAM</span>
+                    <span class="info-row__value">{{deviceInfo.totalMemory}}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-row__label">Available RAM</span>
+                    <span class="info-row__value">{{deviceInfo.availableMemory}}</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="empty-state" ng-if="!deviceInfo">
+        <i class="mobile icon"></i>
+        <p>Click Refresh to load device information</p>
+    </div>
+</div>
+
+<style>
+    .view-container {
+        height: 100%;
+    }
+    
+    .view-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+    }
+    
+    .view-header__title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+    
+    .view-header__title i {
+        color: var(--accent-primary);
+    }
+    
+    .info-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+    }
+    
+    .info-card {
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        overflow: hidden;
+    }
+    
+    .info-card__header {
+        padding: 10px 14px;
+        background: var(--bg-tertiary);
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-primary);
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .info-card__body {
+        padding: 12px 14px;
+    }
+    
+    .info-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 6px 0;
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .info-row:last-child {
+        border-bottom: none;
+    }
+    
+    .info-row__label {
+        font-size: 12px;
+        color: var(--text-secondary);
+    }
+    
+    .info-row__value {
+        font-size: 12px;
+        font-family: var(--font-mono);
+        color: var(--text-primary);
+    }
+    
+    .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 20px;
+        text-align: center;
+        color: var(--text-muted);
+    }
+    
+    .empty-state i {
+        font-size: 48px;
+        margin-bottom: 12px;
+        opacity: 0.5;
+    }
+    
+    .empty-state p {
+        margin: 0;
+        font-size: 13px;
+    }
+</style>

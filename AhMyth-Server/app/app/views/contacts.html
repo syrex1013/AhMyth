@@ -1,31 +1,361 @@
-<div class="ui {{load}} segment h100" style="overflow: scroll;height: 400px !important;" id="parent">
-    <table class="ui  very compact striped table full">
-        <thead>
-            <tr>
-                <th colspan="2">
-                    <div class="ui label">
-                        <i class="mail icon"></i> <span ng-bind="contactsSize"></span>
-                        <span class="detail">Contacts</span>
-                    </div>
-                </th>
+<div class="contacts-panel" ng-class="{'loading-state': load === 'loading'}">
+    <!-- Header -->
+    <div class="contacts-header">
+        <div class="contacts-header__info">
+            <h3 class="contacts-header__title">
+                <i class="address book icon" style="color: #e040fb;"></i>
+                Contacts
+            </h3>
+            <div class="contacts-stats" ng-if="contactsSize">
+                <span class="contacts-stat">
+                    <i class="users icon"></i> {{contactsSize}} contacts
+                </span>
+                <span class="contacts-stat" ng-if="filteredContacts.length !== contactsSize">
+                    <i class="filter icon"></i> {{filteredContacts.length}} shown
+                </span>
+            </div>
+        </div>
+        <div class="contacts-header__actions">
+            <div class="contacts-search">
+                <i class="search icon"></i>
+                <input type="text" ng-model="searchContact" placeholder="Search contacts...">
+            </div>
+            <button class="btn btn--primary" ng-click="getContacts()">
+                <i class="sync icon"></i>
+                Refresh
+            </button>
+            <button class="btn btn--secondary" ng-click="SaveContacts()" ng-disabled="!contactsList.length">
+                <i class="download icon"></i>
+                Export CSV
+            </button>
+        </div>
+    </div>
 
-                <th colspan="2">
-                    <div class="right aligned">
-                        <a class="ui red label" ng-click="SaveContacts()">
-                            <i class="save icon"></i> Save
-                        </a>
-                    </div>
-                </th>
-            </tr>
-        </thead>
-        <tbody infinite-scroll="increaseLimit()" infinite-scroll-container='"#parent"'>
-            <tr ng-repeat="contact in contactsList | limitTo:barLimit">
-                <td ng-bind="contact.name"></td>
-                <td></td>
-                <td ng-bind="contact.phoneNo"></td>
-            </tr>
-        </tbody>
-    </table>
+    <!-- Alphabet Quick Navigation -->
+    <div class="alphabet-nav" ng-if="contactsList.length > 20">
+        <span class="alphabet-letter" ng-repeat="letter in alphabet" ng-click="scrollToLetter(letter)">{{letter}}</span>
+    </div>
 
+    <!-- Contacts Table -->
+    <div class="contacts-table-wrapper" infinite-scroll="increaseLimit()">
+        <table class="data-table" ng-if="contactsList.length > 0">
+            <thead>
+                <tr>
+                    <th style="width: 50px;">#</th>
+                    <th>Contact</th>
+                    <th>Phone Number</th>
+                    <th style="width: 100px;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr ng-repeat="contact in filteredContacts = (contactsList | filter:searchContact | limitTo:barLimit)" 
+                    class="contact-row" 
+                    id="contact-{{contact.name.charAt(0).toUpperCase()}}">
+                    <td style="color: var(--text-muted);">{{$index + 1}}</td>
+                    <td>
+                        <div class="contact-info">
+                            <span class="contact-avatar" ng-style="{'background': getAvatarColor(contact.name)}">
+                                {{contact.name.charAt(0).toUpperCase()}}
+                            </span>
+                            <div class="contact-details">
+                                <span class="contact-name" ng-bind="contact.name"></span>
+                                <span class="contact-type" ng-if="contact.type">{{contact.type}}</span>
+                            </div>
+                        </div>
+                    </td>
+                    <td>
+                        <div class="phone-number">
+                            <i class="phone icon"></i>
+                            <span ng-bind="contact.phoneNo"></span>
+                        </div>
+                    </td>
+                    <td>
+                        <div class="contact-actions">
+                            <button class="btn btn--icon btn--ghost" ng-click="copyPhone(contact.phoneNo)" title="Copy Number">
+                                <i class="copy icon"></i>
+                            </button>
+                            <button class="btn btn--icon btn--ghost" ng-click="sendSmsTo(contact.phoneNo)" title="Send SMS">
+                                <i class="comment icon"></i>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
 
+        <!-- Loading State -->
+        <div class="contacts-loading" ng-if="load === 'loading'">
+            <div class="spinner"></div>
+            <p>Fetching contacts...</p>
+            <span class="loading-hint">This may take a moment for large contact lists</span>
+        </div>
+
+        <!-- Empty State -->
+        <div class="contacts-empty" ng-if="contactsList.length === 0 && load !== 'loading'">
+            <div class="contacts-empty__icon">
+                <i class="address book outline icon"></i>
+            </div>
+            <h4>No Contacts Found</h4>
+            <p>Click "Refresh" to fetch contacts from the device</p>
+        </div>
+        
+        <!-- No Results State -->
+        <div class="contacts-empty" ng-if="contactsList.length > 0 && filteredContacts.length === 0">
+            <div class="contacts-empty__icon">
+                <i class="search icon"></i>
+            </div>
+            <h4>No Matching Contacts</h4>
+            <p>Try adjusting your search criteria</p>
+        </div>
+    </div>
 </div>
+
+<style>
+    .contacts-panel {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .contacts-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+        flex-wrap: wrap;
+        gap: 12px;
+    }
+    
+    .contacts-header__title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin: 0;
+    }
+    
+    .contacts-stats {
+        display: flex;
+        gap: 16px;
+        margin-top: 8px;
+    }
+    
+    .contacts-stat {
+        font-size: 12px;
+        color: var(--text-secondary);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    
+    .contacts-header__actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    .contacts-search {
+        position: relative;
+    }
+    
+    .contacts-search i {
+        position: absolute;
+        left: 12px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: var(--text-muted);
+    }
+    
+    .contacts-search input {
+        padding: 10px 14px 10px 36px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        color: var(--text-primary);
+        font-size: 13px;
+        width: 220px;
+    }
+    
+    .contacts-search input:focus {
+        outline: none;
+        border-color: var(--accent-primary);
+    }
+    
+    /* Alphabet Navigation */
+    .alphabet-nav {
+        display: flex;
+        justify-content: center;
+        gap: 4px;
+        padding: 10px;
+        background: var(--bg-tertiary);
+        border-radius: var(--radius-md);
+        margin-bottom: 16px;
+        flex-wrap: wrap;
+    }
+    
+    .alphabet-letter {
+        width: 28px;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-secondary);
+        cursor: pointer;
+        border-radius: var(--radius-sm);
+        transition: all 0.2s ease;
+    }
+    
+    .alphabet-letter:hover {
+        background: var(--accent-primary);
+        color: var(--bg-primary);
+    }
+    
+    .contacts-table-wrapper {
+        flex: 1;
+        overflow-y: auto;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+    }
+    
+    .data-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    
+    .data-table thead {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+    }
+    
+    .data-table th {
+        padding: 14px 16px;
+        background: var(--bg-secondary);
+        border-bottom: 1px solid var(--border-color);
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        text-align: left;
+    }
+    
+    .data-table td {
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .contact-row:hover {
+        background: var(--bg-elevated);
+    }
+    
+    .contact-info {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+    
+    .contact-avatar {
+        width: 40px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(135deg, #e040fb 0%, #9945ff 100%);
+        color: white;
+        font-size: 15px;
+        font-weight: 600;
+        border-radius: 50%;
+        flex-shrink: 0;
+    }
+    
+    .contact-details {
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .contact-name {
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--text-primary);
+    }
+    
+    .contact-type {
+        font-size: 11px;
+        color: var(--text-muted);
+        margin-top: 2px;
+    }
+    
+    .phone-number {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-family: var(--font-mono);
+        font-size: 13px;
+        color: var(--text-primary);
+    }
+    
+    .phone-number i {
+        color: var(--text-muted);
+        font-size: 12px;
+    }
+    
+    .contact-actions {
+        display: flex;
+        gap: 4px;
+    }
+    
+    .contacts-loading,
+    .contacts-empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px;
+        color: var(--text-muted);
+        text-align: center;
+    }
+    
+    .contacts-empty__icon {
+        width: 80px;
+        height: 80px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg-tertiary);
+        border-radius: 50%;
+        margin-bottom: 16px;
+    }
+    
+    .contacts-empty__icon i {
+        font-size: 36px;
+        opacity: 0.4;
+    }
+    
+    .contacts-empty h4 {
+        margin: 0 0 8px;
+        font-size: 16px;
+        color: var(--text-primary);
+    }
+    
+    .contacts-loading .spinner {
+        width: 40px;
+        height: 40px;
+        border: 3px solid var(--bg-tertiary);
+        border-top-color: var(--accent-primary);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        margin-bottom: 16px;
+    }
+    
+    .loading-hint {
+        font-size: 11px;
+        color: var(--text-muted);
+        margin-top: 8px;
+    }
+</style>

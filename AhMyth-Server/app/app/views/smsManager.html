@@ -1,50 +1,622 @@
-<div class="ui top attached tabular menu">
-    <a class="item active" data-tab="sendSms">Send SMS</a>
-    <a class="item" data-tab="smsList" ng-click="getSMSList()">SMS List</a>
-</div>
-<div class="ui bottom attached tab segment active h90 center aligned" data-tab="sendSms">
-    <br>
-    <div class="ui labeled input">
-        <div class="ui label">
-            TO://
+<div class="sms-panel">
+    <!-- Header -->
+    <div class="sms-header">
+        <div class="sms-header__info">
+            <h3 class="sms-header__title">
+                <i class="comment alternate icon" style="color: #4fc3f7;"></i>
+                SMS Manager
+            </h3>
+            <div class="sms-stats" ng-if="smsSize">
+                <span class="sms-stat">
+                    <i class="inbox icon"></i> {{smsSize}} total messages
+                </span>
+                <span class="sms-stat">
+                    <i class="arrow down icon"></i> {{inboxCount || smsSize}} inbox
+                </span>
+                <span class="sms-stat">
+                    <i class="arrow up icon"></i> {{sentCount || 0}} sent
+                </span>
+            </div>
         </div>
-        <input type="text" ng-model="phoneNo" placeholder="Phone Number">
     </div>
-    <br>
-    <label>Message :</label>
-    <br>
-    <textarea class="w100 h40" ng-model="msg" placeholder="Message to send.."></textarea>
-    <br>
-    <br>
-    <button class="ui labeled icon red button" ng-click="SendSMS(phoneNo,msg)"> <i class="send outline icon"></i>SEND</button>
 
-</div>
-<div class="ui bottom attached tab {{load}} segment h90" data-tab="smsList" style="overflow: scroll; height: 360px;" id="parent">
-    <table class="ui very compact striped table">
-        <thead>
-            <tr>
-                <th>
-                    <div class="ui label">
-                        <i class="mail icon"></i> <span ng-bind="smsSize"></span>
-                        <span class="detail">Messages</span>
+    <!-- Tab Navigation -->
+    <div class="sms-tabs">
+        <a class="sms-tab active" data-tab="inbox">
+            <i class="inbox icon"></i>
+            <span>Inbox</span>
+            <span class="sms-tab__badge" ng-if="smsSize">{{smsSize}}</span>
+        </a>
+        <a class="sms-tab" data-tab="send">
+            <i class="paper plane icon"></i>
+            <span>Send SMS</span>
+        </a>
+    </div>
+
+    <!-- Inbox Tab -->
+    <div class="sms-content active" data-tab="inbox">
+        <div class="sms-actions">
+            <div class="sms-search">
+                <i class="search icon"></i>
+                <input type="text" ng-model="searchSms" placeholder="Search messages...">
+            </div>
+            <button class="btn btn--primary" ng-click="getSMSList()">
+                <i class="sync icon"></i>
+                Fetch Messages
+            </button>
+            <button class="btn btn--secondary" ng-click="SaveSMS()" ng-disabled="!smsList.length">
+                <i class="download icon"></i>
+                Export CSV
+            </button>
+        </div>
+
+        <div class="sms-list-wrapper" infinite-scroll="increaseLimit()" ng-class="{'loading-state': load === 'loading'}">
+            <!-- SMS List -->
+            <div class="sms-conversation" ng-repeat="sms in smsList | filter:searchSms | limitTo:barLimit">
+                <div class="sms-item" ng-class="{'sms-item--sent': sms.type == 2, 'sms-item--received': sms.type != 2}">
+                    <div class="sms-item__avatar">
+                        <i class="user icon" ng-if="sms.type != 2"></i>
+                        <i class="arrow up icon" ng-if="sms.type == 2"></i>
                     </div>
-                </th>
-                <th>
-                    <div class="right aligned">
-                        <a class="ui red label" ng-click="SaveSMS()">
-                            <i class="save icon"></i> Save
-                        </a>
+                    <div class="sms-item__content">
+                        <div class="sms-item__header">
+                            <span class="sms-item__number" ng-bind="sms.phoneNo"></span>
+                            <span class="sms-item__type" ng-class="{'sms-type--received': sms.type != 2, 'sms-type--sent': sms.type == 2}">
+                                {{sms.type == 2 ? 'Sent' : 'Received'}}
+                            </span>
+                        </div>
+                        <p class="sms-item__message" ng-bind="sms.msg"></p>
+                        <div class="sms-item__meta">
+                            <span class="sms-meta" ng-if="sms.date">
+                                <i class="clock outline icon"></i>
+                                {{sms.date | date:'medium'}}
+                            </span>
+                            <span class="sms-meta">
+                                <i class="text width icon"></i>
+                                {{sms.msg.length}} chars
+                            </span>
+                        </div>
                     </div>
-                </th>
-            </tr>
-        </thead>
-        <tbody infinite-scroll="increaseLimit()" infinite-scroll-container='"#parent"'>
-            <tr ng-repeat="sms in smsList | limitTo:barLimit">
-                <td ng-bind="sms.phoneNo"></td>
-                <td ng-bind="sms.msg"></td>
-            </tr>
-        </tbody>
-    </table>
+                    <div class="sms-item__actions">
+                        <button class="btn btn--icon btn--ghost" ng-click="replyToSms(sms)" title="Reply">
+                            <i class="reply icon"></i>
+                        </button>
+                        <button class="btn btn--icon btn--ghost" ng-click="copySms(sms)" title="Copy">
+                            <i class="copy icon"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
 
+            <!-- Loading State -->
+            <div class="sms-loading" ng-if="load === 'loading'">
+                <div class="spinner"></div>
+                <p>Fetching messages...</p>
+            </div>
 
+            <!-- Empty State -->
+            <div class="sms-empty" ng-if="smsList.length === 0 && load !== 'loading'">
+                <div class="sms-empty__icon">
+                    <i class="inbox icon"></i>
+                </div>
+                <h4>No Messages</h4>
+                <p>Click "Fetch Messages" to load SMS inbox from the device</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Send Tab -->
+    <div class="sms-content" data-tab="send">
+        <div class="sms-send-container">
+            <div class="sms-send-form">
+                <div class="sms-send-header">
+                    <i class="paper plane icon"></i>
+                    <span>Compose New Message</span>
+                </div>
+                
+                <div class="sms-form-group">
+                    <label class="sms-form-label">
+                        <i class="phone icon"></i>
+                        Recipient Phone Number
+                    </label>
+                    <div class="sms-input-wrapper">
+                        <input type="text" class="sms-form-input" ng-model="phoneNo" placeholder="+1 234 567 8900">
+                        <span class="sms-input-hint">Include country code for international numbers</span>
+                    </div>
+                </div>
+                
+                <div class="sms-form-group">
+                    <label class="sms-form-label">
+                        <i class="comment icon"></i>
+                        Message Content
+                    </label>
+                    <div class="sms-input-wrapper">
+                        <textarea class="sms-form-textarea" ng-model="msg" placeholder="Type your message here..." rows="5" maxlength="160"></textarea>
+                        <div class="sms-char-counter">
+                            <span ng-class="{'text-warning': msg.length > 140, 'text-danger': msg.length >= 160}">
+                                {{msg.length || 0}}/160
+                            </span>
+                            <span class="sms-parts" ng-if="msg.length > 160">
+                                ({{Math.ceil(msg.length / 160)}} parts)
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="sms-send-actions">
+                    <button class="btn btn--secondary" ng-click="clearForm()">
+                        <i class="eraser icon"></i>
+                        Clear
+                    </button>
+                    <button class="btn btn--primary btn--lg" ng-click="SendSMS(phoneNo, msg)" ng-disabled="!phoneNo || !msg">
+                        <i class="paper plane icon"></i>
+                        Send Message
+                    </button>
+                </div>
+            </div>
+            
+            <div class="sms-send-tips">
+                <h4><i class="info circle icon"></i> Tips</h4>
+                <ul>
+                    <li>SMS will be sent from the target device</li>
+                    <li>Standard SMS rates may apply to the target</li>
+                    <li>Messages over 160 chars split into multiple parts</li>
+                    <li>International numbers require country code prefix</li>
+                </ul>
+            </div>
+        </div>
+    </div>
 </div>
+
+<style>
+    .sms-panel {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .sms-header {
+        margin-bottom: 16px;
+    }
+    
+    .sms-header__title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin: 0;
+    }
+    
+    .sms-stats {
+        display: flex;
+        gap: 16px;
+        margin-top: 8px;
+    }
+    
+    .sms-stat {
+        font-size: 12px;
+        color: var(--text-secondary);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    
+    .sms-tabs {
+        display: flex;
+        gap: 4px;
+        margin-bottom: 16px;
+    }
+    
+    .sms-tab {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 20px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        color: var(--text-secondary);
+        font-size: 13px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        text-decoration: none;
+    }
+    
+    .sms-tab:hover {
+        background: var(--bg-elevated);
+        color: var(--text-primary);
+    }
+    
+    .sms-tab.active {
+        background: var(--accent-primary);
+        color: var(--bg-primary);
+        border-color: var(--accent-primary);
+    }
+    
+    .sms-tab__badge {
+        background: rgba(0,0,0,0.2);
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 600;
+    }
+    
+    .sms-content {
+        flex: 1;
+        display: none;
+        flex-direction: column;
+        overflow: hidden;
+    }
+    
+    .sms-content.active {
+        display: flex;
+    }
+    
+    .sms-actions {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 16px;
+    }
+    
+    .sms-search {
+        position: relative;
+        flex: 1;
+        max-width: 300px;
+    }
+    
+    .sms-search i {
+        position: absolute;
+        left: 12px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: var(--text-muted);
+    }
+    
+    .sms-search input {
+        width: 100%;
+        padding: 10px 14px 10px 36px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        color: var(--text-primary);
+        font-size: 13px;
+    }
+    
+    .sms-search input:focus {
+        outline: none;
+        border-color: var(--accent-primary);
+    }
+    
+    .sms-list-wrapper {
+        flex: 1;
+        overflow-y: auto;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+        padding: 8px;
+    }
+    
+    .sms-item {
+        display: flex;
+        gap: 14px;
+        padding: 16px;
+        border-radius: var(--radius-md);
+        margin-bottom: 8px;
+        transition: all 0.2s ease;
+    }
+    
+    .sms-item--received {
+        background: var(--bg-tertiary);
+        border-left: 3px solid var(--accent-success);
+    }
+    
+    .sms-item--sent {
+        background: linear-gradient(135deg, rgba(0, 168, 255, 0.1) 0%, transparent 100%);
+        border-left: 3px solid var(--accent-info);
+    }
+    
+    .sms-item:hover {
+        transform: translateX(4px);
+    }
+    
+    .sms-item__avatar {
+        width: 44px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg-secondary);
+        border-radius: 50%;
+        color: var(--text-secondary);
+        flex-shrink: 0;
+    }
+    
+    .sms-item--received .sms-item__avatar {
+        background: rgba(0, 214, 143, 0.15);
+        color: var(--accent-success);
+    }
+    
+    .sms-item--sent .sms-item__avatar {
+        background: rgba(0, 168, 255, 0.15);
+        color: var(--accent-info);
+    }
+    
+    .sms-item__content {
+        flex: 1;
+        min-width: 0;
+    }
+    
+    .sms-item__header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 6px;
+    }
+    
+    .sms-item__number {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text-primary);
+        font-family: var(--font-mono);
+    }
+    
+    .sms-item__type {
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+    
+    .sms-type--received {
+        background: rgba(0, 214, 143, 0.15);
+        color: var(--accent-success);
+    }
+    
+    .sms-type--sent {
+        background: rgba(0, 168, 255, 0.15);
+        color: var(--accent-info);
+    }
+    
+    .sms-item__message {
+        font-size: 13px;
+        color: var(--text-secondary);
+        margin: 0 0 8px;
+        line-height: 1.6;
+    }
+    
+    .sms-item__meta {
+        display: flex;
+        gap: 16px;
+    }
+    
+    .sms-meta {
+        font-size: 11px;
+        color: var(--text-muted);
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+    
+    .sms-item__actions {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+    
+    .sms-loading,
+    .sms-empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px;
+        color: var(--text-muted);
+        text-align: center;
+    }
+    
+    .sms-empty__icon {
+        width: 80px;
+        height: 80px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg-tertiary);
+        border-radius: 50%;
+        margin-bottom: 16px;
+    }
+    
+    .sms-empty__icon i {
+        font-size: 36px;
+        opacity: 0.4;
+    }
+    
+    .sms-empty h4 {
+        margin: 0 0 8px;
+        font-size: 16px;
+        color: var(--text-primary);
+    }
+    
+    .sms-loading .spinner {
+        width: 40px;
+        height: 40px;
+        border: 3px solid var(--bg-tertiary);
+        border-top-color: var(--accent-primary);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        margin-bottom: 16px;
+    }
+    
+    /* Send Form */
+    .sms-send-container {
+        display: grid;
+        grid-template-columns: 2fr 1fr;
+        gap: 24px;
+        height: 100%;
+    }
+    
+    .sms-send-form {
+        padding: 24px;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+    }
+    
+    .sms-send-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 24px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .sms-send-header i {
+        color: var(--accent-primary);
+    }
+    
+    .sms-form-group {
+        margin-bottom: 20px;
+    }
+    
+    .sms-form-label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 8px;
+    }
+    
+    .sms-form-label i {
+        font-size: 11px;
+        opacity: 0.7;
+    }
+    
+    .sms-input-wrapper {
+        position: relative;
+    }
+    
+    .sms-form-input,
+    .sms-form-textarea {
+        width: 100%;
+        padding: 14px 16px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        color: var(--text-primary);
+        font-size: 14px;
+        transition: all 0.2s ease;
+    }
+    
+    .sms-form-input {
+        font-family: var(--font-mono);
+    }
+    
+    .sms-form-textarea {
+        font-family: var(--font-sans);
+        resize: vertical;
+        min-height: 120px;
+        line-height: 1.6;
+    }
+    
+    .sms-form-input:focus,
+    .sms-form-textarea:focus {
+        outline: none;
+        border-color: var(--accent-primary);
+        box-shadow: 0 0 0 3px rgba(0, 212, 170, 0.1);
+    }
+    
+    .sms-input-hint {
+        display: block;
+        font-size: 11px;
+        color: var(--text-muted);
+        margin-top: 6px;
+    }
+    
+    .sms-char-counter {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        font-size: 11px;
+        color: var(--text-muted);
+        margin-top: 6px;
+    }
+    
+    .text-warning { color: var(--accent-warning); }
+    .text-danger { color: var(--accent-danger); }
+    
+    .sms-send-actions {
+        display: flex;
+        gap: 12px;
+        justify-content: flex-end;
+        margin-top: 24px;
+    }
+    
+    .btn--lg {
+        padding: 14px 28px;
+        font-size: 14px;
+    }
+    
+    .sms-send-tips {
+        padding: 20px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+        height: fit-content;
+    }
+    
+    .sms-send-tips h4 {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin: 0 0 16px;
+    }
+    
+    .sms-send-tips h4 i {
+        color: var(--accent-info);
+    }
+    
+    .sms-send-tips ul {
+        margin: 0;
+        padding: 0 0 0 20px;
+    }
+    
+    .sms-send-tips li {
+        font-size: 12px;
+        color: var(--text-secondary);
+        margin-bottom: 10px;
+        line-height: 1.5;
+    }
+</style>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const tabs = document.querySelectorAll('.sms-tab');
+        const contents = document.querySelectorAll('.sms-content');
+        
+        tabs.forEach(tab => {
+            tab.addEventListener('click', function(e) {
+                e.preventDefault();
+                const targetTab = this.getAttribute('data-tab');
+                
+                tabs.forEach(t => t.classList.remove('active'));
+                contents.forEach(c => c.classList.remove('active'));
+                
+                this.classList.add('active');
+                document.querySelector(`.sms-content[data-tab="${targetTab}"]`).classList.add('active');
+            });
+        });
+    });
+</script>

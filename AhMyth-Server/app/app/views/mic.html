@@ -1,28 +1,510 @@
-<div class="ui segment h100">
-    <div class="ui grid center aligned h100">
-        <div class="row h30">
-            <div class="column">
-                <div class="ui right floated labeled input">
-                    <div class="ui label">
-                        Seconds
-                    </div>
-                    <input type="text" ng-model="sec" placeholder="">
+<div class="mic-panel">
+    <!-- Header -->
+    <div class="mic-header">
+        <div class="mic-header__title">
+            <i class="microphone icon" style="color: #00a8ff;"></i>
+            <span>Microphone Recording</span>
+        </div>
+        <div class="mic-header__status" ng-if="isRecording">
+            <span class="recording-indicator">
+                <span class="recording-dot"></span>
+                Recording in progress...
+            </span>
+        </div>
+    </div>
+
+    <!-- Recording Controls -->
+    <div class="mic-controls">
+        <div class="mic-control-panel">
+            <div class="mic-duration-selector">
+                <label class="mic-label">Recording Duration</label>
+                <div class="duration-presets">
+                    <button class="duration-btn" ng-click="seconds = 10" ng-class="{'duration-btn--active': seconds == 10}">10s</button>
+                    <button class="duration-btn" ng-click="seconds = 30" ng-class="{'duration-btn--active': seconds == 30}">30s</button>
+                    <button class="duration-btn" ng-click="seconds = 60" ng-class="{'duration-btn--active': seconds == 60}">1m</button>
+                    <button class="duration-btn" ng-click="seconds = 120" ng-class="{'duration-btn--active': seconds == 120}">2m</button>
+                    <button class="duration-btn" ng-click="seconds = 300" ng-class="{'duration-btn--active': seconds == 300}">5m</button>
                 </div>
-                <button class="ui labeled icon black button" ng-click="Record(sec)"><i class="photo icon"></i>Record</button>
+                <div class="custom-duration">
+                    <input type="number" class="mic-input" ng-model="seconds" placeholder="Custom" min="1" max="300">
+                    <span class="mic-input-suffix">seconds</span>
+                </div>
+            </div>
+            
+            <div class="mic-action-area">
+                <button class="btn btn--record" ng-click="Record(seconds)" ng-disabled="isRecording">
+                    <div class="record-btn-inner">
+                        <i class="circle icon"></i>
+                    </div>
+                    <span>Start Recording</span>
+                </button>
+                <p class="mic-hint">
+                    <i class="info circle icon"></i>
+                    Recording will capture {{seconds || 10}} seconds of audio from the device microphone
+                </p>
             </div>
         </div>
-        <div class="row  h70">
-            <div class="column h100">
-                <div class="ui segment">
-                    <audio controls id="player">
-                   <source src="" id="sourceMp3" type="audio/mp3">
-                      Not Supported.
+        
+        <div class="mic-visualization" ng-if="isRecording">
+            <div class="wave-container">
+                <div class="wave" ng-repeat="i in [1,2,3,4,5,6,7,8]"></div>
+            </div>
+            <div class="recording-timer">
+                <span class="timer-value">{{recordingTime || '00:00'}}</span>
+                <span class="timer-label">/ {{formatDuration(seconds)}}</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Audio Player -->
+    <div class="mic-player" ng-hide="isAudio">
+        <div class="mic-player__header">
+            <div class="player-title">
+                <i class="volume up icon"></i>
+                <span>Recorded Audio</span>
+            </div>
+            <div class="player-meta" ng-if="recordingInfo">
+                <span class="meta-item">
+                    <i class="clock icon"></i>
+                    {{recordingInfo.duration || 'N/A'}}
+                </span>
+                <span class="meta-item">
+                    <i class="database icon"></i>
+                    {{recordingInfo.size || 'N/A'}}
+                </span>
+            </div>
+        </div>
+        <div class="mic-player__content">
+            <div class="audio-player-wrapper">
+                <audio id="player" controls style="width: 100%;">
+                    <source id="sourceMp3" src="" type="audio/mp3">
+                    Your browser does not support the audio element.
                 </audio>
-                    <br>
-                    <br>
-                    <button class="ui red button" ng-click="SaveAudio()" ng-disabled="isAudio"><i class="save icon" ></i>Save</button>
-                </div>
+            </div>
+        </div>
+        <div class="mic-player__actions">
+            <button class="btn btn--secondary" ng-click="SaveAudio()">
+                <i class="download icon"></i>
+                Save Recording
+            </button>
+            <button class="btn btn--ghost" ng-click="clearRecording()">
+                <i class="trash icon"></i>
+                Discard
+            </button>
+        </div>
+    </div>
+
+    <!-- Placeholder -->
+    <div class="mic-placeholder" ng-show="isAudio && !isRecording">
+        <div class="mic-placeholder__icon">
+            <i class="microphone icon"></i>
+            <div class="mic-rings">
+                <span class="ring"></span>
+                <span class="ring"></span>
+                <span class="ring"></span>
+            </div>
+        </div>
+        <h4>No Recording Yet</h4>
+        <p>Set the duration and click "Start Recording" to capture audio from the device microphone</p>
+        <div class="mic-features">
+            <div class="feature">
+                <i class="check circle icon"></i>
+                <span>High quality audio capture</span>
+            </div>
+            <div class="feature">
+                <i class="check circle icon"></i>
+                <span>Supports up to 5 minutes</span>
+            </div>
+            <div class="feature">
+                <i class="check circle icon"></i>
+                <span>MP3 format output</span>
             </div>
         </div>
     </div>
 </div>
+
+<style>
+    .mic-panel {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .mic-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 20px;
+    }
+    
+    .mic-header__title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+    
+    .recording-indicator {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: var(--accent-danger);
+        font-weight: 500;
+    }
+    
+    .recording-dot {
+        width: 10px;
+        height: 10px;
+        background: var(--accent-danger);
+        border-radius: 50%;
+        animation: pulse 1s infinite;
+    }
+    
+    @keyframes pulse {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.5; transform: scale(0.8); }
+    }
+    
+    /* Controls */
+    .mic-controls {
+        margin-bottom: 24px;
+    }
+    
+    .mic-control-panel {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 24px;
+        padding: 24px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+    }
+    
+    .mic-label {
+        display: block;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 12px;
+    }
+    
+    .duration-presets {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 12px;
+    }
+    
+    .duration-btn {
+        padding: 10px 16px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        color: var(--text-secondary);
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    
+    .duration-btn:hover {
+        border-color: var(--accent-primary);
+        color: var(--text-primary);
+    }
+    
+    .duration-btn--active {
+        background: var(--accent-primary);
+        border-color: var(--accent-primary);
+        color: var(--bg-primary);
+    }
+    
+    .custom-duration {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    
+    .mic-input {
+        width: 100px;
+        padding: 10px 14px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        color: var(--text-primary);
+        font-size: 14px;
+        font-family: var(--font-mono);
+    }
+    
+    .mic-input:focus {
+        outline: none;
+        border-color: var(--accent-primary);
+    }
+    
+    .mic-input-suffix {
+        font-size: 12px;
+        color: var(--text-muted);
+    }
+    
+    .mic-action-area {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+    }
+    
+    .btn--record {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        padding: 24px 48px;
+        background: linear-gradient(135deg, #ff3b5c 0%, #ff1744 100%);
+        border: none;
+        border-radius: var(--radius-lg);
+        color: white;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+    
+    .btn--record:hover:not(:disabled) {
+        transform: scale(1.02);
+        box-shadow: 0 8px 24px rgba(255, 59, 92, 0.4);
+    }
+    
+    .btn--record:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+    
+    .record-btn-inner {
+        width: 56px;
+        height: 56px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(255,255,255,0.2);
+        border-radius: 50%;
+        font-size: 24px;
+    }
+    
+    .mic-hint {
+        margin-top: 16px;
+        font-size: 12px;
+        color: var(--text-muted);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    
+    .mic-hint i {
+        color: var(--accent-info);
+    }
+    
+    /* Visualization */
+    .mic-visualization {
+        margin-top: 20px;
+        padding: 24px;
+        background: linear-gradient(135deg, rgba(255, 59, 92, 0.1) 0%, rgba(255, 23, 68, 0.05) 100%);
+        border: 1px solid rgba(255, 59, 92, 0.3);
+        border-radius: var(--radius-lg);
+        text-align: center;
+    }
+    
+    .wave-container {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        height: 60px;
+        margin-bottom: 16px;
+    }
+    
+    .wave {
+        width: 6px;
+        height: 20px;
+        background: var(--accent-danger);
+        border-radius: 3px;
+        animation: wave 0.5s ease-in-out infinite;
+    }
+    
+    .wave:nth-child(1) { animation-delay: 0s; }
+    .wave:nth-child(2) { animation-delay: 0.1s; }
+    .wave:nth-child(3) { animation-delay: 0.2s; }
+    .wave:nth-child(4) { animation-delay: 0.3s; }
+    .wave:nth-child(5) { animation-delay: 0.4s; }
+    .wave:nth-child(6) { animation-delay: 0.3s; }
+    .wave:nth-child(7) { animation-delay: 0.2s; }
+    .wave:nth-child(8) { animation-delay: 0.1s; }
+    
+    @keyframes wave {
+        0%, 100% { height: 20px; }
+        50% { height: 50px; }
+    }
+    
+    .recording-timer {
+        font-family: var(--font-mono);
+    }
+    
+    .timer-value {
+        font-size: 24px;
+        font-weight: 700;
+        color: var(--accent-danger);
+    }
+    
+    .timer-label {
+        font-size: 14px;
+        color: var(--text-muted);
+    }
+    
+    /* Player */
+    .mic-player {
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+        margin-bottom: 20px;
+    }
+    
+    .mic-player__header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 16px 20px;
+        background: var(--bg-secondary);
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .player-title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+    
+    .player-title i {
+        color: var(--accent-primary);
+    }
+    
+    .player-meta {
+        display: flex;
+        gap: 16px;
+    }
+    
+    .meta-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--text-secondary);
+    }
+    
+    .mic-player__content {
+        padding: 24px;
+    }
+    
+    .audio-player-wrapper audio {
+        width: 100%;
+        border-radius: var(--radius-md);
+    }
+    
+    .mic-player__actions {
+        display: flex;
+        gap: 12px;
+        padding: 16px 20px;
+        border-top: 1px solid var(--border-color);
+        background: var(--bg-secondary);
+    }
+    
+    /* Placeholder */
+    .mic-placeholder {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: var(--text-muted);
+        text-align: center;
+        padding: 40px;
+    }
+    
+    .mic-placeholder__icon {
+        position: relative;
+        width: 100px;
+        height: 100px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 24px;
+    }
+    
+    .mic-placeholder__icon i {
+        font-size: 48px;
+        color: var(--text-secondary);
+        position: relative;
+        z-index: 1;
+    }
+    
+    .mic-rings {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+    }
+    
+    .ring {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        border: 2px solid var(--accent-info);
+        border-radius: 50%;
+        opacity: 0;
+        animation: ring 3s infinite;
+    }
+    
+    .ring:nth-child(1) { animation-delay: 0s; }
+    .ring:nth-child(2) { animation-delay: 1s; }
+    .ring:nth-child(3) { animation-delay: 2s; }
+    
+    @keyframes ring {
+        0% { width: 50px; height: 50px; opacity: 0.8; }
+        100% { width: 150px; height: 150px; opacity: 0; }
+    }
+    
+    .mic-placeholder h4 {
+        margin: 0 0 8px;
+        font-size: 18px;
+        color: var(--text-primary);
+    }
+    
+    .mic-placeholder p {
+        max-width: 320px;
+        margin-bottom: 24px;
+    }
+    
+    .mic-features {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+    
+    .feature {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: var(--text-secondary);
+    }
+    
+    .feature i {
+        color: var(--accent-success);
+    }
+</style>

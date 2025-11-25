@@ -1,0 +1,42 @@
+{
+  "name": "ahmyth-modded",
+  "version": "2.0.0",
+  "description": "AhMyth Android RAT - Modded Edition with Advanced Forensic Tools",
+  "author": "AhMyth",
+  "license": "GPL-3.0",
+  "private": true,
+  "scripts": {
+    "start": "cd AhMyth-Server && bun run start",
+    "server": "cd AhMyth-Server && bun run start",
+    "emulator": "node scripts/emulator.js",
+    "emulator:avd": "node scripts/emulator.js --avd",
+    "emulator:build": "cd AhMyth-Client && gradlew.bat assembleDebug",
+    "emulator:install": "cd AhMyth-Client && gradlew.bat installDebug",
+    "emulator:run": "node scripts/emulator.js --launch-app",
+    "build:apk": "cd AhMyth-Client && gradlew.bat assembleRelease",
+    "build:apk:debug": "cd AhMyth-Client && gradlew.bat assembleDebug",
+    "clean": "cd AhMyth-Client && gradlew.bat clean",
+    "devices": "node scripts/emulator.js --devices",
+    "logcat": "node scripts/emulator.js --logcat",
+    "install:server": "cd AhMyth-Server && bun install",
+    "install:server:app": "cd AhMyth-Server/app && bun install",
+    "install:all": "bun run install:server && bun run install:server:app",
+    "dev": "bun run install:all && bun run start"
+  },
+  "engines": {
+    "bun": ">=1.0.0",
+    "node": ">=16.0.0"
+  },
+  "keywords": [
+    "android",
+    "rat",
+    "remote-administration",
+    "electron",
+    "forensic"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AhMyth/AhMyth-Android-RAT"
+  }
+}
+

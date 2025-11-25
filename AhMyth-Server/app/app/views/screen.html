@@ -1,0 +1,551 @@
+<div class="view-container">
+    <div class="view-header">
+        <h3 class="view-header__title">
+            <i class="desktop icon"></i>
+            Remote Desktop
+        </h3>
+        <div class="view-header__controls">
+            <select class="control-select" ng-model="quality" ng-change="setQuality()">
+                <option value="30">Low Quality</option>
+                <option value="50">Medium</option>
+                <option value="70">High</option>
+                <option value="90">Ultra</option>
+            </select>
+            <select class="control-select" ng-model="fps" ng-change="setFps()">
+                <option value="500">2 FPS</option>
+                <option value="250">4 FPS</option>
+                <option value="100">10 FPS</option>
+            </select>
+            <button class="btn btn--primary" ng-click="startStream()" ng-disabled="isStreaming">
+                <i class="play icon"></i> Stream
+            </button>
+            <button class="btn btn--danger" ng-click="stopStream()" ng-disabled="!isStreaming">
+                <i class="stop icon"></i> Stop
+            </button>
+            <button class="btn btn--secondary" ng-click="captureFrame()">
+                <i class="camera icon"></i> Capture
+            </button>
+            <button class="btn btn--secondary" ng-click="saveScreenshot()" ng-disabled="!currentFrame">
+                <i class="download icon"></i> Save
+            </button>
+        </div>
+    </div>
+
+    <div class="screen-layout">
+        <div class="screen-main">
+            <div class="screen-canvas-container" id="canvasContainer">
+                <canvas id="screenCanvas" class="screen-canvas"
+                        ng-click="handleClick($event)"
+                        ng-mousedown="handleMouseDown($event)"
+                        ng-mouseup="handleMouseUp($event)"
+                        ng-mousemove="handleMouseMove($event)"></canvas>
+                <div class="screen-status" ng-class="{'screen-status--live': isStreaming}">
+                    <span class="screen-status__dot"></span>
+                    {{isStreaming ? 'LIVE' : 'OFFLINE'}}
+                    <span ng-if="isStreaming"> • {{frameCount}} frames</span>
+                </div>
+                <div class="touch-indicator" ng-if="lastTouchPos" 
+                     ng-style="{'left': lastTouchPos.x + 'px', 'top': lastTouchPos.y + 'px'}">
+                </div>
+                <div class="screen-overlay" ng-if="!isStreaming && !currentFrame">
+                    <i class="desktop icon"></i>
+                    <p>Click <strong>Stream</strong> to start remote desktop</p>
+                    <p class="hint">Click on screen to tap • Drag to swipe</p>
+                </div>
+                <div class="permission-warning" ng-if="permissionRequired">
+                    <i class="exclamation triangle icon"></i>
+                    <p><strong>Screen capture permission required</strong></p>
+                    <p>User must grant screen recording permission on the device</p>
+                </div>
+            </div>
+            
+            <!-- Touch Controls -->
+            <div class="touch-controls">
+                <div class="control-group">
+                    <label class="control-label">
+                        <input type="checkbox" ng-model="touchEnabled">
+                        <span>Enable Touch Control</span>
+                    </label>
+                </div>
+                <div class="nav-buttons">
+                    <button class="nav-btn" ng-click="sendKey('back')" title="Back">
+                        <i class="arrow left icon"></i>
+                    </button>
+                    <button class="nav-btn" ng-click="sendKey('home')" title="Home">
+                        <i class="circle icon"></i>
+                    </button>
+                    <button class="nav-btn" ng-click="sendKey('recents')" title="Recent Apps">
+                        <i class="square icon"></i>
+                    </button>
+                    <button class="nav-btn" ng-click="sendKey('power')" title="Power">
+                        <i class="power off icon"></i>
+                    </button>
+                </div>
+                <div class="text-input-group">
+                    <input type="text" class="text-input" placeholder="Type text to send..." 
+                           ng-model="textToSend" ng-keypress="handleTextKeypress($event)">
+                    <button class="btn btn--small" ng-click="sendText()">Send</button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="screen-sidebar">
+            <div class="info-card">
+                <div class="info-card__header">
+                    <i class="info circle icon"></i>
+                    Stream Info
+                </div>
+                <div class="info-card__body">
+                    <div class="info-row">
+                        <span class="info-row__label">Status</span>
+                        <span class="info-row__value status-badge" ng-class="{'status--active': isStreaming}">
+                            {{isStreaming ? 'Streaming' : 'Idle'}}
+                        </span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-row__label">Resolution</span>
+                        <span class="info-row__value">{{screenInfo.width || '?'}}x{{screenInfo.height || '?'}}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-row__label">Frame Rate</span>
+                        <span class="info-row__value">{{actualFps || 0}} fps</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-row__label">Frame Size</span>
+                        <span class="info-row__value">{{lastFrameSize || 0}} KB</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-row__label">Total Frames</span>
+                        <span class="info-row__value">{{frameCount || 0}}</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="info-card">
+                <div class="info-card__header">
+                    <i class="hand pointer icon"></i>
+                    Quick Actions
+                </div>
+                <div class="info-card__body">
+                    <div class="quick-actions">
+                        <button class="action-btn" ng-click="sendKey('volumeup')" title="Volume Up">
+                            <i class="volume up icon"></i>
+                        </button>
+                        <button class="action-btn" ng-click="sendKey('volumedown')" title="Volume Down">
+                            <i class="volume down icon"></i>
+                        </button>
+                        <button class="action-btn" ng-click="sendKey('enter')" title="Enter">
+                            <i class="level down alternate icon"></i>
+                        </button>
+                        <button class="action-btn" ng-click="refreshScreen()" title="Refresh">
+                            <i class="sync icon"></i>
+                        </button>
+                    </div>
+                    <button class="btn btn--full btn--secondary" ng-click="openFullscreen()">
+                        <i class="expand icon"></i> Fullscreen
+                    </button>
+                </div>
+            </div>
+            
+            <div class="info-card" ng-if="inputLog.length > 0">
+                <div class="info-card__header">
+                    <i class="list icon"></i>
+                    Input Log
+                </div>
+                <div class="info-card__body input-log">
+                    <div class="log-entry" ng-repeat="log in inputLog track by $index">
+                        <span class="log-action">{{log.action}}</span>
+                        <span class="log-detail">{{log.detail}}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .view-container {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        background: var(--bg-secondary);
+    }
+    
+    .view-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 16px;
+        background: var(--bg-tertiary);
+        border-bottom: 1px solid var(--border-color);
+        flex-shrink: 0;
+    }
+    
+    .view-header__title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0;
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+    
+    .view-header__title i {
+        color: var(--accent-primary);
+    }
+    
+    .view-header__controls {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    
+    .control-select {
+        padding: 6px 10px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        color: var(--text-primary);
+        font-size: 11px;
+        cursor: pointer;
+    }
+    
+    .control-select:focus {
+        outline: none;
+        border-color: var(--accent-primary);
+    }
+    
+    .screen-layout {
+        flex: 1;
+        display: grid;
+        grid-template-columns: 1fr 220px;
+        gap: 0;
+        min-height: 0;
+        overflow: hidden;
+    }
+    
+    .screen-main {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        background: #000;
+        height: 100%;
+    }
+    
+    .screen-canvas-container {
+        flex: 1;
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 0;
+        overflow: hidden;
+        cursor: crosshair;
+    }
+    
+    .screen-canvas {
+        max-width: 100%;
+        max-height: 100%;
+        object-fit: contain;
+    }
+    
+    .screen-status {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        background: rgba(30, 30, 30, 0.9);
+        border-radius: 4px;
+        font-size: 10px;
+        font-weight: 600;
+        color: var(--accent-danger);
+        z-index: 10;
+    }
+    
+    .screen-status--live {
+        color: var(--accent-success);
+    }
+    
+    .screen-status__dot {
+        width: 6px;
+        height: 6px;
+        background: currentColor;
+        border-radius: 50%;
+        animation: pulse 1.5s infinite;
+    }
+    
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.4; }
+    }
+    
+    .touch-indicator {
+        position: absolute;
+        width: 30px;
+        height: 30px;
+        margin-left: -15px;
+        margin-top: -15px;
+        border: 2px solid var(--accent-primary);
+        border-radius: 50%;
+        background: rgba(88, 166, 255, 0.2);
+        pointer-events: none;
+        animation: touchRipple 0.5s ease-out forwards;
+        z-index: 20;
+    }
+    
+    @keyframes touchRipple {
+        0% { transform: scale(0.5); opacity: 1; }
+        100% { transform: scale(1.5); opacity: 0; }
+    }
+    
+    .screen-overlay, .permission-warning {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: var(--text-muted);
+        text-align: center;
+        z-index: 5;
+    }
+    
+    .screen-overlay i, .permission-warning i {
+        font-size: 48px;
+        margin-bottom: 12px;
+        opacity: 0.5;
+    }
+    
+    .permission-warning {
+        background: rgba(210, 153, 34, 0.1);
+        color: var(--accent-warning);
+    }
+    
+    .permission-warning i {
+        opacity: 1;
+    }
+    
+    .hint {
+        font-size: 11px;
+        color: var(--text-muted);
+        margin-top: 8px;
+    }
+    
+    .touch-controls {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 10px 16px;
+        background: var(--bg-tertiary);
+        border-top: 1px solid var(--border-color);
+    }
+    
+    .control-group {
+        display: flex;
+        align-items: center;
+    }
+    
+    .control-label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+        color: var(--text-secondary);
+        cursor: pointer;
+    }
+    
+    .control-label input {
+        accent-color: var(--accent-primary);
+    }
+    
+    .nav-buttons {
+        display: flex;
+        gap: 4px;
+    }
+    
+    .nav-btn {
+        width: 36px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+    
+    .nav-btn:hover {
+        background: var(--bg-secondary);
+        color: var(--text-primary);
+        border-color: var(--accent-primary);
+    }
+    
+    .nav-btn:active {
+        transform: scale(0.95);
+    }
+    
+    .text-input-group {
+        flex: 1;
+        display: flex;
+        gap: 6px;
+    }
+    
+    .text-input {
+        flex: 1;
+        padding: 6px 10px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        color: var(--text-primary);
+        font-size: 12px;
+    }
+    
+    .text-input:focus {
+        outline: none;
+        border-color: var(--accent-primary);
+    }
+    
+    .btn--small {
+        padding: 6px 12px;
+        font-size: 11px;
+    }
+    
+    .btn--full {
+        width: 100%;
+        margin-top: 10px;
+    }
+    
+    .screen-sidebar {
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+        background: var(--bg-secondary);
+        border-left: 1px solid var(--border-color);
+        overflow-y: auto;
+    }
+    
+    .info-card {
+        background: var(--bg-secondary);
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .info-card__header {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 10px 14px;
+        background: var(--bg-tertiary);
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    
+    .info-card__header i {
+        font-size: 12px;
+    }
+    
+    .info-card__body {
+        padding: 12px 14px;
+    }
+    
+    .info-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 6px 0;
+    }
+    
+    .info-row__label {
+        font-size: 11px;
+        color: var(--text-muted);
+    }
+    
+    .info-row__value {
+        font-size: 11px;
+        font-family: var(--font-mono);
+        color: var(--text-primary);
+    }
+    
+    .status-badge {
+        padding: 2px 8px;
+        background: rgba(248, 81, 73, 0.15);
+        color: var(--accent-danger);
+        border-radius: 4px;
+        font-size: 10px;
+        font-weight: 600;
+    }
+    
+    .status-badge.status--active {
+        background: rgba(63, 185, 80, 0.15);
+        color: var(--accent-success);
+    }
+    
+    .quick-actions {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 6px;
+    }
+    
+    .action-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 10px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+    
+    .action-btn:hover {
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
+        border-color: var(--accent-primary);
+    }
+    
+    .action-btn:active {
+        transform: scale(0.95);
+    }
+    
+    .input-log {
+        max-height: 120px;
+        overflow-y: auto;
+    }
+    
+    .log-entry {
+        display: flex;
+        gap: 8px;
+        padding: 4px 0;
+        font-size: 10px;
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .log-entry:last-child {
+        border-bottom: none;
+    }
+    
+    .log-action {
+        color: var(--accent-primary);
+        font-weight: 600;
+        min-width: 50px;
+    }
+    
+    .log-detail {
+        color: var(--text-muted);
+        font-family: var(--font-mono);
+    }
+</style>

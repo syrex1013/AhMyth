@@ -1,0 +1,638 @@
+<div class="sysinfo-panel">
+    <!-- Header -->
+    <div class="sysinfo-header">
+        <div class="sysinfo-header__info">
+            <h3 class="sysinfo-header__title">
+                <i class="server icon" style="color: #607d8b;"></i>
+                System Forensics
+            </h3>
+            <p class="sysinfo-header__subtitle">Deep system analysis and monitoring</p>
+        </div>
+        <div class="sysinfo-header__actions">
+            <button class="btn btn--primary" ng-click="getAllSystemInfo()">
+                <i class="sync icon"></i>
+                Full Scan
+            </button>
+        </div>
+    </div>
+
+    <!-- Quick Stats -->
+    <div class="sysinfo-quick-stats" ng-if="systemData">
+        <div class="quick-stat-card">
+            <i class="microchip icon"></i>
+            <div class="quick-stat-info">
+                <span class="quick-stat-value">{{systemData.system.cpuUsage | number:1}}%</span>
+                <span class="quick-stat-label">CPU Usage</span>
+            </div>
+        </div>
+        <div class="quick-stat-card">
+            <i class="clock icon"></i>
+            <div class="quick-stat-info">
+                <span class="quick-stat-value">{{formatUptime(systemData.system.uptime)}}</span>
+                <span class="quick-stat-label">Uptime</span>
+            </div>
+        </div>
+        <div class="quick-stat-card">
+            <i class="battery half icon"></i>
+            <div class="quick-stat-info">
+                <span class="quick-stat-value">{{systemData.battery.level}}%</span>
+                <span class="quick-stat-label">Battery</span>
+            </div>
+        </div>
+        <div class="quick-stat-card">
+            <i class="users icon"></i>
+            <div class="quick-stat-info">
+                <span class="quick-stat-value">{{systemData.accounts.count}}</span>
+                <span class="quick-stat-label">Accounts</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="sysinfo-tabs">
+        <button class="sysinfo-tab active" data-tab="battery" ng-click="activeTab = 'battery'">
+            <i class="battery full icon"></i> Battery
+        </button>
+        <button class="sysinfo-tab" data-tab="sim" ng-click="activeTab = 'sim'">
+            <i class="sim card icon"></i> SIM Cards
+        </button>
+        <button class="sysinfo-tab" data-tab="accounts" ng-click="activeTab = 'accounts'">
+            <i class="user circle icon"></i> Accounts
+        </button>
+        <button class="sysinfo-tab" data-tab="processes" ng-click="activeTab = 'processes'">
+            <i class="tasks icon"></i> Processes
+        </button>
+        <button class="sysinfo-tab" data-tab="network" ng-click="activeTab = 'network'">
+            <i class="chart line icon"></i> Network
+        </button>
+        <button class="sysinfo-tab" data-tab="usage" ng-click="activeTab = 'usage'">
+            <i class="chart bar icon"></i> App Usage
+        </button>
+    </div>
+
+    <!-- Content Panels -->
+    <div class="sysinfo-content">
+        <!-- Battery Panel -->
+        <div class="sysinfo-panel-content" ng-show="activeTab === 'battery'" ng-if="systemData.battery">
+            <div class="battery-display">
+                <div class="battery-visual" ng-class="getBatteryClass(systemData.battery.level)">
+                    <div class="battery-fill" style="height: {{systemData.battery.level}}%"></div>
+                    <span class="battery-percent">{{systemData.battery.level}}%</span>
+                </div>
+                <div class="battery-details">
+                    <div class="detail-row">
+                        <span class="detail-label">Status</span>
+                        <span class="detail-value badge" ng-class="{'badge--success': systemData.battery.status === 'Charging'}">{{systemData.battery.status}}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Plugged</span>
+                        <span class="detail-value">{{systemData.battery.plugged}}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Health</span>
+                        <span class="detail-value">{{systemData.battery.health}}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Temperature</span>
+                        <span class="detail-value">{{systemData.battery.temperature}}°C</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Voltage</span>
+                        <span class="detail-value">{{systemData.battery.voltage}} mV</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Technology</span>
+                        <span class="detail-value">{{systemData.battery.technology}}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SIM Panel -->
+        <div class="sysinfo-panel-content" ng-show="activeTab === 'sim'" ng-if="systemData.sim">
+            <div class="sim-info">
+                <div class="info-card">
+                    <div class="info-card__header">
+                        <i class="sim card icon"></i>
+                        Primary SIM Info
+                    </div>
+                    <div class="info-card__body">
+                        <div class="info-row">
+                            <span class="info-label">Operator</span>
+                            <span class="info-value">{{systemData.sim.simOperatorName || 'N/A'}}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Country</span>
+                            <span class="info-value">{{systemData.sim.simCountryIso | uppercase}}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">State</span>
+                            <span class="info-value badge badge--success">{{systemData.sim.simState}}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Phone Type</span>
+                            <span class="info-value">{{systemData.sim.phoneType}}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Network Operator</span>
+                            <span class="info-value">{{systemData.sim.networkOperatorName || 'N/A'}}</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="sim-cards-list" ng-if="systemData.sim.simCards.length > 0">
+                    <h4>Active SIM Cards</h4>
+                    <div class="sim-card-item" ng-repeat="sim in systemData.sim.simCards">
+                        <div class="sim-slot">Slot {{sim.slot + 1}}</div>
+                        <div class="sim-details">
+                            <span class="sim-carrier">{{sim.carrierName}}</span>
+                            <span class="sim-number">{{sim.number || 'No number'}}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Accounts Panel -->
+        <div class="sysinfo-panel-content" ng-show="activeTab === 'accounts'" ng-if="systemData.accounts">
+            <div class="accounts-list">
+                <div class="account-item" ng-repeat="account in systemData.accounts.accounts">
+                    <div class="account-avatar">
+                        <i ng-class="getAccountIcon(account.type)"></i>
+                    </div>
+                    <div class="account-info">
+                        <span class="account-name">{{account.name}}</span>
+                        <span class="account-type">{{account.type}}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Processes Panel -->
+        <div class="sysinfo-panel-content" ng-show="activeTab === 'processes'" ng-if="systemData.processes">
+            <div class="processes-list">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Process Name</th>
+                            <th>PID</th>
+                            <th>Importance</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr ng-repeat="proc in systemData.processes.processes | limitTo:50">
+                            <td>{{proc.processName}}</td>
+                            <td>{{proc.pid}}</td>
+                            <td><span class="badge" ng-class="getImportanceClass(proc.importance)">{{proc.importance}}</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Network Panel -->
+        <div class="sysinfo-panel-content" ng-show="activeTab === 'network'" ng-if="systemData.network">
+            <div class="network-stats">
+                <div class="network-card network-card--rx">
+                    <div class="network-card__icon"><i class="arrow down icon"></i></div>
+                    <div class="network-card__info">
+                        <span class="network-card__value">{{formatBytes(systemData.network.totalRxBytes)}}</span>
+                        <span class="network-card__label">Total Downloaded</span>
+                    </div>
+                </div>
+                <div class="network-card network-card--tx">
+                    <div class="network-card__icon"><i class="arrow up icon"></i></div>
+                    <div class="network-card__info">
+                        <span class="network-card__value">{{formatBytes(systemData.network.totalTxBytes)}}</span>
+                        <span class="network-card__label">Total Uploaded</span>
+                    </div>
+                </div>
+                <div class="network-card network-card--mobile-rx">
+                    <div class="network-card__icon"><i class="mobile alternate icon"></i></div>
+                    <div class="network-card__info">
+                        <span class="network-card__value">{{formatBytes(systemData.network.mobileRxBytes)}}</span>
+                        <span class="network-card__label">Mobile Data RX</span>
+                    </div>
+                </div>
+                <div class="network-card network-card--mobile-tx">
+                    <div class="network-card__icon"><i class="mobile icon"></i></div>
+                    <div class="network-card__info">
+                        <span class="network-card__value">{{formatBytes(systemData.network.mobileTxBytes)}}</span>
+                        <span class="network-card__label">Mobile Data TX</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Usage Panel -->
+        <div class="sysinfo-panel-content" ng-show="activeTab === 'usage'" ng-if="systemData.usage">
+            <div class="usage-list">
+                <div class="usage-item" ng-repeat="app in systemData.usage.usage | orderBy:'-totalTimeInForeground' | limitTo:20">
+                    <div class="usage-app">
+                        <span class="usage-app-name">{{app.appName || app.packageName}}</span>
+                        <span class="usage-app-package">{{app.packageName}}</span>
+                    </div>
+                    <div class="usage-time">
+                        <span class="usage-time-value">{{formatTime(app.totalTimeInForeground)}}</span>
+                        <span class="usage-time-label">foreground time</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading -->
+        <div class="sysinfo-loading" ng-if="isLoading">
+            <div class="spinner"></div>
+            <p>Scanning system...</p>
+        </div>
+
+        <!-- Empty -->
+        <div class="sysinfo-empty" ng-if="!systemData && !isLoading">
+            <i class="server icon"></i>
+            <h4>No System Data</h4>
+            <p>Click "Full Scan" to retrieve detailed system information</p>
+        </div>
+    </div>
+</div>
+
+<style>
+    .sysinfo-panel {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .sysinfo-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+    }
+    
+    .sysinfo-header__title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin: 0;
+    }
+    
+    .sysinfo-header__subtitle {
+        margin: 4px 0 0;
+        font-size: 12px;
+        color: var(--text-muted);
+    }
+    
+    /* Quick Stats */
+    .sysinfo-quick-stats {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+        margin-bottom: 16px;
+    }
+    
+    .quick-stat-card {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 16px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+    }
+    
+    .quick-stat-card > i {
+        font-size: 24px;
+        color: var(--accent-primary);
+    }
+    
+    .quick-stat-value {
+        display: block;
+        font-size: 18px;
+        font-weight: 700;
+        color: var(--text-primary);
+    }
+    
+    .quick-stat-label {
+        display: block;
+        font-size: 11px;
+        color: var(--text-muted);
+    }
+    
+    /* Tabs */
+    .sysinfo-tabs {
+        display: flex;
+        gap: 4px;
+        margin-bottom: 16px;
+        overflow-x: auto;
+    }
+    
+    .sysinfo-tab {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 10px 16px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        color: var(--text-secondary);
+        font-size: 12px;
+        white-space: nowrap;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    
+    .sysinfo-tab:hover {
+        background: var(--bg-elevated);
+        color: var(--text-primary);
+    }
+    
+    .sysinfo-tab.active {
+        background: var(--accent-primary);
+        color: var(--bg-primary);
+        border-color: var(--accent-primary);
+    }
+    
+    /* Content */
+    .sysinfo-content {
+        flex: 1;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+    }
+    
+    .sysinfo-panel-content {
+        padding: 20px;
+        height: 100%;
+        overflow-y: auto;
+    }
+    
+    /* Battery */
+    .battery-display {
+        display: flex;
+        gap: 40px;
+        align-items: center;
+    }
+    
+    .battery-visual {
+        width: 80px;
+        height: 160px;
+        border: 4px solid var(--border-color);
+        border-radius: 12px;
+        position: relative;
+        display: flex;
+        align-items: flex-end;
+        overflow: hidden;
+    }
+    
+    .battery-visual::before {
+        content: '';
+        position: absolute;
+        top: -10px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 30px;
+        height: 8px;
+        background: var(--border-color);
+        border-radius: 4px 4px 0 0;
+    }
+    
+    .battery-fill {
+        width: 100%;
+        background: var(--accent-success);
+        transition: height 0.5s ease;
+    }
+    
+    .battery-visual.battery-low .battery-fill { background: var(--accent-danger); }
+    .battery-visual.battery-medium .battery-fill { background: var(--accent-warning); }
+    
+    .battery-percent {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        font-size: 20px;
+        font-weight: 700;
+        color: var(--text-primary);
+        text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+    }
+    
+    .battery-details {
+        flex: 1;
+    }
+    
+    .detail-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 10px 0;
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .detail-label {
+        color: var(--text-secondary);
+        font-size: 13px;
+    }
+    
+    .detail-value {
+        color: var(--text-primary);
+        font-size: 13px;
+        font-weight: 500;
+    }
+    
+    /* Accounts */
+    .accounts-list {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 12px;
+    }
+    
+    .account-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 14px;
+        background: var(--bg-tertiary);
+        border-radius: var(--radius-md);
+    }
+    
+    .account-avatar {
+        width: 40px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg-secondary);
+        border-radius: 50%;
+        color: var(--text-secondary);
+    }
+    
+    .account-name {
+        display: block;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-primary);
+    }
+    
+    .account-type {
+        display: block;
+        font-size: 11px;
+        color: var(--text-muted);
+    }
+    
+    /* Network */
+    .network-stats {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 16px;
+    }
+    
+    .network-card {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 20px;
+        border-radius: var(--radius-lg);
+    }
+    
+    .network-card--rx {
+        background: rgba(0, 214, 143, 0.1);
+        border: 1px solid rgba(0, 214, 143, 0.3);
+    }
+    
+    .network-card--tx {
+        background: rgba(0, 149, 255, 0.1);
+        border: 1px solid rgba(0, 149, 255, 0.3);
+    }
+    
+    .network-card--mobile-rx {
+        background: rgba(255, 152, 0, 0.1);
+        border: 1px solid rgba(255, 152, 0, 0.3);
+    }
+    
+    .network-card--mobile-tx {
+        background: rgba(156, 39, 176, 0.1);
+        border: 1px solid rgba(156, 39, 176, 0.3);
+    }
+    
+    .network-card__icon {
+        width: 48px;
+        height: 48px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg-secondary);
+        border-radius: var(--radius-md);
+        font-size: 20px;
+    }
+    
+    .network-card--rx .network-card__icon { color: var(--accent-success); }
+    .network-card--tx .network-card__icon { color: var(--accent-info); }
+    .network-card--mobile-rx .network-card__icon { color: #ff9800; }
+    .network-card--mobile-tx .network-card__icon { color: #9c27b0; }
+    
+    .network-card__value {
+        display: block;
+        font-size: 20px;
+        font-weight: 700;
+        color: var(--text-primary);
+    }
+    
+    .network-card__label {
+        display: block;
+        font-size: 11px;
+        color: var(--text-muted);
+    }
+    
+    /* Usage */
+    .usage-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+    
+    .usage-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 12px 16px;
+        background: var(--bg-tertiary);
+        border-radius: var(--radius-md);
+    }
+    
+    .usage-app-name {
+        display: block;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-primary);
+    }
+    
+    .usage-app-package {
+        display: block;
+        font-size: 10px;
+        color: var(--text-muted);
+        font-family: var(--font-mono);
+    }
+    
+    .usage-time-value {
+        display: block;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--accent-primary);
+        text-align: right;
+    }
+    
+    .usage-time-label {
+        display: block;
+        font-size: 10px;
+        color: var(--text-muted);
+        text-align: right;
+    }
+    
+    /* Empty & Loading */
+    .sysinfo-loading,
+    .sysinfo-empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px;
+        text-align: center;
+        color: var(--text-muted);
+    }
+    
+    .sysinfo-empty > i {
+        font-size: 48px;
+        opacity: 0.3;
+        margin-bottom: 16px;
+    }
+    
+    .sysinfo-loading .spinner {
+        width: 40px;
+        height: 40px;
+        border: 3px solid var(--bg-tertiary);
+        border-top-color: var(--accent-primary);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        margin-bottom: 16px;
+    }
+    
+    .badge {
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-size: 11px;
+        font-weight: 600;
+    }
+    
+    .badge--success {
+        background: rgba(0, 214, 143, 0.15);
+        color: var(--accent-success);
+    }
+    
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+</style>
+

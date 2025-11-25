@@ -1,0 +1,171 @@
+<div class="view-container">
+    <div class="view-header">
+        <h3 class="view-header__title">
+            <i class="th icon"></i>
+            Installed Apps
+        </h3>
+        <div class="view-header__right">
+            <span class="badge" ng-if="appsList && appsList.length">{{appsList.length}} apps</span>
+            <button class="btn btn--primary" ng-click="getApps()">
+                <i class="sync icon"></i>
+                Refresh
+            </button>
+        </div>
+    </div>
+
+    <div class="loading-state" ng-if="load === 'loading'">
+        <div class="spinner"></div>
+        <p>Fetching installed apps...</p>
+    </div>
+
+    <div class="apps-list" ng-if="appsList && appsList.length > 0 && load !== 'loading'">
+        <div class="app-item" ng-repeat="app in appsList | limitTo:barLimit">
+            <div class="app-item__icon">
+                <i class="android icon"></i>
+            </div>
+            <div class="app-item__info">
+                <span class="app-item__name">{{app.appName}}</span>
+                <span class="app-item__package">{{app.packageName}}</span>
+            </div>
+            <span class="app-item__version">v{{app.versionName}}</span>
+        </div>
+        <button class="btn btn--secondary" ng-click="increaseLimit()" ng-if="appsList.length > barLimit" style="width: 100%; margin-top: 10px;">
+            Load More ({{appsList.length - barLimit}} remaining)
+        </button>
+    </div>
+
+    <div class="empty-state" ng-if="(!appsList || appsList.length === 0) && load !== 'loading'">
+        <i class="th icon"></i>
+        <p>No apps loaded. Click Refresh.</p>
+    </div>
+</div>
+
+<style>
+    .view-container {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .view-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+        flex-shrink: 0;
+    }
+    
+    .view-header__title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+    
+    .view-header__title i {
+        color: var(--accent-primary);
+    }
+    
+    .view-header__right {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    .badge {
+        padding: 4px 10px;
+        background: var(--bg-tertiary);
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 500;
+        color: var(--text-secondary);
+    }
+    
+    .apps-list {
+        flex: 1;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+    
+    .app-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 14px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+    }
+    
+    .app-item:hover {
+        border-color: var(--accent-primary);
+    }
+    
+    .app-item__icon {
+        width: 36px;
+        height: 36px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg-tertiary);
+        border-radius: 8px;
+        color: var(--text-secondary);
+    }
+    
+    .app-item__info {
+        flex: 1;
+        min-width: 0;
+    }
+    
+    .app-item__name {
+        display: block;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-primary);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    
+    .app-item__package {
+        display: block;
+        font-size: 11px;
+        color: var(--text-muted);
+        font-family: var(--font-mono);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    
+    .app-item__version {
+        font-size: 11px;
+        color: var(--text-secondary);
+        font-family: var(--font-mono);
+    }
+    
+    .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        flex: 1;
+        text-align: center;
+        color: var(--text-muted);
+    }
+    
+    .empty-state i {
+        font-size: 48px;
+        margin-bottom: 12px;
+        opacity: 0.5;
+    }
+    
+    .empty-state p {
+        margin: 0;
+        font-size: 13px;
+    }
+</style>

