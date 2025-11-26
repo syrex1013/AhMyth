@@ -9,6 +9,9 @@
             <p class="sysinfo-header__subtitle">Deep system analysis and monitoring</p>
         </div>
         <div class="sysinfo-header__actions">
+            <button class="btn btn--small btn--outline" ng-click="requestPermission('usage')" title="Request usage stats permission">
+                <i class="shield icon"></i> Request Permission
+            </button>
             <button class="btn btn--primary" ng-click="getAllSystemInfo()">
                 <i class="sync icon"></i>
                 Full Scan

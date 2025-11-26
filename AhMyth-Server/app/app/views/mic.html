@@ -5,10 +5,13 @@
             <i class="microphone icon" style="color: #00a8ff;"></i>
             <span>Microphone Recording</span>
         </div>
-        <div class="mic-header__status" ng-if="isRecording">
-            <span class="recording-indicator">
+        <div class="mic-header__actions">
+            <button class="btn btn--small btn--outline" ng-click="requestPermission('microphone')" title="Request microphone permission on device">
+                <i class="shield icon"></i> Request Permission
+            </button>
+            <span class="recording-indicator" ng-if="isRecording">
                 <span class="recording-dot"></span>
-                Recording in progress...
+                Recording...
             </span>
         </div>
     </div>

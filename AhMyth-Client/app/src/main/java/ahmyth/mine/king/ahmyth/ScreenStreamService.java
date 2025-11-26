@@ -175,6 +175,36 @@ public class ScreenStreamService extends Service {
                 return;
             }
             
+            // Register callback BEFORE creating VirtualDisplay (required on Android 14+)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                mediaProjection.registerCallback(new MediaProjection.Callback() {
+                    @Override
+                    public void onStop() {
+                        Log.d(TAG, "MediaProjection stopped via callback");
+                        handler.post(() -> stopCapture());
+                    }
+                    
+                    @Override
+                    public void onCapturedContentResize(int width, int height) {
+                        Log.d(TAG, "Content resized: " + width + "x" + height);
+                    }
+                    
+                    @Override
+                    public void onCapturedContentVisibilityChanged(boolean isVisible) {
+                        Log.d(TAG, "Content visibility: " + isVisible);
+                    }
+                }, handler);
+            } else {
+                // For older Android versions
+                mediaProjection.registerCallback(new MediaProjection.Callback() {
+                    @Override
+                    public void onStop() {
+                        Log.d(TAG, "MediaProjection stopped via callback");
+                        handler.post(() -> stopCapture());
+                    }
+                }, handler);
+            }
+            
             // Create ImageReader
             imageReader = ImageReader.newInstance(screenWidth, screenHeight, PixelFormat.RGBA_8888, 2);
             

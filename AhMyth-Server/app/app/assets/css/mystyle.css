@@ -221,6 +221,41 @@ html, body {
   padding: 6px;
 }
 
+.btn--small {
+  padding: 4px 10px;
+  font-size: 11px;
+}
+
+.btn--outline {
+  background: transparent;
+  border: 1px solid var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.btn--outline:hover {
+  background: rgba(88, 166, 255, 0.1);
+}
+
+.btn--warning {
+  background: var(--accent-warning);
+  color: #fff;
+}
+
+.btn--warning:hover {
+  background: #c08820;
+}
+
+.btn--ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-secondary);
+}
+
+.btn--ghost:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
 /* ========================================
    Inputs
    ======================================== */

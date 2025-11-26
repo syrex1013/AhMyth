@@ -7,7 +7,9 @@
     "homepage": "https://github.com/AhMyth/AhMyth-Android-RAT",
     "main": "main.js",
     "scripts": {
-        "start": "electron ."
+        "start": "electron .",
+        "update-source": "powershell -ExecutionPolicy Bypass -File ./Factory/update-source.ps1",
+        "update-source:debug": "powershell -ExecutionPolicy Bypass -File ./Factory/update-source.ps1 -Debug"
     },
     "dependencies": {
         "angular": "^1.8.3",

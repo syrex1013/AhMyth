@@ -13,6 +13,9 @@
             </div>
         </div>
         <div class="notifications-header__actions">
+            <button class="btn btn--small btn--outline" ng-click="requestPermission('notifications')" title="Open notification access settings">
+                <i class="shield icon"></i> Request Permission
+            </button>
             <button class="btn btn--primary" ng-click="getNotifications()">
                 <i class="sync icon"></i>
                 Refresh

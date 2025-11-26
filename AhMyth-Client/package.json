@@ -1,0 +1,14 @@
+{
+  "name": "ahmyth-client",
+  "version": "2.0.0",
+  "description": "AhMyth Android Client Builder",
+  "scripts": {
+    "build": "powershell -ExecutionPolicy Bypass -File ./build-and-run.ps1",
+    "build:grant": "powershell -ExecutionPolicy Bypass -File ./build-and-run.ps1 -GrantPermissions",
+    "build:skip": "powershell -ExecutionPolicy Bypass -File ./build-and-run.ps1 -SkipBuild",
+    "install": "powershell -ExecutionPolicy Bypass -File ./build-and-run.ps1 -SkipBuild -GrantPermissions",
+    "clean": "gradlew.bat clean",
+    "release": "gradlew.bat assembleRelease",
+    "debug": "gradlew.bat assembleDebug"
+  }
+}

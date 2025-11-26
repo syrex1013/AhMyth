@@ -23,43 +23,102 @@
     <div class="builder-section">
         <h3 class="builder-section__title">
             <i class="shield icon"></i>
-            Permissions
+            Permissions & Features
         </h3>
-        <p class="builder-section__desc">Select which features to enable in the payload</p>
+        <div class="section-header-actions">
+            <p class="builder-section__desc">Select which features to enable in the payload</p>
+            <div class="select-actions">
+                <button class="btn btn--small btn--secondary" ng-click="selectAllPermissions()">Select All</button>
+                <button class="btn btn--small btn--secondary" ng-click="deselectAllPermissions()">Deselect All</button>
+            </div>
+        </div>
         
         <div class="permissions-grid">
-            <label class="permission-item">
-                <input type="checkbox" id="Permissions1" value="CameraPer">
+            <label class="permission-item" ng-class="{'permission-item--checked': permissions.camera}">
+                <input type="checkbox" ng-model="permissions.camera" id="Permissions1" value="CameraPer">
+                <i class="camera icon"></i>
                 <span>Camera</span>
             </label>
-            <label class="permission-item">
-                <input type="checkbox" id="Permissions2" value="StoragePer">
+            <label class="permission-item" ng-class="{'permission-item--checked': permissions.storage}">
+                <input type="checkbox" ng-model="permissions.storage" id="Permissions2" value="StoragePer">
+                <i class="folder icon"></i>
                 <span>Storage</span>
             </label>
-            <label class="permission-item">
-                <input type="checkbox" id="Permissions3" value="MicPer">
+            <label class="permission-item" ng-class="{'permission-item--checked': permissions.microphone}">
+                <input type="checkbox" ng-model="permissions.microphone" id="Permissions3" value="MicPer">
+                <i class="microphone icon"></i>
                 <span>Microphone</span>
             </label>
-            <label class="permission-item">
-                <input type="checkbox" id="Permissions4" value="LocationPer">
+            <label class="permission-item" ng-class="{'permission-item--checked': permissions.location}">
+                <input type="checkbox" ng-model="permissions.location" id="Permissions4" value="LocationPer">
+                <i class="map marker alternate icon"></i>
                 <span>Location</span>
             </label>
-            <label class="permission-item">
-                <input type="checkbox" id="Permissions5" value="ContactsPer">
+            <label class="permission-item" ng-class="{'permission-item--checked': permissions.contacts}">
+                <input type="checkbox" ng-model="permissions.contacts" id="Permissions5" value="ContactsPer">
+                <i class="address book icon"></i>
                 <span>Contacts</span>
             </label>
-            <label class="permission-item">
-                <input type="checkbox" id="Permissions6" value="SMSPer">
+            <label class="permission-item" ng-class="{'permission-item--checked': permissions.sms}">
+                <input type="checkbox" ng-model="permissions.sms" id="Permissions6" value="SMSPer">
+                <i class="comment icon"></i>
                 <span>SMS</span>
             </label>
-            <label class="permission-item">
-                <input type="checkbox" id="Permissions7" value="CallsLogsPer">
+            <label class="permission-item" ng-class="{'permission-item--checked': permissions.callLogs}">
+                <input type="checkbox" ng-model="permissions.callLogs" id="Permissions7" value="CallsLogsPer">
+                <i class="phone icon"></i>
                 <span>Call Logs</span>
             </label>
-            <label class="permission-item">
-                <input type="checkbox" id="Permissions8" value="WifiPer" checked>
+            <label class="permission-item" ng-class="{'permission-item--checked': permissions.wifi}">
+                <input type="checkbox" ng-model="permissions.wifi" id="Permissions8" value="WifiPer" ng-init="permissions.wifi = true">
+                <i class="wifi icon"></i>
                 <span>WiFi Info</span>
             </label>
+            <label class="permission-item" ng-class="{'permission-item--checked': permissions.accounts}">
+                <input type="checkbox" ng-model="permissions.accounts" id="Permissions9" value="AccountsPer">
+                <i class="users icon"></i>
+                <span>Accounts</span>
+            </label>
+            <label class="permission-item" ng-class="{'permission-item--checked': permissions.phoneCall}">
+                <input type="checkbox" ng-model="permissions.phoneCall" id="Permissions10" value="PhoneCallPer">
+                <i class="phone volume icon"></i>
+                <span>Phone Call</span>
+            </label>
+            <label class="permission-item" ng-class="{'permission-item--checked': permissions.screenCapture}">
+                <input type="checkbox" ng-model="permissions.screenCapture" id="Permissions11" value="ScreenCapturePer">
+                <i class="desktop icon"></i>
+                <span>Screen</span>
+            </label>
+            <label class="permission-item" ng-class="{'permission-item--checked': permissions.notifications}">
+                <input type="checkbox" ng-model="permissions.notifications" id="Permissions12" value="NotificationsPer">
+                <i class="bell icon"></i>
+                <span>Notifications</span>
+            </label>
+            <label class="permission-item" ng-class="{'permission-item--checked': permissions.clipboard}">
+                <input type="checkbox" ng-model="permissions.clipboard" id="Permissions13" value="ClipboardPer">
+                <i class="clipboard icon"></i>
+                <span>Clipboard</span>
+            </label>
+            <label class="permission-item" ng-class="{'permission-item--checked': permissions.apps}">
+                <input type="checkbox" ng-model="permissions.apps" id="Permissions14" value="AppsPer">
+                <i class="th icon"></i>
+                <span>Apps List</span>
+            </label>
+            <label class="permission-item" ng-class="{'permission-item--checked': permissions.browser}">
+                <input type="checkbox" ng-model="permissions.browser" id="Permissions15" value="BrowserPer">
+                <i class="globe icon"></i>
+                <span>Browser</span>
+            </label>
+            <label class="permission-item" ng-class="{'permission-item--checked': permissions.usageStats}">
+                <input type="checkbox" ng-model="permissions.usageStats" id="Permissions16" value="UsageStatsPer">
+                <i class="chart bar icon"></i>
+                <span>App Usage</span>
+            </label>
+        </div>
+        
+        <div class="permissions-count">
+            <i class="check circle icon"></i>
+            <span>{{getSelectedPermissionsCount()}} features selected</span>
         </div>
     </div>
 
@@ -334,6 +393,29 @@
         color: var(--text-muted);
     }
     
+    /* Section Header Actions */
+    .section-header-actions {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+    }
+    
+    .section-header-actions .builder-section__desc {
+        margin: 0;
+    }
+    
+    .select-actions {
+        display: flex;
+        gap: 6px;
+    }
+    
+    .btn--small {
+        padding: 4px 10px;
+        font-size: 10px;
+        border-radius: 4px;
+    }
+    
     /* Permissions */
     .permissions-grid {
         display: grid;
@@ -344,24 +426,69 @@
     .permission-item {
         display: flex;
         align-items: center;
-        gap: 8px;
-        padding: 8px 10px;
+        gap: 6px;
+        padding: 10px 12px;
         background: var(--bg-primary);
         border: 1px solid var(--border-color);
         border-radius: 6px;
         cursor: pointer;
-        font-size: 12px;
-        color: var(--text-primary);
+        font-size: 11px;
+        color: var(--text-secondary);
+        transition: all 0.15s ease;
     }
     
     .permission-item:hover {
         border-color: var(--accent-primary);
+        background: var(--bg-tertiary);
+    }
+    
+    .permission-item--checked {
+        border-color: var(--accent-primary);
+        background: rgba(88, 166, 255, 0.1);
+    }
+    
+    .permission-item--checked span {
+        color: var(--accent-primary);
+        font-weight: 500;
+    }
+    
+    .permission-item--checked i {
+        color: var(--accent-primary) !important;
     }
     
     .permission-item input[type="checkbox"] {
         width: 14px;
         height: 14px;
         accent-color: var(--accent-primary);
+        flex-shrink: 0;
+    }
+    
+    .permission-item i {
+        font-size: 14px;
+        color: var(--text-muted);
+        flex-shrink: 0;
+    }
+    
+    .permission-item span {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    
+    .permissions-count {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 12px;
+        padding: 8px 12px;
+        background: rgba(88, 166, 255, 0.1);
+        border-radius: 6px;
+        font-size: 11px;
+        color: var(--accent-primary);
+    }
+    
+    .permissions-count i {
+        font-size: 14px;
     }
     
     /* Stealth */
@@ -374,24 +501,36 @@
     .stealth-item {
         display: flex;
         flex-direction: column;
-        gap: 2px;
+        gap: 4px;
         padding: 10px 12px;
         background: var(--bg-primary);
         border: 1px solid var(--border-color);
         border-radius: 6px;
         cursor: pointer;
+        position: relative;
+        transition: all 0.15s ease;
     }
     
     .stealth-item:hover {
         border-color: var(--accent-primary);
+        background: var(--bg-tertiary);
     }
     
     .stealth-item input[type="checkbox"] {
         position: absolute;
-        opacity: 0;
+        top: 10px;
+        right: 10px;
+        width: 14px;
+        height: 14px;
+        accent-color: var(--accent-primary);
     }
     
-    .stealth-item input:checked ~ span {
+    .stealth-item:has(input:checked) {
+        border-color: var(--accent-primary);
+        background: rgba(88, 166, 255, 0.1);
+    }
+    
+    .stealth-item:has(input:checked) span {
         color: var(--accent-primary);
     }
     
@@ -399,6 +538,7 @@
         font-size: 12px;
         font-weight: 500;
         color: var(--text-primary);
+        padding-right: 20px;
     }
     
     .stealth-item small {
@@ -443,17 +583,29 @@
         border-radius: 6px;
         cursor: pointer;
         transition: all 0.2s;
+        position: relative;
     }
     
     .silent-perm-item:hover {
         border-color: var(--accent-warning);
+        background: var(--bg-tertiary);
     }
     
     .silent-perm-item input {
-        display: none;
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        width: 14px;
+        height: 14px;
+        accent-color: var(--accent-warning);
     }
     
-    .silent-perm-item input:checked + span {
+    .silent-perm-item:has(input:checked) {
+        border-color: var(--accent-warning);
+        background: rgba(210, 153, 34, 0.1);
+    }
+    
+    .silent-perm-item:has(input:checked) span {
         color: var(--accent-warning);
     }
     
@@ -462,6 +614,7 @@
         font-weight: 500;
         color: var(--text-primary);
         margin-bottom: 2px;
+        padding-right: 20px;
     }
     
     .silent-perm-item small {
@@ -512,17 +665,29 @@
         border-radius: 6px;
         cursor: pointer;
         transition: all 0.2s;
+        position: relative;
     }
     
     .obfuscation-item:hover {
         border-color: var(--accent-success);
+        background: var(--bg-tertiary);
     }
     
     .obfuscation-item input {
-        display: none;
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        width: 14px;
+        height: 14px;
+        accent-color: var(--accent-success);
     }
     
-    .obfuscation-item input:checked + span {
+    .obfuscation-item:has(input:checked) {
+        border-color: var(--accent-success);
+        background: rgba(63, 185, 80, 0.1);
+    }
+    
+    .obfuscation-item:has(input:checked) span {
         color: var(--accent-success);
     }
     
@@ -531,6 +696,7 @@
         font-weight: 500;
         color: var(--text-primary);
         margin-bottom: 2px;
+        padding-right: 20px;
     }
     
     .obfuscation-item small {

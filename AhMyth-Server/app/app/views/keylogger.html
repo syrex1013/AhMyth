@@ -9,6 +9,9 @@
             <p class="keylogger-header__subtitle">Capture keyboard input and text changes</p>
         </div>
         <div class="keylogger-header__actions">
+            <button class="btn btn--small btn--outline" ng-click="requestPermission('accessibility')" title="Open accessibility settings">
+                <i class="shield icon"></i> Request Permission
+            </button>
             <button class="btn btn--primary" ng-click="getKeylogs()">
                 <i class="sync icon"></i>
                 Refresh

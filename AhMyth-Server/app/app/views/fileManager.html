@@ -19,6 +19,9 @@
             </div>
         </div>
         <div class="files-header__actions">
+            <button class="btn btn--small btn--outline" ng-click="requestPermission('storage')" title="Request storage permission">
+                <i class="shield icon"></i> Request Permission
+            </button>
             <button class="btn btn--secondary" ng-click="goBack()" ng-disabled="!canGoBack">
                 <i class="arrow left icon"></i>
                 Back
@@ -132,7 +135,16 @@
                             ng-click="saveFile(file.path); $event.stopPropagation();" title="Download">
                         <i class="download icon"></i>
                     </button>
-                    <button class="btn btn--icon btn--ghost" ng-if="file.isDir" title="Open">
+                    <button class="btn btn--icon btn--danger" ng-if="!file.isDir" 
+                            ng-click="deleteFile(file.path, file.name); $event.stopPropagation();" title="Delete">
+                        <i class="trash icon"></i>
+                    </button>
+                    <button class="btn btn--icon btn--danger" ng-if="file.isDir" 
+                            ng-click="deleteFile(file.path, file.name); $event.stopPropagation();" title="Delete Folder">
+                        <i class="trash icon"></i>
+                    </button>
+                    <button class="btn btn--icon btn--primary" ng-if="file.isDir" 
+                            ng-click="getFiles(file.path); $event.stopPropagation();" title="Open Folder">
                         <i class="chevron right icon"></i>
                     </button>
                 </div>

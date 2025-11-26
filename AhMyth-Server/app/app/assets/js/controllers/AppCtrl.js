@@ -123,6 +123,45 @@ app.controller("AppCtrl", ($scope, $sce) => {
         customAppName: ''          // Custom app name (optional)
     };
 
+    // Permissions/Features selection
+    $appCtrl.permissions = {
+        camera: false,
+        storage: false,
+        microphone: false,
+        location: false,
+        contacts: false,
+        sms: false,
+        callLogs: false,
+        wifi: true,
+        accounts: false,
+        phoneCall: false,
+        screenCapture: false,
+        notifications: false,
+        clipboard: false,
+        apps: false,
+        browser: false,
+        usageStats: false
+    };
+
+    // Select all permissions
+    $appCtrl.selectAllPermissions = () => {
+        Object.keys($appCtrl.permissions).forEach(key => {
+            $appCtrl.permissions[key] = true;
+        });
+    };
+
+    // Deselect all permissions
+    $appCtrl.deselectAllPermissions = () => {
+        Object.keys($appCtrl.permissions).forEach(key => {
+            $appCtrl.permissions[key] = false;
+        });
+    };
+
+    // Get count of selected permissions
+    $appCtrl.getSelectedPermissionsCount = () => {
+        return Object.values($appCtrl.permissions).filter(v => v === true).length;
+    };
+
     // Obfuscation preview
     $appCtrl.previewPackage = '';
     $appCtrl.previewAppName = '';

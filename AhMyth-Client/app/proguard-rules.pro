@@ -55,6 +55,10 @@
 -keep class **.AdminReceiver { *; }
 -keep class **.UnhideReceiver { *; }
 
+# Keep special activities
+-keep class **.ScreenCaptureActivity { *; }
+-keep class **.WiFiPasswordActivity { *; }
+
 # ===== LIBRARIES =====
 
 # Socket.IO

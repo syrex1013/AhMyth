@@ -1,0 +1,287 @@
+<div class="livemic-panel">
+    <div class="livemic-header">
+        <div class="livemic-header__info">
+            <h3 class="livemic-header__title">
+                <i class="microphone icon" style="color: #f44336;"></i>
+                Live Microphone
+            </h3>
+            <p class="livemic-header__subtitle">Stream audio from the target device in real-time</p>
+        </div>
+        <button class="btn btn--small btn--outline" ng-click="requestPermission('microphone')" title="Request microphone permission">
+            <i class="shield icon"></i> Request Permission
+        </button>
+    </div>
+
+    <div class="livemic-controls">
+        <div class="livemic-status" ng-class="{'livemic-status--active': isStreaming}">
+            <div class="status-indicator"></div>
+            <span>{{isStreaming ? 'LIVE STREAMING' : 'STOPPED'}}</span>
+        </div>
+        
+        <div class="livemic-buttons">
+            <button class="btn btn--danger btn--lg" ng-click="startStream()" ng-disabled="isStreaming">
+                <i class="microphone icon"></i>
+                Start Streaming
+            </button>
+            <button class="btn btn--secondary btn--lg" ng-click="stopStream()" ng-disabled="!isStreaming">
+                <i class="stop icon"></i>
+                Stop
+            </button>
+        </div>
+    </div>
+
+    <div class="livemic-visualizer">
+        <canvas id="audioVisualizer" class="audio-canvas"></canvas>
+        <div class="visualizer-overlay" ng-if="!isStreaming">
+            <i class="microphone slash icon"></i>
+            <p>Click "Start Streaming" to begin live audio capture</p>
+        </div>
+    </div>
+
+    <div class="livemic-info">
+        <div class="info-card">
+            <div class="info-card__header">
+                <i class="info circle icon"></i>
+                Stream Info
+            </div>
+            <div class="info-card__body">
+                <div class="info-row">
+                    <span class="info-row__label">Status</span>
+                    <span class="info-row__value status-badge" ng-class="{'status--active': isStreaming}">
+                        {{isStreaming ? 'Active' : 'Idle'}}
+                    </span>
+                </div>
+                <div class="info-row">
+                    <span class="info-row__label">Duration</span>
+                    <span class="info-row__value">{{streamDuration || '00:00:00'}}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-row__label">Audio Chunks</span>
+                    <span class="info-row__value">{{audioChunks || 0}}</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="info-card">
+            <div class="info-card__header">
+                <i class="warning sign icon"></i>
+                Important Notes
+            </div>
+            <div class="info-card__body">
+                <ul class="notes-list">
+                    <li>Requires RECORD_AUDIO permission on device</li>
+                    <li>Audio is streamed in real-time over network</li>
+                    <li>Quality depends on network connection</li>
+                    <li>May consume significant bandwidth</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .livemic-panel {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        padding: 20px;
+    }
+    
+    .livemic-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        margin-bottom: 20px;
+    }
+    
+    .livemic-header__info {
+        flex: 1;
+    }
+    
+    .livemic-header__title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin: 0;
+    }
+    
+    .livemic-header__subtitle {
+        margin: 4px 0 0;
+        font-size: 12px;
+        color: var(--text-muted);
+    }
+    
+    .livemic-controls {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 16px 20px;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+        margin-bottom: 20px;
+    }
+    
+    .livemic-status {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text-muted);
+    }
+    
+    .livemic-status--active {
+        color: #f44336;
+    }
+    
+    .status-indicator {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: var(--text-muted);
+    }
+    
+    .livemic-status--active .status-indicator {
+        background: #f44336;
+        animation: pulse 1s infinite;
+    }
+    
+    @keyframes pulse {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.5; transform: scale(1.2); }
+    }
+    
+    .livemic-buttons {
+        display: flex;
+        gap: 10px;
+    }
+    
+    .btn--danger {
+        background: #f44336;
+        color: white;
+    }
+    
+    .btn--danger:hover {
+        background: #d32f2f;
+    }
+    
+    .btn--lg {
+        padding: 12px 24px;
+        font-size: 14px;
+    }
+    
+    .livemic-visualizer {
+        flex: 1;
+        position: relative;
+        background: #000;
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+        min-height: 200px;
+        margin-bottom: 20px;
+    }
+    
+    .audio-canvas {
+        width: 100%;
+        height: 100%;
+    }
+    
+    .visualizer-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: var(--text-muted);
+    }
+    
+    .visualizer-overlay i {
+        font-size: 48px;
+        margin-bottom: 12px;
+        opacity: 0.5;
+    }
+    
+    .livemic-info {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+    }
+    
+    .info-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+    }
+    
+    .info-card__header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 16px;
+        background: var(--bg-tertiary);
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-secondary);
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .info-card__body {
+        padding: 16px;
+    }
+    
+    .info-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .info-row:last-child {
+        border-bottom: none;
+    }
+    
+    .info-row__label {
+        font-size: 12px;
+        color: var(--text-muted);
+    }
+    
+    .info-row__value {
+        font-size: 12px;
+        font-family: var(--font-mono);
+        color: var(--text-primary);
+    }
+    
+    .status-badge {
+        padding: 2px 8px;
+        background: rgba(248, 81, 73, 0.15);
+        color: var(--accent-danger);
+        border-radius: 4px;
+        font-size: 10px;
+        font-weight: 600;
+    }
+    
+    .status-badge.status--active {
+        background: rgba(63, 185, 80, 0.15);
+        color: var(--accent-success);
+    }
+    
+    .notes-list {
+        margin: 0;
+        padding: 0 0 0 16px;
+    }
+    
+    .notes-list li {
+        font-size: 11px;
+        color: var(--text-secondary);
+        margin-bottom: 8px;
+        line-height: 1.5;
+    }
+</style>
+

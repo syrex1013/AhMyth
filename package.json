@@ -13,6 +13,7 @@
     "emulator:build": "cd AhMyth-Client && gradlew.bat assembleDebug",
     "emulator:install": "cd AhMyth-Client && gradlew.bat installDebug",
     "emulator:run": "node scripts/emulator.js --launch-app",
+    "emulator:clean": "node scripts/emulator.js --clean",
     "build:apk": "cd AhMyth-Client && gradlew.bat assembleRelease",
     "build:apk:debug": "cd AhMyth-Client && gradlew.bat assembleDebug",
     "clean": "cd AhMyth-Client && gradlew.bat clean",

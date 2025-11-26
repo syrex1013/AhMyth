@@ -167,6 +167,76 @@
             font-size: 13px;
         }
         
+        /* Device Info Cell */
+        .device-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        
+        .device-info__name {
+            font-weight: 600;
+            color: var(--text-primary);
+            font-size: 12px;
+        }
+        
+        .device-info__detail {
+            font-size: 10px;
+            color: var(--text-muted);
+        }
+        
+        /* Android Version */
+        .android-version {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+        
+        .android-version i {
+            color: #3ddc84;
+        }
+        
+        /* Battery Indicator */
+        .battery-indicator {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 11px;
+            font-family: var(--font-mono);
+        }
+        
+        .battery--high {
+            color: var(--accent-success);
+        }
+        
+        .battery--medium {
+            color: var(--accent-warning);
+        }
+        
+        .battery--low {
+            color: var(--accent-danger);
+        }
+        
+        /* Operator Name */
+        .operator-name {
+            font-size: 11px;
+            color: var(--text-secondary);
+            max-width: 100px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            display: block;
+        }
+        
+        /* IP Address */
+        .ip-address {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+        
         /* Log */
         #log {
             height: 180px;
@@ -296,31 +366,50 @@
                         <table class="victims-table" ng-if="getVictimCount() > 0">
                             <thead>
                                 <tr>
-                                    <th style="width: 100px;">Action</th>
-                                    <th style="width: 60px;">Country</th>
-                                    <th>Manufacturer</th>
-                                    <th>Model</th>
-                                    <th style="width: 70px;">Android</th>
-                                    <th>IP</th>
-                                    <th style="width: 60px;">Port</th>
-                                    <th style="width: 80px;">Status</th>
+                                    <th style="width: 90px;">Action</th>
+                                    <th style="width: 50px;">Flag</th>
+                                    <th>Device</th>
+                                    <th style="width: 65px;">Android</th>
+                                    <th style="width: 55px;">Battery</th>
+                                    <th>Operator</th>
+                                    <th>IP Address</th>
+                                    <th style="width: 70px;">Status</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 <tr ng-repeat="(key, victim) in victims">
                                     <td>
                                         <button class="victims-table__open-btn" ng-click="openLab(key)">
-                                            Open Lab
+                                            <i class="external alternate icon"></i> Lab
                                         </button>
                                     </td>
                                     <td>
                                         <span class="country-flag" ng-bind-html="getCountryFlag(victim.country)"></span>
                                     </td>
-                                    <td ng-bind="victim.manf"></td>
-                                    <td ng-bind="victim.model"></td>
-                                    <td ng-bind="victim.release"></td>
-                                    <td style="font-family: var(--font-mono);" ng-bind="victim.ip"></td>
-                                    <td style="font-family: var(--font-mono);" ng-bind="victim.port"></td>
+                                    <td>
+                                        <div class="device-info">
+                                            <span class="device-info__name">{{victim.brand || victim.manf}} {{victim.model}}</span>
+                                            <span class="device-info__detail">{{victim.manf}} • {{victim.product || victim.device || ''}}</span>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <span class="android-version">
+                                            <i class="android icon"></i> {{victim.release}}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <span class="battery-indicator" ng-class="{'battery--low': victim.battery < 20, 'battery--medium': victim.battery >= 20 && victim.battery < 50, 'battery--high': victim.battery >= 50}">
+                                            <i class="battery icon" ng-class="{'battery full': victim.battery >= 75, 'battery three quarters': victim.battery >= 50 && victim.battery < 75, 'battery half': victim.battery >= 25 && victim.battery < 50, 'battery quarter': victim.battery < 25}"></i>
+                                            <span ng-if="victim.battery >= 0">{{victim.battery}}%</span>
+                                            <span ng-if="victim.battery < 0">--</span>
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <span class="operator-name">{{victim.operator || 'Unknown'}}</span>
+                                    </td>
+                                    <td>
+                                        <span class="ip-address">{{victim.ip}}:{{victim.port}}</span>
+                                    </td>
                                     <td><span class="victims-table__status">Online</span></td>
                                 </tr>
                             </tbody>

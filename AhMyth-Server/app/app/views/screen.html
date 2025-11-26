@@ -28,6 +28,9 @@
             <button class="btn btn--secondary" ng-click="saveScreenshot()" ng-disabled="!currentFrame">
                 <i class="download icon"></i> Save
             </button>
+            <button class="btn btn--warning" ng-click="requestPermission()" title="Request screen capture permission on device">
+                <i class="key icon"></i> Request Permission
+            </button>
         </div>
     </div>
 
@@ -55,7 +58,11 @@
                 <div class="permission-warning" ng-if="permissionRequired">
                     <i class="exclamation triangle icon"></i>
                     <p><strong>Screen capture permission required</strong></p>
-                    <p>User must grant screen recording permission on the device</p>
+                    <p>Click the button below to request permission on the device</p>
+                    <button class="btn btn--warning btn--large" ng-click="requestPermission()">
+                        <i class="key icon"></i> Request Permission
+                    </button>
+                    <p class="hint" style="margin-top: 12px;">User must tap "Start Now" on the device dialog</p>
                 </div>
             </div>
             
@@ -331,6 +338,23 @@
     
     .permission-warning i {
         opacity: 1;
+    }
+    
+    .btn--warning {
+        background: linear-gradient(135deg, #d29922, #b8860b);
+        color: #fff;
+        border: none;
+    }
+    
+    .btn--warning:hover {
+        background: linear-gradient(135deg, #e5a92a, #d29922);
+        transform: translateY(-1px);
+    }
+    
+    .btn--large {
+        padding: 12px 24px;
+        font-size: 14px;
+        margin-top: 16px;
     }
     
     .hint {

