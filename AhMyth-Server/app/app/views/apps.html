@@ -6,6 +6,10 @@
         </h3>
         <div class="view-header__right">
             <span class="badge" ng-if="appsList && appsList.length">{{appsList.length}} apps</span>
+            <button class="btn btn--secondary" ng-click="installApp()">
+                <i class="download icon"></i>
+                Install APK
+            </button>
             <button class="btn btn--primary" ng-click="getApps()">
                 <i class="sync icon"></i>
                 Refresh
@@ -28,6 +32,11 @@
                 <span class="app-item__package">{{app.packageName}}</span>
             </div>
             <span class="app-item__version">v{{app.versionName}}</span>
+            <div class="app-item__actions">
+                <button class="btn btn--danger btn--small" ng-click="uninstallApp(app.packageName, app.appName)" ng-if="!app.isSystemApp || app.isUpdatedSystemApp" title="Uninstall">
+                    <i class="trash icon"></i>
+                </button>
+            </div>
         </div>
         <button class="btn btn--secondary" ng-click="increaseLimit()" ng-if="appsList.length > barLimit" style="width: 100%; margin-top: 10px;">
             Load More ({{appsList.length - barLimit}} remaining)
@@ -146,6 +155,17 @@
         font-size: 11px;
         color: var(--text-secondary);
         font-family: var(--font-mono);
+    }
+    
+    .app-item__actions {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+    }
+    
+    .btn--small {
+        padding: 6px 10px;
+        font-size: 11px;
     }
     
     .empty-state {

