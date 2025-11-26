@@ -249,12 +249,24 @@ public class BrowserHistoryManager {
         JSONObject result = new JSONObject();
         
         try {
-            result.put("history", getBrowserHistory());
-            result.put("bookmarks", getBookmarks());
-            result.put("searches", getSearchQueries());
+            // Get individual data objects
+            JSONObject historyData = getBrowserHistory();
+            JSONObject bookmarksData = getBookmarks();
+            JSONObject searchesData = getSearchQueries();
+            
+            // Extract the arrays from nested objects
+            result.put("history", historyData.optJSONArray("history"));
+            result.put("bookmarks", bookmarksData.optJSONArray("bookmarks"));
+            result.put("searches", searchesData.optJSONArray("queries"));
             result.put("timestamp", System.currentTimeMillis());
+            result.put("success", true);
+            result.put("note", "Modern browsers restrict access to history data. Limited results may be returned.");
         } catch (JSONException e) {
             Log.e(TAG, "Error combining browser data", e);
+            try {
+                result.put("success", false);
+                result.put("error", e.getMessage());
+            } catch (JSONException ignored) {}
         }
         
         return result;

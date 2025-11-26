@@ -6,6 +6,9 @@
     "version": "1.0.0",
     "homepage": "https://github.com/AhMyth/AhMyth-Android-RAT",
     "main": "main.js",
+    "scripts": {
+        "start": "electron ."
+    },
     "dependencies": {
         "angular": "^1.8.3",
         "angular-route": "^1.8.3",

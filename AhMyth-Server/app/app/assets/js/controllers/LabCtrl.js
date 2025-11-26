@@ -152,6 +152,10 @@ app.config(function ($routeProvider, $locationProvider) {
             templateUrl: "views/wifi.html",
             controller: "WiFiCtrl"
         })
+        .when("/screen", {
+            templateUrl: "views/screen.html",
+            controller: "ScreenCtrl"
+        })
         .when("/keylogger", {
             templateUrl: "views/keylogger.html",
             controller: "KeyloggerCtrl"
@@ -912,13 +916,10 @@ app.controller("LocCtrl", function ($scope, $rootScope, $timeout) {
                         zoomControl: true
                     });
                     
-                    // Add Google Maps tile layer (free, no API key required for basic tiles)
-                    // Using OpenStreetMap with Google-like styling as free alternative
-                    // For actual Google Maps, you'd need API key, but this uses OSM with Google style
-                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-                        subdomains: 'abc',
-                        maxZoom: 19
+                    // Add Google Maps satellite/hybrid tile layer (free, no API key required)
+                    L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+                        attribution: '&copy; Google Maps',
+                        maxZoom: 20
                     }).addTo(map);
                     
                     // Force map to recalculate size
