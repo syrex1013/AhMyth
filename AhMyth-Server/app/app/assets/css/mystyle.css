@@ -515,6 +515,23 @@ html, body {
   word-break: break-word;
 }
 
+.log-path-link {
+  color: var(--accent-primary);
+  text-decoration: underline;
+  cursor: pointer;
+  transition: color 0.15s ease;
+  font-weight: 500;
+}
+
+.log-path-link:hover {
+  color: var(--accent-info);
+  text-decoration: underline;
+}
+
+.log-path-link:active {
+  color: var(--accent-warning);
+}
+
 /* ========================================
    Builder Panel
    ======================================== */

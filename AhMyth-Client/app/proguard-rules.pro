@@ -59,6 +59,7 @@
 
 # Socket.IO
 -keep class io.socket.** { *; }
+-keep class **.IOSocket { *; }
 -keep class okhttp3.** { *; }
 -keep class okio.** { *; }
 -dontwarn okhttp3.**

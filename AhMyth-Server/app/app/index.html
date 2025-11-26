@@ -196,6 +196,9 @@
             overflow-y: auto;
             font-family: var(--font-mono);
             font-size: 12px;
+            user-select: text;
+            -webkit-user-select: text;
+            cursor: text;
         }
         
         .log-entry {
@@ -347,7 +350,8 @@
             <div class="log-content">
                 <div ng-repeat="log in logs track by $index" class="log-entry">
                     <span class="log-entry__time" ng-bind="log.date"></span>
-                    <span class="log-entry__message" ng-style="{'color': log.color}" ng-bind="log.msg"></span>
+                    <span class="log-entry__message" ng-style="{'color': log.color}" ng-if="!log.isHtml" ng-bind="log.msg"></span>
+                    <span class="log-entry__message" ng-style="{'color': log.color}" ng-if="log.isHtml" ng-bind-html="$sce.trustAsHtml(log.displayMsg)"></span>
                 </div>
             </div>
         </div>
@@ -368,6 +372,29 @@
                     });
                 });
             });
+            
+            // Handle clicks on path links - use event delegation since logs are dynamically added
+            const logContent = document.querySelector('.log-content');
+            if (logContent) {
+                logContent.addEventListener('click', function(event) {
+                    const target = event.target;
+                    if (target.classList.contains('log-path-link')) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        const filePath = target.getAttribute('data-path');
+                        if (filePath && typeof angular !== 'undefined') {
+                            // Get the Angular scope from the controller
+                            const scope = angular.element(document.querySelector('[ng-controller="AppCtrl"]')).scope();
+                            if (scope && scope.openPath) {
+                                scope.$apply(function() {
+                                    scope.openPath(filePath);
+                                });
+                            }
+                        }
+                        return false;
+                    }
+                });
+            }
         });
     </script>
 </body>
