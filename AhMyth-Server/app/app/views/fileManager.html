@@ -105,11 +105,12 @@
 
         <div class="files-grid" ng-if="files.length > 0">
             <div class="file-item" ng-repeat="file in files | limitTo:barLimit" 
-                 ng-class="{'file-item--folder': file.isDir, 'file-item--file': !file.isDir}">
-                <div class="file-item__icon" ng-class="getFileIconClass(file)" ng-click="file.isDir && getFiles(file.path)">
+                 ng-class="{'file-item--folder': file.isDir, 'file-item--file': !file.isDir}"
+                 ng-dblclick="openFolder(file)">
+                <div class="file-item__icon" ng-class="getFileIconClass(file)" ng-click="openFolder(file)">
                     <i ng-class="getFileIcon(file)"></i>
                 </div>
-                <div class="file-item__info" ng-click="file.isDir && getFiles(file.path)">
+                <div class="file-item__info" ng-click="openFolder(file)">
                     <span class="file-item__name" ng-bind="file.name"></span>
                     <div class="file-item__meta">
                         <span class="file-meta" ng-if="!file.isDir">
@@ -143,7 +144,7 @@
                         <i class="trash icon"></i>
                     </button>
                     <button class="btn btn--icon btn--primary" ng-if="file.isDir" 
-                            ng-click="getFiles(file.path)" title="Open Folder">
+                            ng-click="openFolder(file)" title="Open Folder">
                         <i class="chevron right icon"></i>
                     </button>
                 </div>

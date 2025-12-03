@@ -296,6 +296,17 @@
             -webkit-app-region: no-drag;
         }
         
+        .btn-sm--wake {
+            background: linear-gradient(135deg, #ff9800 0%, #ff6b00 100%);
+            border-color: #ff9800;
+            color: white;
+        }
+        
+        .btn-sm--wake:hover {
+            background: linear-gradient(135deg, #ffb74d 0%, #ff9800 100%);
+            box-shadow: 0 0 12px rgba(255, 152, 0, 0.4);
+        }
+        
         .btn-sm:hover {
             background: var(--bg-hover);
             border-color: var(--accent);
@@ -525,6 +536,9 @@
                     <span>Control Panel</span>
                 </div>
                 <div class="content-header__actions">
+                    <button class="btn-sm btn-sm--wake" ng-click="wakeScreen()" title="Wake up and unlock screen">
+                        <i class="sun icon"></i> Wake Screen
+                    </button>
                     <button class="btn-sm" ng-click="requestPermission('all')">
                         <i class="shield icon"></i> Request Perms
                     </button>

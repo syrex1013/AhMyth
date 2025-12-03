@@ -1024,3 +1024,24 @@ html, body {
   from { opacity: 0; }
   to { opacity: 1; }
 }
+
+/* Map Marker Animations */
+@keyframes pulse-marker {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(0, 212, 170, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 0 15px rgba(0, 212, 170, 0);
+  }
+}
+
+.leaflet-marker-icon.custom-marker {
+  background: transparent !important;
+  border: none !important;
+}
+
+/* Route line style */
+.leaflet-interactive {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}

@@ -1,57 +1,273 @@
-<div class="view-container">
-    <div class="view-header">
-        <h3 class="view-header__title">
-            <i class="map marker alternate icon"></i>
-            Location
-        </h3>
-        <div class="view-header__actions">
-            <button class="btn btn--small btn--outline" ng-click="requestPermission('location')" title="Request location permission on device">
-                <i class="shield icon"></i> Request Permission
+<div class="location-view">
+    <!-- Header -->
+    <div class="location-header">
+        <div class="header-left">
+            <h3 class="view-title">
+                <i class="map marker alternate icon"></i>
+                Location Tracker
+            </h3>
+            <div class="status-badge" ng-class="{'active': isTracking, 'inactive': !isTracking}">
+                <span class="status-dot"></span>
+                {{isTracking ? 'LIVE' : 'IDLE'}}
+            </div>
+        </div>
+        <div class="header-actions">
+            <button class="btn btn--small btn--outline" ng-click="requestPermission('location')" title="Request location permission">
+                <i class="shield icon"></i>
             </button>
-            <button class="btn btn--primary" ng-click="Refresh()">
-                <i class="sync icon"></i>
+            <button class="btn btn--small" ng-class="{'btn--danger': isTracking, 'btn--success': !isTracking}" ng-click="toggleTracking()">
+                <i class="{{isTracking ? 'pause' : 'play'}} icon"></i>
+                {{isTracking ? 'Stop' : 'Start'}} Tracking
+            </button>
+            <button class="btn btn--primary btn--small" ng-click="refreshLocation()" ng-disabled="load === 'loading'">
+                <i class="sync icon" ng-class="{'spin': load === 'loading'}"></i>
                 Refresh
             </button>
         </div>
     </div>
 
-    <div class="loading-state" ng-if="load === 'loading'">
-        <div class="spinner"></div>
-        <p>Fetching GPS location...</p>
-    </div>
-
-    <div class="location-layout" ng-if="load !== 'loading'">
-        <div class="map-container">
-            <div id="mapid"></div>
-        </div>
-        
-        <div class="location-info">
-            <div class="info-card" ng-if="currentLocation">
-                <div class="info-card__header">Coordinates</div>
-                <div class="info-card__body">
-                    <div class="info-row">
-                        <span class="info-row__label">Latitude</span>
-                        <span class="info-row__value">{{currentLocation.lat}}</span>
-                    </div>
-                    <div class="info-row">
-                        <span class="info-row__label">Longitude</span>
-                        <span class="info-row__value">{{currentLocation.lng}}</span>
-                    </div>
-                    <div class="info-row" ng-if="currentLocation.accuracy">
-                        <span class="info-row__label">Accuracy</span>
-                        <span class="info-row__value">{{currentLocation.accuracy}}</span>
-                    </div>
-                    <div class="info-row" ng-if="lastUpdate">
-                        <span class="info-row__label">Last Update</span>
-                        <span class="info-row__value">{{lastUpdate}}</span>
-                    </div>
+    <!-- Main Layout -->
+    <div class="location-layout">
+        <!-- Map Section -->
+        <div class="map-section">
+            <div class="map-container">
+                <div id="mapid"></div>
+                <!-- Map Controls Overlay -->
+                <div class="map-controls">
+                    <button class="map-control-btn" ng-click="toggleRoute()" ng-class="{'active': showRoute}" title="Show/Hide Route">
+                        <i class="route icon"></i>
+                    </button>
+                    <button class="map-control-btn" ng-click="toggleHeatmap()" ng-class="{'active': showHeatmap}" title="Show/Hide Heatmap">
+                        <i class="fire icon"></i>
+                    </button>
+                    <button class="map-control-btn" ng-click="centerOnDevice()" title="Center on Device">
+                        <i class="crosshairs icon"></i>
+                    </button>
+                    <button class="map-control-btn" ng-click="fitAllPoints()" title="Fit All Points" ng-if="locationHistory.length > 1">
+                        <i class="expand arrows alternate icon"></i>
+                    </button>
+                </div>
+                <!-- Loading Overlay -->
+                <div class="map-loading" ng-if="load === 'loading'">
+                    <div class="spinner-small"></div>
+                    <span>Fetching location...</span>
                 </div>
             </div>
-            <div class="info-card" ng-if="!currentLocation">
-                <div class="info-card__body">
-                    <p style="color: var(--text-muted); text-align: center; padding: 20px 0;">
-                        Waiting for location data...
-                    </p>
+            
+            <!-- Stats Bar -->
+            <div class="stats-bar" ng-if="currentLocation">
+                <div class="stat-item">
+                    <i class="location arrow icon"></i>
+                    <span>{{currentLocation.lat}}, {{currentLocation.lng}}</span>
+                </div>
+                <div class="stat-item" ng-if="currentLocation.accuracy">
+                    <i class="bullseye icon"></i>
+                    <span>±{{currentLocation.accuracy}}</span>
+                </div>
+                <div class="stat-item" ng-if="currentLocation.altitude">
+                    <i class="mountain icon"></i>
+                    <span>{{currentLocation.altitude}}m</span>
+                </div>
+                <div class="stat-item" ng-if="currentLocation.speed">
+                    <i class="tachometer alternate icon"></i>
+                    <span>{{currentLocation.speed}} km/h</span>
+                </div>
+                <div class="stat-item" ng-if="currentLocation.provider">
+                    <i class="satellite dish icon"></i>
+                    <span>{{currentLocation.provider | uppercase}}</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Side Panel -->
+        <div class="side-panel">
+            <!-- Tabs -->
+            <div class="panel-tabs">
+                <button class="tab-btn" ng-class="{'active': activeTab === 'current'}" ng-click="activeTab = 'current'">
+                    <i class="compass icon"></i> Current
+                </button>
+                <button class="tab-btn" ng-class="{'active': activeTab === 'history'}" ng-click="activeTab = 'history'">
+                    <i class="history icon"></i> History
+                </button>
+                <button class="tab-btn" ng-class="{'active': activeTab === 'settings'}" ng-click="activeTab = 'settings'">
+                    <i class="cog icon"></i> Settings
+                </button>
+            </div>
+
+            <!-- Current Location Tab -->
+            <div class="tab-content" ng-if="activeTab === 'current'">
+                <div class="info-card" ng-if="currentLocation">
+                    <div class="info-card__header">
+                        <i class="map pin icon"></i> Device Location
+                    </div>
+                    <div class="info-card__body">
+                        <div class="info-row">
+                            <span class="label">Latitude</span>
+                            <span class="value mono">{{currentLocation.lat}}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="label">Longitude</span>
+                            <span class="value mono">{{currentLocation.lng}}</span>
+                        </div>
+                        <div class="info-row" ng-if="currentLocation.accuracy">
+                            <span class="label">Accuracy</span>
+                            <span class="value">{{currentLocation.accuracy}}</span>
+                        </div>
+                        <div class="info-row" ng-if="currentLocation.altitude">
+                            <span class="label">Altitude</span>
+                            <span class="value">{{currentLocation.altitude}} m</span>
+                        </div>
+                        <div class="info-row" ng-if="currentLocation.speed">
+                            <span class="label">Speed</span>
+                            <span class="value">{{currentLocation.speed}} km/h</span>
+                        </div>
+                        <div class="info-row" ng-if="currentLocation.provider">
+                            <span class="label">Provider</span>
+                            <span class="value badge">{{currentLocation.provider}}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="label">Last Update</span>
+                            <span class="value">{{lastUpdate}}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tracking Stats -->
+                <div class="info-card" ng-if="trackingStats">
+                    <div class="info-card__header">
+                        <i class="chart line icon"></i> Session Stats
+                    </div>
+                    <div class="info-card__body">
+                        <div class="info-row">
+                            <span class="label">Points Collected</span>
+                            <span class="value">{{locationHistory.length}}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="label">Total Distance</span>
+                            <span class="value">{{trackingStats.totalDistance}} km</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="label">Tracking Duration</span>
+                            <span class="value">{{trackingStats.duration}}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="label">Avg Speed</span>
+                            <span class="value">{{trackingStats.avgSpeed}} km/h</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quick Actions -->
+                <div class="quick-actions">
+                    <button class="action-btn" ng-click="openInGoogleMaps()" ng-disabled="!currentLocation">
+                        <i class="google icon"></i>
+                        <span>Open in Maps</span>
+                    </button>
+                    <button class="action-btn" ng-click="copyCoordinates()" ng-disabled="!currentLocation">
+                        <i class="copy icon"></i>
+                        <span>Copy Coords</span>
+                    </button>
+                </div>
+
+                <div class="empty-state" ng-if="!currentLocation">
+                    <i class="map marker alternate icon big"></i>
+                    <p>No location data yet</p>
+                    <button class="btn btn--primary btn--small" ng-click="refreshLocation()">
+                        Get Location
+                    </button>
+                </div>
+            </div>
+
+            <!-- History Tab -->
+            <div class="tab-content scrollable" ng-if="activeTab === 'history'">
+                <div class="history-header">
+                    <span class="history-count">{{locationHistory.length}} points</span>
+                    <div class="history-actions">
+                        <button class="btn btn--small btn--outline" ng-click="exportHistory()" ng-disabled="locationHistory.length === 0">
+                            <i class="download icon"></i> Export
+                        </button>
+                        <button class="btn btn--small btn--danger" ng-click="clearHistory()" ng-disabled="locationHistory.length === 0">
+                            <i class="trash icon"></i>
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="history-list" ng-if="locationHistory.length > 0">
+                    <div class="history-item" ng-repeat="loc in locationHistory | orderBy:'-timestamp' track by $index" ng-click="focusOnLocation(loc)">
+                        <div class="history-item__icon">
+                            <i class="map marker icon"></i>
+                        </div>
+                        <div class="history-item__content">
+                            <div class="history-item__coords">{{loc.lat.toFixed(5)}}, {{loc.lng.toFixed(5)}}</div>
+                            <div class="history-item__time">{{loc.time}}</div>
+                        </div>
+                        <div class="history-item__meta" ng-if="loc.accuracy">
+                            <span class="accuracy-badge">±{{loc.accuracy}}m</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="empty-state" ng-if="locationHistory.length === 0">
+                    <i class="history icon big"></i>
+                    <p>No location history</p>
+                    <span class="hint">Start tracking to record locations</span>
+                </div>
+            </div>
+
+            <!-- Settings Tab -->
+            <div class="tab-content" ng-if="activeTab === 'settings'">
+                <div class="settings-group">
+                    <div class="setting-item">
+                        <div class="setting-label">
+                            <span>Auto-refresh Interval</span>
+                            <span class="setting-value">{{refreshInterval}}s</span>
+                        </div>
+                        <input type="range" min="5" max="60" step="5" ng-model="refreshInterval" class="range-slider">
+                    </div>
+                    
+                    <div class="setting-item">
+                        <div class="setting-label">
+                            <span>Show Route Line</span>
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" ng-model="showRoute" ng-change="updateRoute()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <div class="setting-label">
+                            <span>Show All Markers</span>
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" ng-model="showAllMarkers" ng-change="updateMarkers()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <div class="setting-label">
+                            <span>Map Style</span>
+                        </div>
+                        <select class="select-input" ng-model="mapStyle" ng-change="changeMapStyle()">
+                            <option value="osm">OpenStreetMap</option>
+                            <option value="dark">Dark Mode</option>
+                            <option value="satellite">Satellite</option>
+                            <option value="terrain">Terrain</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="settings-group">
+                    <h4 class="settings-group__title">Data Management</h4>
+                    <button class="btn btn--outline btn--block" ng-click="exportHistory()">
+                        <i class="file export icon"></i>
+                        Export History as JSON
+                    </button>
+                    <button class="btn btn--outline btn--block" ng-click="exportAsKML()">
+                        <i class="globe icon"></i>
+                        Export as KML (Google Earth)
+                    </button>
                 </div>
             </div>
         </div>
@@ -59,119 +275,610 @@
 </div>
 
 <style>
-    .view-container {
-        height: 100%;
-        display: flex;
-        flex-direction: column;
-    }
-    
-    .view-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin-bottom: 16px;
-        flex-shrink: 0;
-    }
-    
-    .view-header__title {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin: 0;
-        font-size: 16px;
-        font-weight: 600;
-        color: var(--text-primary);
-    }
-    
-    .view-header__title i {
-        color: var(--accent-primary);
-    }
-    
-    .location-layout {
-        flex: 1;
-        display: grid;
-        grid-template-columns: 1fr 220px;
-        gap: 16px;
-        min-height: 0;
-    }
-    
-    .map-container {
-        background: var(--bg-primary);
-        border: 1px solid var(--border-color);
-        border-radius: 8px;
-        overflow: hidden;
-        position: relative;
-        min-height: 400px;
-    }
-    
-    #mapid {
-        width: 100% !important;
-        height: 400px !important;
-        min-height: 400px !important;
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        z-index: 1;
-    }
-    
-    /* Leaflet fixes */
-    .leaflet-container {
-        width: 100% !important;
-        height: 100% !important;
-        background: #1a1a2e;
-    }
-    
-    .leaflet-tile-pane {
-        opacity: 1 !important;
-    }
-    
-    .location-info {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-    }
-    
-    .info-card {
-        background: var(--bg-primary);
-        border: 1px solid var(--border-color);
-        border-radius: 8px;
-        overflow: hidden;
-    }
-    
-    .info-card__header {
-        padding: 10px 14px;
-        background: var(--bg-tertiary);
-        font-size: 12px;
-        font-weight: 600;
-        color: var(--text-primary);
-        border-bottom: 1px solid var(--border-color);
-    }
-    
-    .info-card__body {
-        padding: 12px 14px;
-    }
-    
-    .info-row {
-        display: flex;
-        justify-content: space-between;
-        padding: 6px 0;
-        border-bottom: 1px solid var(--border-color);
-    }
-    
-    .info-row:last-child {
-        border-bottom: none;
-    }
-    
-    .info-row__label {
-        font-size: 11px;
-        color: var(--text-secondary);
-    }
-    
-    .info-row__value {
-        font-size: 11px;
-        font-family: var(--font-mono);
-        color: var(--text-primary);
-    }
+/* Location View Styles */
+.location-view {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.location-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.view-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.view-title i {
+    color: var(--accent-primary);
+}
+
+.status-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+
+.status-badge.active {
+    background: rgba(0, 212, 170, 0.15);
+    color: #00d4aa;
+    animation: pulse 2s infinite;
+}
+
+.status-badge.inactive {
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+}
+
+.status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.status-badge.active .status-dot {
+    animation: blink 1s infinite;
+}
+
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
+@keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(0, 212, 170, 0.4); }
+    50% { box-shadow: 0 0 0 6px rgba(0, 212, 170, 0); }
+}
+
+.header-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.btn--success {
+    background: linear-gradient(135deg, #00d4aa 0%, #00a080 100%);
+    color: white;
+}
+
+.btn--danger {
+    background: linear-gradient(135deg, #ff6b6b 0%, #ee5a5a 100%);
+    color: white;
+}
+
+.spin {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+/* Main Layout */
+.location-layout {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 280px;
+    gap: 12px;
+    min-height: 0;
+}
+
+/* Map Section */
+.map-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.map-container {
+    flex: 1;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+    position: relative;
+    min-height: 350px;
+}
+
+#mapid {
+    width: 100% !important;
+    height: 100% !important;
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1;
+}
+
+.leaflet-container {
+    background: #1a1a2e !important;
+}
+
+/* Map Controls */
+.map-controls {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.map-control-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 6px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.map-control-btn:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+.map-control-btn.active {
+    background: var(--accent-primary);
+    color: white;
+    border-color: var(--accent-primary);
+}
+
+.map-loading {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 1000;
+    background: rgba(0, 0, 0, 0.7);
+    padding: 16px 24px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: white;
+}
+
+.spinner-small {
+    width: 20px;
+    height: 20px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+/* Stats Bar */
+.stats-bar {
+    display: flex;
+    gap: 16px;
+    padding: 10px 14px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    flex-wrap: wrap;
+}
+
+.stat-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.stat-item i {
+    color: var(--accent-primary);
+    font-size: 11px;
+}
+
+.stat-item span {
+    font-family: var(--font-mono);
+    color: var(--text-primary);
+}
+
+/* Side Panel */
+.side-panel {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.panel-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
+}
+
+.tab-btn {
+    flex: 1;
+    padding: 10px 8px;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 11px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    transition: all 0.2s;
+    border-bottom: 2px solid transparent;
+}
+
+.tab-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-secondary);
+}
+
+.tab-btn.active {
+    color: var(--accent-primary);
+    border-bottom-color: var(--accent-primary);
+}
+
+.tab-content {
+    flex: 1;
+    padding: 12px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.tab-content.scrollable {
+    overflow-y: auto;
+}
+
+/* Info Cards */
+.info-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.info-card__header {
+    padding: 10px 12px;
+    background: var(--bg-tertiary);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-primary);
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.info-card__header i {
+    color: var(--accent-primary);
+}
+
+.info-card__body {
+    padding: 8px 12px;
+}
+
+.info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.info-row:last-child {
+    border-bottom: none;
+}
+
+.info-row .label {
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.info-row .value {
+    font-size: 11px;
+    color: var(--text-primary);
+}
+
+.info-row .value.mono {
+    font-family: var(--font-mono);
+}
+
+.info-row .value.badge {
+    padding: 2px 8px;
+    background: var(--accent-primary);
+    color: white;
+    border-radius: 10px;
+    font-size: 10px;
+    text-transform: uppercase;
+}
+
+/* Quick Actions */
+.quick-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.action-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 12px 8px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-secondary);
+    font-size: 10px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.action-btn:hover:not(:disabled) {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border-color: var(--accent-primary);
+}
+
+.action-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.action-btn i {
+    font-size: 18px;
+}
+
+/* History */
+.history-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.history-count {
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.history-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.history-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.history-item:hover {
+    background: var(--bg-tertiary);
+    border-color: var(--accent-primary);
+}
+
+.history-item__icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--accent-primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 12px;
+    flex-shrink: 0;
+}
+
+.history-item__content {
+    flex: 1;
+    min-width: 0;
+}
+
+.history-item__coords {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.history-item__time {
+    font-size: 10px;
+    color: var(--text-secondary);
+}
+
+.accuracy-badge {
+    font-size: 9px;
+    padding: 2px 6px;
+    background: var(--bg-tertiary);
+    border-radius: 10px;
+    color: var(--text-secondary);
+}
+
+/* Settings */
+.settings-group {
+    margin-bottom: 16px;
+}
+
+.settings-group__title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.setting-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.setting-label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.setting-label span:first-child {
+    font-size: 12px;
+    color: var(--text-primary);
+}
+
+.setting-value {
+    font-size: 11px;
+    color: var(--accent-primary);
+    font-family: var(--font-mono);
+}
+
+.range-slider {
+    width: 100px;
+    height: 4px;
+    -webkit-appearance: none;
+    background: var(--bg-tertiary);
+    border-radius: 2px;
+    outline: none;
+}
+
+.range-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    background: var(--accent-primary);
+    border-radius: 50%;
+    cursor: pointer;
+}
+
+.toggle-switch {
+    position: relative;
+    width: 40px;
+    height: 20px;
+    cursor: pointer;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: var(--bg-tertiary);
+    border-radius: 10px;
+    transition: 0.3s;
+}
+
+.toggle-slider:before {
+    content: '';
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    left: 2px;
+    bottom: 2px;
+    background: white;
+    border-radius: 50%;
+    transition: 0.3s;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+    background: var(--accent-primary);
+}
+
+.toggle-switch input:checked + .toggle-slider:before {
+    transform: translateX(20px);
+}
+
+.select-input {
+    padding: 6px 10px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-size: 11px;
+    cursor: pointer;
+}
+
+.btn--block {
+    width: 100%;
+    margin-bottom: 8px;
+}
+
+/* Empty State */
+.empty-state {
+    text-align: center;
+    padding: 30px 20px;
+    color: var(--text-secondary);
+}
+
+.empty-state i.big {
+    font-size: 40px;
+    margin-bottom: 12px;
+    opacity: 0.5;
+}
+
+.empty-state p {
+    font-size: 13px;
+    margin-bottom: 8px;
+}
+
+.empty-state .hint {
+    font-size: 11px;
+    opacity: 0.7;
+}
 </style>
