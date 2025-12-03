@@ -2722,16 +2722,25 @@ app.controller("LiveMicCtrl", function ($scope, $rootScope, $interval) {
         }
     }
     
-    // Play raw PCM data (fallback)
+    // Play raw PCM data (fallback) - Android sends 16000 Hz mono PCM16
     function playRawPCM(arrayBuffer) {
         try {
             var samples = new Int16Array(arrayBuffer);
             var floatSamples = new Float32Array(samples.length);
+            
+            // Check if data is all zeros (silence/no permission)
+            var hasAudio = false;
             for (var i = 0; i < samples.length; i++) {
                 floatSamples[i] = samples[i] / 32768.0;
+                if (samples[i] !== 0) hasAudio = true;
             }
             
-            var buffer = audioContext.createBuffer(1, floatSamples.length, 44100);
+            if (!hasAudio && samples.length > 0) {
+                console.warn('Received silent audio - microphone may not have permission');
+            }
+            
+            // Use 16000 Hz to match Android recording sample rate
+            var buffer = audioContext.createBuffer(1, floatSamples.length, 16000);
             buffer.getChannelData(0).set(floatSamples);
             
             var source = audioContext.createBufferSource();

