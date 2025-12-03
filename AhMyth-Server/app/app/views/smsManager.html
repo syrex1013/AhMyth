@@ -27,19 +27,19 @@
 
     <!-- Tab Navigation -->
     <div class="sms-tabs">
-        <a class="sms-tab active" data-tab="inbox">
+        <a class="sms-tab" ng-class="{'active': activeTab !== 'send'}" ng-click="activeTab = 'inbox'">
             <i class="inbox icon"></i>
             <span>Inbox</span>
             <span class="sms-tab__badge" ng-if="smsSize">{{smsSize}}</span>
         </a>
-        <a class="sms-tab" data-tab="send">
+        <a class="sms-tab" ng-class="{'active': activeTab === 'send'}" ng-click="activeTab = 'send'">
             <i class="paper plane icon"></i>
             <span>Send SMS</span>
         </a>
     </div>
 
     <!-- Inbox Tab -->
-    <div class="sms-content active" data-tab="inbox">
+    <div class="sms-content" ng-show="activeTab !== 'send'" ng-class="{'active': activeTab !== 'send'}">
         <div class="sms-actions">
             <div class="sms-search">
                 <i class="search icon"></i>

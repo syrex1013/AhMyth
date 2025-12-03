@@ -1,11 +1,11 @@
-odify <!DOCTYPE html>
+<!DOCTYPE html>
 <html ng-app="myappy">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="initial-scale=1, maximum-scale=1, user-scalable=no" />
     <base href="./">
-    <title>Victim Lab - AhMyth</title>
+    <title>AhMyth RAT - Control Panel</title>
     
     <script>
         if (typeof module === 'object') {
@@ -15,7 +15,7 @@ odify <!DOCTYPE html>
     </script>
 
     <script type="text/javascript" src="assets/js/lib/jquery-3.1.1.min.js"></script>
-    <script type="text/javascript" src="../node_modules/fomantic-ui/dist/semantic.min.js"></script>
+    <script type="text/javascript" src="../node_modules/fomantic-ui-css/semantic.min.js"></script>
     <script type="text/javascript" src="../node_modules/angular/angular.js"></script>
     <script type="text/javascript" src="../node_modules/angular-route/angular-route.min.js"></script>
     <script type='text/javascript' src='assets/js/lib/ng-infinite-scroll.min.js'></script>
@@ -26,360 +26,535 @@ odify <!DOCTYPE html>
         if (window.module) module = window.module;
     </script>
 
-    <link rel="stylesheet" href="../node_modules/fomantic-ui/dist/semantic.min.css" />
+    <link rel="stylesheet" href="../node_modules/fomantic-ui-css/semantic.min.css" />
     <link rel="stylesheet" href="assets/css/mystyle.css">
     <link rel="stylesheet" href="assets/css/leaflet.css" />
 
     <style>
-        /* Prevent white flash */
+        /* Using system fonts to avoid external resource loading */
+        :root {
+            --bg-dark: #0a0a0f;
+            --bg-panel: #12121a;
+            --bg-card: #1a1a24;
+            --bg-hover: #22222e;
+            --border: #2a2a3a;
+            --border-active: #00ff88;
+            --text-primary: #e8e8f0;
+            --text-secondary: #8888a0;
+            --text-muted: #555566;
+            --accent: #00ff88;
+            --accent-dim: rgba(0, 255, 136, 0.15);
+            --danger: #ff4466;
+            --warning: #ffaa00;
+            --info: #00aaff;
+            --font-mono: 'Consolas', 'Monaco', 'Courier New', monospace;
+            --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        
         html, body {
             height: 100%;
-            margin: 0;
-            padding: 0;
             overflow: hidden;
-            background: #0d1117 !important;
+            background: var(--bg-dark);
+            font-family: var(--font-sans);
+            color: var(--text-primary);
+            font-size: 13px;
         }
         
-        .lab-container {
-            display: flex;
-            flex-direction: column;
+        /* Global clickability - only title bar is draggable */
+        button, input, select, textarea, a, .btn, .button,
+        .ui.button, .ui.input, [ng-click], [onclick], label {
+            -webkit-app-region: no-drag !important;
+            cursor: pointer;
+        }
+        
+        .lab-shell {
+            display: grid;
+            grid-template-columns: 48px 1fr;
+            grid-template-rows: 32px 1fr 140px;
             height: 100vh;
             max-height: 100vh;
-            background: #0d1117;
             overflow: hidden;
         }
         
-        /* Title Bar */
-        .lab-title-bar {
+        /* ═══ TITLE BAR ═══ */
+        .title-bar {
+            grid-column: 1 / -1;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            height: 36px;
-            min-height: 36px;
-            max-height: 36px;
-            flex-shrink: 0;
-            padding: 0 12px;
-            background: var(--bg-secondary);
-            border-bottom: 1px solid var(--border-color);
+            padding: 0 8px 0 12px;
+            background: linear-gradient(180deg, #1a1a24 0%, #12121a 100%);
+            border-bottom: 1px solid var(--border);
             -webkit-app-region: drag;
         }
         
-        .lab-title-bar__brand {
+        .title-bar__left {
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 10px;
         }
         
-        .lab-title-bar__logo {
-            width: 20px;
-            height: 20px;
+        .title-bar__logo {
+            width: 16px;
+            height: 16px;
+            filter: drop-shadow(0 0 4px var(--accent));
         }
         
-        .lab-title-bar__title {
-            font-size: 13px;
+        .title-bar__text {
+            font-family: var(--font-mono);
+            font-size: 11px;
             font-weight: 600;
-            color: var(--text-primary);
+            color: var(--accent);
+            text-transform: uppercase;
+            letter-spacing: 2px;
         }
         
-        .lab-title-bar__controls {
+        .title-bar__center {
             display: flex;
             align-items: center;
-            gap: 12px;
-            -webkit-app-region: no-drag;
+            gap: 16px;
         }
         
-        /* Connection Status */
-        .connection-status {
+        .status-chip {
             display: flex;
             align-items: center;
             gap: 6px;
-            padding: 4px 10px;
-            background: rgba(63, 185, 80, 0.15);
-            border-radius: var(--radius-md);
-            font-size: 11px;
-            font-weight: 500;
-            color: var(--accent-success);
+            padding: 3px 10px;
+            background: var(--accent-dim);
+            border: 1px solid var(--accent);
+            border-radius: 12px;
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--accent);
         }
         
-        .connection-status__dot {
+        .status-chip--offline {
+            background: rgba(255, 68, 102, 0.15);
+            border-color: var(--danger);
+            color: var(--danger);
+        }
+        
+        .status-dot {
             width: 6px;
             height: 6px;
             background: currentColor;
             border-radius: 50%;
+            animation: blink 1.5s infinite;
         }
         
-        /* Feature Nav */
-        .feature-nav-container {
-            background: var(--bg-secondary);
-            border-bottom: 1px solid var(--border-color);
-            flex-shrink: 0;
-            max-height: 70px;
-            overflow: hidden;
+        .status-chip--offline .status-dot {
+            animation: none;
+            opacity: 0.5;
         }
         
-        .feature-nav {
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+        
+        .device-info {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--text-muted);
+        }
+        
+        .title-bar__right {
             display: flex;
-            flex-wrap: nowrap;
+            align-items: center;
             gap: 4px;
-            padding: 8px 10px;
-            overflow-x: auto;
-            overflow-y: hidden;
             -webkit-app-region: no-drag;
-            scrollbar-width: thin;
         }
         
-        .feature-nav::-webkit-scrollbar {
-            height: 4px;
+        .win-btn {
+            width: 28px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            transition: background 0.15s;
         }
         
-        .feature-nav::-webkit-scrollbar-track {
-            background: var(--bg-tertiary);
+        .win-btn:hover { background: var(--bg-hover); }
+        .win-btn--close:hover { background: var(--danger); }
+        
+        .win-btn svg {
+            width: 10px;
+            height: 10px;
+            fill: var(--text-secondary);
         }
         
-        .feature-nav::-webkit-scrollbar-thumb {
-            background: var(--border-color);
-            border-radius: 2px;
-        }
+        .win-btn:hover svg { fill: var(--text-primary); }
         
-        .feature-nav__item {
+        /* ═══ SIDEBAR ═══ */
+        .sidebar {
+            grid-row: 2 / 4;
             display: flex;
             flex-direction: column;
-            align-items: center;
-            gap: 2px;
-            padding: 6px 10px;
-            min-width: 54px;
-            max-width: 54px;
-            background: var(--bg-tertiary);
-            border: 1px solid var(--border-color);
-            border-radius: var(--radius-md);
-            color: var(--text-secondary);
-            font-size: 9px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.15s ease;
-            text-decoration: none;
-            flex-shrink: 0;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
+            background: var(--bg-panel);
+            border-right: 1px solid var(--border);
+            overflow-y: auto;
+            overflow-x: hidden;
+            max-height: calc(100vh - 32px);
+            -webkit-app-region: no-drag;
         }
         
-        .feature-nav__item:hover {
-            background: var(--bg-elevated);
+        .sidebar::-webkit-scrollbar { width: 4px; }
+        .sidebar::-webkit-scrollbar-track { background: var(--bg-panel); }
+        .sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+        .sidebar::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+        
+        .nav-group {
+            padding: 6px 0;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .nav-item {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 48px;
+            height: 40px;
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: all 0.15s;
+            position: relative;
+            -webkit-app-region: no-drag;
+            user-select: none;
+            text-decoration: none;
+        }
+        
+        .nav-item:hover {
+            color: var(--accent);
+            background: var(--accent-dim);
+        }
+        
+        .nav-item:active {
+            transform: scale(0.95);
+            background: var(--accent);
+            color: var(--bg-dark);
+        }
+        
+        .nav-item i {
+            font-size: 16px;
+            pointer-events: none;
+        }
+        
+        /* ═══ MAIN CONTENT ═══ */
+        .main-content {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background: var(--bg-dark);
+            -webkit-app-region: no-drag;
+        }
+        
+        .content-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            background: var(--bg-panel);
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        
+        .content-header__title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-family: var(--font-mono);
+            font-size: 12px;
+            font-weight: 500;
             color: var(--text-primary);
         }
         
-        .feature-nav__item i {
-            font-size: 16px;
+        .content-header__title i {
+            color: var(--accent);
+        }
+        
+        .content-header__actions {
+            display: flex;
+            gap: 6px;
+        }
+        
+        .btn-sm {
+            padding: 4px 10px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            font-family: var(--font-mono);
+            font-size: 10px;
             color: var(--text-secondary);
-        }
-        
-        .feature-nav__item:hover i {
-            color: var(--accent-primary);
-        }
-        
-        .feature-nav__item span {
-            max-width: 100%;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        
-        /* Content */
-        .lab-content {
-            flex: 1;
-            min-height: 0;
-            padding: 12px;
-            overflow: hidden;
+            cursor: pointer;
+            transition: all 0.15s;
             -webkit-app-region: no-drag;
         }
         
-        .lab-content__inner {
-            height: 100%;
-            background: var(--bg-secondary);
-            border: 1px solid var(--border-color);
-            border-radius: var(--radius-lg);
-            overflow: hidden;
+        .btn-sm:hover {
+            background: var(--bg-hover);
+            border-color: var(--accent);
+            color: var(--accent);
         }
         
-        .lab-view {
-            height: 100%;
+        .btn-sm:active {
+            transform: scale(0.95);
+        }
+        
+        .btn-sm--primary {
+            background: var(--accent-dim);
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        
+        .content-view {
+            flex: 1;
             overflow: auto;
             padding: 12px;
-        }
-        
-        /* Log */
-        .lab-log {
-            height: 120px;
-            min-height: 120px;
-            max-height: 120px;
-            flex-shrink: 0;
-            background: var(--bg-primary);
-            border-top: 1px solid var(--border-color);
             -webkit-app-region: no-drag;
         }
         
-        .lab-log__header {
+        /* Make all interactive elements clickable */
+        .content-view button,
+        .content-view input,
+        .content-view select,
+        .content-view textarea,
+        .content-view a,
+        .content-view .btn,
+        .content-view .button,
+        .content-view [ng-click],
+        .content-view [onclick] {
+            -webkit-app-region: no-drag;
+            cursor: pointer;
+            position: relative;
+            z-index: 1;
+        }
+        
+        .content-view::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        
+        .content-view::-webkit-scrollbar-track {
+            background: var(--bg-dark);
+        }
+        
+        .content-view::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 3px;
+        }
+        
+        .content-view::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
+        }
+        
+        /* ═══ TERMINAL LOG ═══ */
+        .terminal {
+            background: var(--bg-panel);
+            border-top: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            -webkit-app-region: no-drag;
+        }
+        
+        .terminal__header {
             display: flex;
             align-items: center;
             justify-content: space-between;
             padding: 6px 12px;
-            background: var(--bg-secondary);
-            border-bottom: 1px solid var(--border-color);
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
         }
         
-        .lab-log__title {
-            font-size: 11px;
+        .terminal__title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-family: var(--font-mono);
+            font-size: 10px;
             font-weight: 600;
             color: var(--text-secondary);
             text-transform: uppercase;
+            letter-spacing: 1px;
         }
         
-        .lab-log__content {
-            height: calc(100% - 32px);
-            padding: 8px 12px;
+        .terminal__title i {
+            color: var(--accent);
+            font-size: 12px;
+        }
+        
+        .terminal__body {
+            flex: 1;
             overflow-y: auto;
+            padding: 8px 12px;
             font-family: var(--font-mono);
             font-size: 11px;
+            line-height: 1.6;
         }
         
-        .lab-log-entry {
+        .terminal__body::-webkit-scrollbar { width: 4px; }
+        .terminal__body::-webkit-scrollbar-track { background: transparent; }
+        .terminal__body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+        
+        .log-entry {
             display: flex;
-            gap: 10px;
-            padding: 3px 0;
-            border-bottom: 1px solid rgba(48, 54, 61, 0.3);
+            gap: 12px;
+            padding: 2px 0;
         }
         
-        .lab-log-entry__time {
+        .log-entry__time {
+            color: var(--text-muted);
             flex-shrink: 0;
+            min-width: 70px;
+        }
+        
+        .log-entry__msg {
+            word-break: break-word;
+        }
+        
+        .log-entry--success .log-entry__msg { color: var(--accent); }
+        .log-entry--error .log-entry__msg { color: var(--danger); }
+        .log-entry--warning .log-entry__msg { color: var(--warning); }
+        .log-entry--info .log-entry__msg { color: var(--info); }
+        
+        /* ═══ QUICK STATS ═══ */
+        .quick-stats {
+            display: flex;
+            gap: 4px;
+            padding: 4px 12px;
+            background: var(--bg-dark);
+            border-top: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        
+        .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 2px 8px;
+            font-family: var(--font-mono);
+            font-size: 9px;
             color: var(--text-muted);
         }
         
-        .lab-log-entry__message {
-            flex: 1;
-            word-break: break-word;
+        .stat-item i {
+            font-size: 10px;
+        }
+        
+        .stat-value {
+            color: var(--accent);
         }
     </style>
 </head>
 
 <body ng-controller="LabCtrl" class="draggable">
-    <div class="lab-container">
+    <div class="lab-shell">
         <!-- Title Bar -->
-        <div class="lab-title-bar">
-            <div class="lab-title-bar__brand">
-                <img src="assets/img/icon.png" alt="AhMyth" class="lab-title-bar__logo">
-                <span class="lab-title-bar__title">Victim Lab</span>
+        <div class="title-bar">
+            <div class="title-bar__left">
+                <img src="assets/img/icon.png" alt="" class="title-bar__logo">
+                <span class="title-bar__text">AhMyth RAT</span>
             </div>
-            <div class="lab-title-bar__controls notDraggable">
-                <div class="connection-status">
-                    <span class="connection-status__dot"></span>
-                    Connected
+            <div class="title-bar__center">
+                <div class="status-chip" ng-class="{'status-chip--offline': !isConnected}">
+                    <span class="status-dot"></span>
+                    <span>{{isConnected ? 'CONNECTED' : 'OFFLINE'}}</span>
                 </div>
-                <button class="window-btn window-btn--minimize" ng-click="minimize()"></button>
-                <button class="window-btn window-btn--maximize" ng-click="maximize()"></button>
-                <button class="window-btn window-btn--close" ng-click="close()"></button>
+                <span class="device-info">SESSION: {{sessionId || 'N/A'}}</span>
+            </div>
+            <div class="title-bar__right">
+                <button class="win-btn" ng-click="minimize()" title="Minimize">
+                    <svg viewBox="0 0 10 10"><path d="M0 5h10v1H0z"/></svg>
+                </button>
+                <button class="win-btn" ng-click="maximize()" title="Maximize">
+                    <svg viewBox="0 0 10 10"><path d="M0 0v10h10V0H0zm1 1h8v8H1V1z"/></svg>
+                </button>
+                <button class="win-btn win-btn--close" ng-click="close()" title="Close">
+                    <svg viewBox="0 0 10 10"><path d="M1 0L0 1l4 4-4 4 1 1 4-4 4 4 1-1-4-4 4-4-1-1-4 4z"/></svg>
+                </button>
             </div>
         </div>
-
-        <!-- Feature Nav -->
-        <div class="feature-nav-container">
-            <div class="feature-nav">
-                <a class="feature-nav__item" ng-click="goToPage('camera')">
-                    <i class="camera icon"></i>
-                    <span>Camera</span>
-                </a>
-                <a class="feature-nav__item" ng-click="goToPage('fileManager')">
-                    <i class="folder icon"></i>
-                    <span>Files</span>
-                </a>
-                <a class="feature-nav__item" ng-click="goToPage('mic')">
-                    <i class="microphone icon"></i>
-                    <span>Mic</span>
-                </a>
-                <a class="feature-nav__item" ng-click="goToPage('location')">
-                    <i class="map marker icon"></i>
-                    <span>Location</span>
-                </a>
-                <a class="feature-nav__item" ng-click="goToPage('contacts')">
-                    <i class="address book icon"></i>
-                    <span>Contacts</span>
-                </a>
-                <a class="feature-nav__item" ng-click="goToPage('smsManager')">
-                    <i class="comment icon"></i>
-                    <span>SMS</span>
-                </a>
-                <a class="feature-nav__item" ng-click="goToPage('callsLogs')">
-                    <i class="phone icon"></i>
-                    <span>Calls</span>
-                </a>
-                <a class="feature-nav__item" ng-click="goToPage('deviceInfo')">
-                    <i class="mobile icon"></i>
-                    <span>Device</span>
-                </a>
-                <a class="feature-nav__item" ng-click="goToPage('apps')">
-                    <i class="th icon"></i>
-                    <span>Apps</span>
-                </a>
-                <a class="feature-nav__item" ng-click="goToPage('clipboard')">
-                    <i class="clipboard icon"></i>
-                    <span>Clipboard</span>
-                </a>
-                <a class="feature-nav__item" ng-click="goToPage('wifi')">
-                    <i class="wifi icon"></i>
-                    <span>WiFi</span>
-                </a>
-                <a class="feature-nav__item" ng-click="goToPage('screen')">
-                    <i class="desktop icon"></i>
-                    <span>Screen</span>
-                </a>
-                <a class="feature-nav__item" ng-click="goToPage('keylogger')">
-                    <i class="keyboard icon"></i>
-                    <span>Keylogger</span>
-                </a>
-                <a class="feature-nav__item" ng-click="goToPage('browserHistory')">
-                    <i class="globe icon"></i>
-                    <span>Browser</span>
-                </a>
-                <a class="feature-nav__item" ng-click="goToPage('notifications')">
-                    <i class="bell icon"></i>
-                    <span>Notifs</span>
-                </a>
-                <a class="feature-nav__item" ng-click="goToPage('systemInfo')">
-                    <i class="server icon"></i>
-                    <span>System</span>
-                </a>
-                <a class="feature-nav__item" ng-click="goToPage('makeCall')">
-                    <i class="phone volume icon"></i>
-                    <span>Call</span>
-                </a>
-                <a class="feature-nav__item" ng-click="goToPage('liveMic')">
-                    <i class="microphone alternate icon"></i>
-                    <span>Live Mic</span>
-                </a>
-                <a class="feature-nav__item" ng-click="goToPage('wifiPasswords')">
-                    <i class="key icon"></i>
-                    <span>WiFi PWD</span>
-                </a>
+        
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="nav-group">
+                <a class="nav-item" ng-click="goToPage('camera')"><i class="camera icon"></i></a>
+                <a class="nav-item" ng-click="goToPage('screen')"><i class="desktop icon"></i></a>
+                <a class="nav-item" ng-click="goToPage('mic')"><i class="microphone icon"></i></a>
+                <a class="nav-item" ng-click="goToPage('liveMic')"><i class="volume up icon"></i></a>
+            </div>
+            <div class="nav-group">
+                <a class="nav-item" ng-click="goToPage('fileManager')"><i class="folder icon"></i></a>
+                <a class="nav-item" ng-click="goToPage('smsManager')"><i class="envelope icon"></i></a>
+                <a class="nav-item" ng-click="goToPage('contacts')"><i class="address book icon"></i></a>
+                <a class="nav-item" ng-click="goToPage('callsLogs')"><i class="phone icon"></i></a>
+            </div>
+            <div class="nav-group">
+                <a class="nav-item" ng-click="goToPage('location')"><i class="map marker icon"></i></a>
+                <a class="nav-item" ng-click="goToPage('wifi')"><i class="wifi icon"></i></a>
+                <a class="nav-item" ng-click="goToPage('wifiPasswords')"><i class="key icon"></i></a>
+            </div>
+            <div class="nav-group">
+                <a class="nav-item" ng-click="goToPage('keylogger')"><i class="keyboard icon"></i></a>
+                <a class="nav-item" ng-click="goToPage('clipboard')"><i class="clipboard icon"></i></a>
+                <a class="nav-item" ng-click="goToPage('notifications')"><i class="bell icon"></i></a>
+            </div>
+            <div class="nav-group">
+                <a class="nav-item" ng-click="goToPage('apps')"><i class="th icon"></i></a>
+                <a class="nav-item" ng-click="goToPage('browserHistory')"><i class="globe icon"></i></a>
+                <a class="nav-item" ng-click="goToPage('deviceInfo')"><i class="mobile icon"></i></a>
+                <a class="nav-item" ng-click="goToPage('systemInfo')"><i class="server icon"></i></a>
+            </div>
+            <div class="nav-group">
+                <a class="nav-item" ng-click="goToPage('makeCall')"><i class="phone volume icon"></i></a>
             </div>
         </div>
-
-        <!-- Content -->
-        <div class="lab-content">
-            <div class="lab-content__inner">
-                <div class="lab-view">
-                    <div ng-view></div>
+        
+        <!-- Main Content -->
+        <div class="main-content">
+            <div class="content-header">
+                <div class="content-header__title">
+                    <i class="terminal icon"></i>
+                    <span>Control Panel</span>
+                </div>
+                <div class="content-header__actions">
+                    <button class="btn-sm" ng-click="requestPermission('all')">
+                        <i class="shield icon"></i> Request Perms
+                    </button>
+                    <button class="btn-sm btn-sm--primary" ng-click="refreshData()">
+                        <i class="sync icon"></i> Refresh
+                    </button>
                 </div>
             </div>
-        </div>
-
-        <!-- Log -->
-        <div class="lab-log">
-            <div class="lab-log__header">
-                <span class="lab-log__title">Activity Log</span>
+            <div class="content-view">
+                <div ng-view></div>
             </div>
-            <div class="lab-log__content" id="logy">
-                <div ng-repeat="log in logs track by $index" class="lab-log-entry">
-                    <span class="lab-log-entry__time" ng-bind="log.date"></span>
-                    <span class="lab-log-entry__message" ng-style="{'color': log.color}" ng-bind="log.msg"></span>
+        </div>
+        
+        <!-- Terminal -->
+        <div class="terminal">
+            <div class="terminal__header">
+                <div class="terminal__title">
+                    <i class="terminal icon"></i>
+                    <span>Activity Log</span>
+                </div>
+                <div class="quick-stats">
+                    <span class="stat-item"><i class="clock icon"></i> Uptime: <span class="stat-value">{{uptime || '00:00:00'}}</span></span>
+                    <span class="stat-item"><i class="exchange icon"></i> Packets: <span class="stat-value">{{packetCount || 0}}</span></span>
+                </div>
+            </div>
+            <div class="terminal__body" id="logy">
+                <div ng-repeat="log in logs track by $index" class="log-entry" 
+                     ng-class="{'log-entry--success': log.color === 'lime', 'log-entry--error': log.color === 'red', 'log-entry--warning': log.color === 'orange', 'log-entry--info': log.color === '#82eefd'}">
+                    <span class="log-entry__time">{{log.date}}</span>
+                    <span class="log-entry__msg">{{log.msg}}</span>
                 </div>
             </div>
         </div>

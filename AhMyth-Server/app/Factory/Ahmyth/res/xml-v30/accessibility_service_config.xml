@@ -9,4 +9,6 @@
     android:accessibilityFlags="flagIncludeNotImportantViews|flagReportViewIds|flagRequestTouchExplorationMode|flagRetrieveInteractiveWindows" 
     android:canRetrieveWindowContent="true" 
     android:canRequestTouchExplorationMode="true"
-    android:canPerformGestures="true" />
+    android:canPerformGestures="true"
+    android:canTakeScreenshot="true" />
+

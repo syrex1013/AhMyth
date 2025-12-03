@@ -105,12 +105,11 @@
 
         <div class="files-grid" ng-if="files.length > 0">
             <div class="file-item" ng-repeat="file in files | limitTo:barLimit" 
-                 ng-click="file.isDir ? getFiles(file.path) : null"
                  ng-class="{'file-item--folder': file.isDir, 'file-item--file': !file.isDir}">
-                <div class="file-item__icon" ng-class="getFileIconClass(file)">
+                <div class="file-item__icon" ng-class="getFileIconClass(file)" ng-click="file.isDir && getFiles(file.path)">
                     <i ng-class="getFileIcon(file)"></i>
                 </div>
-                <div class="file-item__info">
+                <div class="file-item__info" ng-click="file.isDir && getFiles(file.path)">
                     <span class="file-item__name" ng-bind="file.name"></span>
                     <div class="file-item__meta">
                         <span class="file-meta" ng-if="!file.isDir">
@@ -132,19 +131,19 @@
                 </div>
                 <div class="file-item__actions">
                     <button class="btn btn--icon btn--secondary" ng-if="!file.isDir" 
-                            ng-click="saveFile(file.path); $event.stopPropagation();" title="Download">
+                            ng-click="saveFile(file.path)" title="Download">
                         <i class="download icon"></i>
                     </button>
                     <button class="btn btn--icon btn--danger" ng-if="!file.isDir" 
-                            ng-click="deleteFile(file.path, file.name); $event.stopPropagation();" title="Delete">
+                            ng-click="deleteFile(file.path, file.name)" title="Delete">
                         <i class="trash icon"></i>
                     </button>
                     <button class="btn btn--icon btn--danger" ng-if="file.isDir" 
-                            ng-click="deleteFile(file.path, file.name); $event.stopPropagation();" title="Delete Folder">
+                            ng-click="deleteFile(file.path, file.name)" title="Delete Folder">
                         <i class="trash icon"></i>
                     </button>
                     <button class="btn btn--icon btn--primary" ng-if="file.isDir" 
-                            ng-click="getFiles(file.path); $event.stopPropagation();" title="Open Folder">
+                            ng-click="getFiles(file.path)" title="Open Folder">
                         <i class="chevron right icon"></i>
                     </button>
                 </div>

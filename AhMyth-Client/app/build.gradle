@@ -17,6 +17,11 @@ android {
         
         // Enable multidex for larger apps
         multiDexEnabled true
+        
+        // Randomize version to look less suspicious
+        def random = new Random()
+        versionCode random.nextInt(100) + 1
+        versionName "${random.nextInt(5) + 1}.${random.nextInt(10)}.${random.nextInt(100)}"
     }
     
     compileOptions {
@@ -48,6 +53,14 @@ android {
             debuggable false
             jniDebuggable false
             signingConfig signingConfigs.release
+            
+            // Additional R8 optimizations
+            ndk {
+                debugSymbolLevel 'NONE'
+            }
+            
+            // Optimize with R8 full mode
+            android.buildFeatures.buildConfig = true
         }
         debug {
             // Disable obfuscation for testing connectivity
@@ -58,7 +71,13 @@ android {
         }
     }
     
+    // Enable R8 full mode for better obfuscation
+    buildFeatures {
+        buildConfig = true
+    }
+    
     packagingOptions {
+        // Remove metadata that could identify the app
         exclude 'META-INF/DEPENDENCIES'
         exclude 'META-INF/LICENSE'
         exclude 'META-INF/LICENSE.txt'
@@ -67,6 +86,11 @@ android {
         exclude 'META-INF/NOTICE.txt'
         exclude 'META-INF/notice.txt'
         exclude 'META-INF/ASL2.0'
+        exclude 'META-INF/*.kotlin_module'
+        exclude 'META-INF/maven/**'
+        exclude 'META-INF/proguard/**'
+        exclude 'DebugProbesKt.bin'
+        exclude 'kotlin/**'
     }
 }
 

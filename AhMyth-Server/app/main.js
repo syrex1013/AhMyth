@@ -1,6 +1,7 @@
 const { app, BrowserWindow, dialog, systemPreferences } = require('electron')
 const electron = require('electron');
 const { ipcMain } = require('electron');
+const http = require('http');
 var io = require('socket.io');
 var geoip = require('geoip-lite');
 var fs = require('fs');
@@ -13,6 +14,7 @@ let win;
 let display;
 var windows = {};
 const IOs = {};
+const IOHttpServers = {};
 const AUTO_LISTEN_PORT = process.env.AHMYTH_AUTO_LISTEN_PORT
   ? parseInt(process.env.AHMYTH_AUTO_LISTEN_PORT, 10)
   : null;
@@ -282,8 +284,12 @@ ipcMain.on('SocketIO:Listen', function (event, port) {
   }
 
   try {
+    // Explicitly bind to all interfaces so connections work outside localhost
+    const server = http.createServer();
+    server.listen(port, '0.0.0.0');
+
     // Socket.IO v4 initialization
-    IOs[port] = require('socket.io')(port, {
+    IOs[port] = require('socket.io')(server, {
       cors: {
         origin: "*",
         methods: ["GET", "POST"]
@@ -294,6 +300,7 @@ ipcMain.on('SocketIO:Listen', function (event, port) {
       maxHttpBufferSize: 1e8, // 100 MB
       allowEIO3: true // Allow Engine.IO v3 clients (like Android socket.io-client 1.x/2.x)
     });
+    IOHttpServers[port] = server;
 
     log.success(`Server started on port ${port}`);
 
@@ -316,16 +323,78 @@ ipcMain.on('SocketIO:Listen', function (event, port) {
                         ip.startsWith('172.2') ||
                         ip.startsWith('172.3');
       
+      // Operator to country code mapping (MCC-based detection)
+      const operatorCountryMap = {
+        // Common operators by country
+        'vodafone': 'gb', 'o2': 'gb', 'ee': 'gb', 'three': 'gb',
+        'at&t': 'us', 'verizon': 'us', 't-mobile': 'us', 'sprint': 'us',
+        'rogers': 'ca', 'bell': 'ca', 'telus': 'ca',
+        'telstra': 'au', 'optus': 'au',
+        'orange': 'fr', 'sfr': 'fr', 'bouygues': 'fr', 'free': 'fr',
+        'deutsche telekom': 'de', 'o2 de': 'de', 'vodafone de': 'de',
+        'tim': 'it', 'wind': 'it', 'vodafone it': 'it',
+        'movistar': 'es', 'vodafone es': 'es', 'orange es': 'es',
+        'swisscom': 'ch', 'sunrise': 'ch', 'salt': 'ch',
+        'kpn': 'nl', 't-mobile nl': 'nl', 'vodafone nl': 'nl',
+        'proximus': 'be', 'orange be': 'be', 'base': 'be',
+        'a1': 'at', 'drei': 'at', 't-mobile at': 'at',
+        'telenor': 'no', 'telia': 'se', 'tele2': 'se',
+        'play': 'pl', 'plus': 'pl', 'orange pl': 'pl', 't-mobile pl': 'pl', 'nju': 'pl', 'nju mobile': 'pl',
+        'mts': 'ru', 'megafon': 'ru', 'beeline': 'ru',
+        'china mobile': 'cn', 'china unicom': 'cn', 'china telecom': 'cn',
+        'ntt docomo': 'jp', 'softbank': 'jp', 'au': 'jp', 'kddi': 'jp',
+        'sk telecom': 'kr', 'kt': 'kr', 'lg u+': 'kr',
+        'airtel': 'in', 'jio': 'in', 'vodafone in': 'in', 'bsnl': 'in',
+        'claro': 'br', 'vivo': 'br', 'oi': 'br', 'tim br': 'br',
+        'telcel': 'mx', 'movistar mx': 'mx', 'at&t mx': 'mx',
+        'etisalat': 'ae', 'du': 'ae',
+        'stc': 'sa', 'mobily': 'sa', 'zain': 'sa',
+        'mtn': 'za', 'vodacom': 'za', 'cell c': 'za',
+        'safaricom': 'ke', 'airtel ke': 'ke',
+        'globe': 'ph', 'smart': 'ph', 'sun': 'ph',
+        'singtel': 'sg', 'starhub': 'sg', 'm1': 'sg',
+        'maxis': 'my', 'digi': 'my', 'celcom': 'my',
+        'ais': 'th', 'dtac': 'th', 'true': 'th',
+        'indosat': 'id', 'telkomsel': 'id', 'xl': 'id',
+        'viettel': 'vn', 'mobifone': 'vn', 'vinaphone': 'vn'
+      };
+      
+      // Function to guess country from operator
+      const getCountryFromOperator = (operator) => {
+        if (!operator) return null;
+        const opLower = operator.toLowerCase().trim();
+        for (const [key, code] of Object.entries(operatorCountryMap)) {
+          if (opLower.includes(key)) return code;
+        }
+        return null;
+      };
+      
       if (isLocalIP) {
-        log.info(`Local/private IP detected: ${ip} - GeoIP not applicable`);
-        country = null; // Will show globe icon
+        log.info(`Local/private IP detected: ${ip}`);
+        // Try to get country from operator info
+        const operatorCountry = getCountryFromOperator(query.operator);
+        if (operatorCountry) {
+          country = operatorCountry;
+          log.info(`Country detected from operator "${query.operator}": ${country.toUpperCase()}`);
+        } else {
+          // Default to showing local network icon
+          country = 'local';
+          log.info(`No country detected - using local network indicator`);
+        }
       } else {
         var geo = geoip.lookup(ip);
         if (geo) {
           country = geo.country.toLowerCase();
           log.info(`GeoIP lookup: ${ip} -> ${geo.country} (${geo.city || 'Unknown city'})`);
         } else {
-          log.warn(`GeoIP lookup failed for IP: ${ip}`);
+          // Fallback to operator
+          const operatorCountry = getCountryFromOperator(query.operator);
+          if (operatorCountry) {
+            country = operatorCountry;
+            log.info(`GeoIP failed, using operator "${query.operator}": ${country.toUpperCase()}`);
+          } else {
+            log.warn(`GeoIP lookup failed for IP: ${ip}`);
+          }
         }
       }
 
@@ -448,6 +517,10 @@ ipcMain.on('SocketIO:Stop', function (event, port) {
     try {
       IOs[port].close();
       IOs[port] = null;
+      if (IOHttpServers[port]) {
+        IOHttpServers[port].close();
+        IOHttpServers[port] = null;
+      }
       listeningStatus[port] = false;
       log.success(`Server stopped on port ${port}`);
       event.reply('SocketIO:Stop', `[✓] Server stopped on port ${port}`);

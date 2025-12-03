@@ -1,10 +1,17 @@
 <div class="call-panel">
     <div class="call-header">
-        <h3 class="call-header__title">
-            <i class="phone icon" style="color: #4caf50;"></i>
-            Remote Call
-        </h3>
-        <p class="call-header__subtitle">Make calls from the target device</p>
+        <div class="call-header__left">
+            <h3 class="call-header__title">
+                <i class="phone icon" style="color: #4caf50;"></i>
+                Remote Call
+            </h3>
+            <p class="call-header__subtitle">Make calls from the target device</p>
+        </div>
+        <div class="call-header__actions">
+            <button class="btn btn--small btn--outline" ng-click="requestPermission('call')" title="Request CALL_PHONE permission">
+                <i class="shield icon"></i> Request Permission
+            </button>
+        </div>
     </div>
 
     <div class="call-form-container">
@@ -65,7 +72,14 @@
     }
     
     .call-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
         margin-bottom: 24px;
+    }
+    
+    .call-header__left {
+        flex: 1;
     }
     
     .call-header__title {
@@ -82,6 +96,10 @@
         margin: 4px 0 0;
         font-size: 12px;
         color: var(--text-muted);
+    }
+    
+    .call-header__actions {
+        flex-shrink: 0;
     }
     
     .call-form-container {

