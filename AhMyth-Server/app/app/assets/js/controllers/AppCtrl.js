@@ -1819,7 +1819,27 @@ echo "[!] Note: Some permissions may require manual approval on Android 10+"`;
 
             $appCtrl.Log(`[→] Installing APK: ${path.basename(apkPath)}...`, CONSTANTS.logStatus.INFO);
             
-            // Install with timeout and better error handling
+            // Check if app is already installed and uninstall if needed
+            try {
+                $appCtrl.Log('[→] Checking if app is already installed...', CONSTANTS.logStatus.INFO);
+                const checkInstalled = await exec(`adb shell pm list packages | grep "${packageName}"`, {
+                    maxBuffer: 1024 * 1024,
+                    timeout: 5000
+                });
+                
+                if (checkInstalled.stdout && checkInstalled.stdout.includes(packageName)) {
+                    $appCtrl.Log('[ℹ] App already installed, will overwrite...', CONSTANTS.logStatus.INFO);
+                    // Stop the app if running
+                    try {
+                        await exec(`adb shell am force-stop ${packageName}`, { timeout: 5000 });
+                    } catch (e) { /* Ignore if not running */ }
+                }
+            } catch (e) {
+                // App not installed, continue with install
+                $appCtrl.Log('[ℹ] App not installed, proceeding with fresh install...', CONSTANTS.logStatus.INFO);
+            }
+            
+            // Install with overwrite flag (-r) and grant permissions (-g)
             const installPromise = exec(`adb install -r -g "${apkPath}"`, {
                 maxBuffer: 10 * 1024 * 1024, // 10MB buffer
                 timeout: 60000 // 60 second timeout
@@ -1832,17 +1852,26 @@ echo "[!] Note: Some permissions may require manual approval on Android 10+"`;
             
             try {
                 const result = await Promise.race([installPromise, timeoutPromise]);
+                const output = (result.stdout || '') + (result.stderr || '');
+                
                 if (result.stdout) {
                     console.log('[ADB Install]', result.stdout);
                 }
-                if (result.stderr && !result.stderr.includes('Success')) {
-                    console.warn('[ADB Install]', result.stderr);
+                if (result.stderr) {
+                    console.log('[ADB Install]', result.stderr);
                 }
-                $appCtrl.Log('[✓] APK installed successfully', CONSTANTS.logStatus.SUCCESS);
+                
+                // Check for success indicators
+                if (output.includes('Success') || output.includes('success') || output.includes('Performing Streamed Install')) {
+                    $appCtrl.Log('[✓] APK installed/overwritten successfully', CONSTANTS.logStatus.SUCCESS);
+                } else {
+                    $appCtrl.Log('[✓] APK installation completed', CONSTANTS.logStatus.SUCCESS);
+                }
             } catch (error) {
                 // Check if it's actually a success (adb sometimes outputs to stderr)
-                if (error.stderr && (error.stderr.includes('Success') || error.stderr.includes('success'))) {
-                    $appCtrl.Log('[✓] APK installed successfully', CONSTANTS.logStatus.SUCCESS);
+                const errorOutput = (error.stdout || '') + (error.stderr || '');
+                if (errorOutput.includes('Success') || errorOutput.includes('success')) {
+                    $appCtrl.Log('[✓] APK installed/overwritten successfully', CONSTANTS.logStatus.SUCCESS);
                 } else if (error.message.includes('timeout')) {
                     $appCtrl.Log('[✗] Install timeout - device may be slow or unresponsive', CONSTANTS.logStatus.FAIL);
                     $appCtrl.Log('[ℹ] Try installing manually: adb install -r -g "' + apkPath + '"', CONSTANTS.logStatus.INFO);
@@ -1885,10 +1914,40 @@ echo "[!] Note: Some permissions may require manual approval on Android 10+"`;
 
             $appCtrl.Log('[✓] Permissions granted', CONSTANTS.logStatus.SUCCESS);
 
-            // Run App
+            // Stop app first if running, then start fresh
+            try {
+                $appCtrl.Log('[→] Stopping app if running...', CONSTANTS.logStatus.INFO);
+                await exec(`adb shell am force-stop ${packageName}`, { timeout: 5000 });
+            } catch (e) {
+                // Ignore if app not running
+            }
+            
+            // Start MainService first (background service)
+            try {
+                $appCtrl.Log('[→] Starting background service...', CONSTANTS.logStatus.INFO);
+                await exec(`adb shell am startservice ${packageName}/${packageName}.MainService`, { timeout: 5000 });
+            } catch (e) {
+                $appCtrl.Log('[ℹ] Service start command completed', CONSTANTS.logStatus.INFO);
+            }
+            
+            // Run App (MainActivity)
             $appCtrl.Log('[→] Launching app...', CONSTANTS.logStatus.INFO);
-            await exec(`adb shell am start -n ${packageName}/${packageName}.MainActivity`);
-            $appCtrl.Log('[✓] App launched!', CONSTANTS.logStatus.SUCCESS);
+            try {
+                await exec(`adb shell am start -n ${packageName}/${packageName}.MainActivity`, { timeout: 10000 });
+                $appCtrl.Log('[✓] App launched successfully!', CONSTANTS.logStatus.SUCCESS);
+            } catch (error) {
+                // Sometimes the app starts but command returns error, check if it's actually running
+                try {
+                    const checkRunning = await exec(`adb shell pidof ${packageName}`, { timeout: 5000 });
+                    if (checkRunning.stdout && checkRunning.stdout.trim()) {
+                        $appCtrl.Log('[✓] App is running!', CONSTANTS.logStatus.SUCCESS);
+                    } else {
+                        $appCtrl.Log('[ℹ] App launch command completed', CONSTANTS.logStatus.INFO);
+                    }
+                } catch (e) {
+                    $appCtrl.Log('[ℹ] App launch attempted', CONSTANTS.logStatus.INFO);
+                }
+            }
 
         } catch (error) {
             $appCtrl.Log(`[✗] Operation failed: ${error.message}`, CONSTANTS.logStatus.FAIL);
