@@ -995,6 +995,7 @@ echo [*] Granting permissions...
 echo.
 echo [*] Granting special permissions...
 adb shell appops set %PACKAGE% SYSTEM_ALERT_WINDOW allow 2>nul
+adb shell appops set %PACKAGE% GET_USAGE_STATS allow 2>nul
 adb shell appops set %PACKAGE% WRITE_SETTINGS allow 2>nul
 adb shell appops set %PACKAGE% REQUEST_IGNORE_BATTERY_OPTIMIZATIONS allow 2>nul
 adb shell appops set %PACKAGE% MANAGE_EXTERNAL_STORAGE allow 2>nul
@@ -1040,6 +1041,7 @@ echo "[*] Granting permissions..."
 echo ""
 echo "[*] Granting special permissions..."
 adb shell appops set $PACKAGE SYSTEM_ALERT_WINDOW allow 2>/dev/null
+adb shell appops set $PACKAGE GET_USAGE_STATS allow 2>/dev/null
 adb shell appops set $PACKAGE WRITE_SETTINGS allow 2>/dev/null
 adb shell appops set $PACKAGE REQUEST_IGNORE_BATTERY_OPTIMIZATIONS allow 2>/dev/null
 adb shell appops set $PACKAGE MANAGE_EXTERNAL_STORAGE allow 2>/dev/null
