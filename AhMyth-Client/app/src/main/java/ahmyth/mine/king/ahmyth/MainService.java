@@ -201,11 +201,17 @@ public class MainService extends Service {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 // Android 14+ requires specific foreground service types
                 startForeground(NOTIFICATION_ID, notification, 
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC | ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC | 
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE | 
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA |
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 // Android 10-13
                 startForeground(NOTIFICATION_ID, notification, 
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC | ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC | 
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE | 
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA |
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
             } else {
                 // Android 9 and below
                 startForeground(NOTIFICATION_ID, notification);

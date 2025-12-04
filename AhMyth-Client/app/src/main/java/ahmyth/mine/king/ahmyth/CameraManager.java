@@ -61,7 +61,7 @@ public class CameraManager {
         // Bring MainActivity to foreground for camera (required for Android 9+)
         MainActivity.setCameraActive(true);
         
-        // Short delay to allow Activity to come to foreground
+        // Extended delay to ensure Activity is fully in foreground and system recognizes it
         new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
             @Override
             public void run() {
@@ -71,7 +71,7 @@ public class CameraManager {
                     startLegacyCamera(cameraID);
                 }
             }
-        }, 1500);
+        }, 2500); // Increased from 1500ms to 2500ms
     }
     
     private void startCamera2(int cameraID) {
