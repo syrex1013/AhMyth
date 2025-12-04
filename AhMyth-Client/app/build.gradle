@@ -76,6 +76,14 @@ android {
         buildConfig = true
     }
     
+    testOptions {
+        unitTests {
+            includeAndroidResources = true
+            returnDefaultValues = true
+        }
+        animationsDisabled = true
+    }
+    
     packagingOptions {
         // Remove metadata that could identify the app
         exclude 'META-INF/DEPENDENCIES'
@@ -111,9 +119,12 @@ dependencies {
     // Local JAR files
     implementation fileTree(dir: 'libs', include: ['*.jar'])
     
-    // Testing
+    // Testing dependencies
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.mockito:mockito-core:3.12.4'
     androidTestImplementation('com.android.support.test.espresso:espresso-core:3.0.2') {
         exclude group: 'com.android.support', module: 'support-annotations'
     }
-    testImplementation 'junit:junit:4.13.2'
+    androidTestImplementation 'com.android.support.test:runner:1.0.2'
+    androidTestImplementation 'com.android.support.test:rules:1.0.2'
 }

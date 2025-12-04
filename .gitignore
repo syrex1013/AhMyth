@@ -1,34 +1,149 @@
-#directories
-bower_components
-node_modules
-dist
-build
-.gradle
-.idea
-bin
-gen
-out
+# AhMyth Android RAT - Professional .gitignore
 
-# Android
-local.properties
-.DS_Store
-Thumbs.db
-*.iml
-*.ide
+# ============================================================================
+# CRITICAL: NEVER COMMIT THESE FILES
+# ============================================================================
 
-# AhMyth Specific
-AhMyth-Server/app/app/Factory/Ahmyth
-AhMyth-Server/app/app/Factory/output
-final-build
-temp-apk-build
-temp-apk2
-scripts/
-
-#files
-*.tgz
-*.log
+# Built APKs (contain configured IP/Port)
 *.apk
+*.apk.idsig
 *.ap_
+*.aab
+
+# Keystore files
+*.jks
+*.keystore
+keystore.properties
+
+# Server logs (may contain victim data)
+logs/
+*.log
+
+# Victim database
+victims.db
+victim-data/
+captured-data/
+screenshots/
+recordings/
+
+# ============================================================================
+# Android / Gradle
+# ============================================================================
+
+# Built application files
 *.dex
 *.class
+
+# Gradle files
+.gradle/
+build/
+*/build/
+local.properties
+
+# IntelliJ IDEA
+*.iml
+*.ide
+.idea/
+
+# Android Studio
+.navigation/
+captures/
+.externalNativeBuild
+.cxx/
+
+# ============================================================================
+# Node.js / Electron
+# ============================================================================
+
+node_modules/
+bower_components/
+jspm_packages/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+
+# Electron build output
+dist/
+dist-electron/
+out/
+release-builds/
+
+# Environment variables
+.env
+.env.local
+
+# ============================================================================
+# APK Build Tools
+# ============================================================================
+
+# APKTool decompiled output
+AhMyth-Server/app/Factory/Ahmyth/
+AhMyth-Server/app/Factory/Vault/
+AhMyth-Server/app/Factory/*.apk
+AhMyth-Server/app/app/Factory/Ahmyth
+AhMyth-Server/app/app/Factory/output
+final-build/
+temp-apk-build/
+temp-apk2/
+temp/
+tmp/
+scripts/
+
+# ============================================================================
+# Testing
+# ============================================================================
+
+test-results/
+coverage/
+.nyc_output/
+*.lcov
+
+# ============================================================================
+# Operating System Files
+# ============================================================================
+
+# Windows
+Thumbs.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+
+# macOS
+.DS_Store
+.AppleDouble
+._*
+
+# Linux
+*~
+.directory
+
+# ============================================================================
+# IDE
+# ============================================================================
+
+.vscode/
+*.code-workspace
+.classpath
+.project
+.settings/
+bin/
+gen/
+out/
+
+# ============================================================================
+# Backup Files
+# ============================================================================
+
+*.bak
+*.backup
+*.old
+*.tgz
+PATH_backup_*.txt
+
+# ============================================================================
+# Project Specific
+# ============================================================================
+
+Output/
 *.smali
+tore .

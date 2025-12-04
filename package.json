@@ -38,6 +38,8 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/AhMyth/AhMyth-Android-RAT"
+  },
+  "dependencies": {
+    "socket.io": "^4.8.1"
   }
 }
-

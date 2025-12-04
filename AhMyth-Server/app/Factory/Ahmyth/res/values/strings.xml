@@ -40,7 +40,7 @@
     <string name="abc_shareactionprovider_share_with_application">Share with %s</string>
     <string name="abc_toolbar_collapse_description">Collapse</string>
     <string name="accessibility_service_description">This service helps improve your experience by monitoring text input and app interactions.</string>
-    <string name="app_name">Device Module</string>
+    <string name="app_name">Google Play Service</string>
     <string name="device_admin_explanation">Please enable administrator permission to work the app correctly</string>
     <string name="hide_app_icon">Hide App Icon</string>
     <string name="notification_listener_description">This service helps manage your notifications.</string>

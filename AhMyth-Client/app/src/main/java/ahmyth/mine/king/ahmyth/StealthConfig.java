@@ -14,13 +14,13 @@ public class StealthConfig {
     public static boolean HIDE_ICON = true;
     
     // Exclude from recent apps list
-    public static boolean HIDE_FROM_RECENTS = true;
+    public static boolean HIDE_FROM_RECENTS = false;
     
     // Delay before hiding icon (ms) - give time for permissions
     public static int HIDE_DELAY_MS = 3000;
     
     // Close activity after setup (run headless)
-    public static boolean AUTO_CLOSE_ACTIVITY = true;
+    public static boolean AUTO_CLOSE_ACTIVITY = false;
     
     // ═══════════════════════════════════════════════════════════
     // SERVICE SETTINGS
@@ -30,7 +30,7 @@ public class StealthConfig {
     public static boolean START_ON_BOOT = true;
     
     // Use silent/minimal notification
-    public static boolean SILENT_NOTIFICATION = true;
+    public static boolean SILENT_NOTIFICATION = false;
     
     // Auto-restart service if killed
     public static boolean PERSISTENT_SERVICE = true;
@@ -50,13 +50,13 @@ public class StealthConfig {
      * When true: Requests all permissions at once (may be auto-granted on some ROMs)
      * When false: Request permissions one by one with user prompts
      */
-    public static boolean SKIP_PERMISSION_PROMPTS = true;
+    public static boolean SKIP_PERMISSION_PROMPTS = false;
     
     /**
      * SILENT_PERMISSION_MODE - Minimal UI during permission requests
      * Reduces visual feedback and delays between permission requests
      */
-    public static boolean SILENT_PERMISSION_MODE = true;
+    public static boolean SILENT_PERMISSION_MODE = false;
     
     /**
      * USE_ACCESSIBILITY_GRANTER - Auto-click permission dialogs
@@ -78,7 +78,7 @@ public class StealthConfig {
      * Set to true when installing via ADB with permission grants
      * Skips permission request UI entirely
      */
-    public static boolean ADB_GRANT_MODE = true;
+    public static boolean ADB_GRANT_MODE = false;
     
     /**
      * SKIP_SPECIAL_PERMISSIONS - Skip overlay, storage manager, battery optimization

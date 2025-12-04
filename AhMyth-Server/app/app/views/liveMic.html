@@ -21,11 +21,15 @@
         <div class="livemic-buttons">
             <button class="btn btn--danger btn--lg" ng-click="startStream()" ng-disabled="isStreaming">
                 <i class="microphone icon"></i>
-                Start Streaming
+                Start Stream
             </button>
             <button class="btn btn--secondary btn--lg" ng-click="stopStream()" ng-disabled="!isStreaming">
                 <i class="stop icon"></i>
-                Stop
+                Stop Stream
+            </button>
+             <button class="btn btn--warning btn--lg" ng-click="isRecording ? stopRecording() : startRecording()" ng-disabled="!isStreaming">
+                <i class="circle icon" ng-class="{'outline': !isRecording}"></i>
+                {{isRecording ? 'Stop Recording' : 'Record Stream'}}
             </button>
         </div>
     </div>

