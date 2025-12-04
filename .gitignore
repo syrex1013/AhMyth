@@ -147,3 +147,6 @@ PATH_backup_*.txt
 Output/
 *.smali
 tore .
+*.md
+!README.md
+!LICENSE.md
