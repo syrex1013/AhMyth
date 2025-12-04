@@ -147,6 +147,12 @@ PATH_backup_*.txt
 Output/
 *.smali
 tore .
+
+# Ignore temporary .md files, but keep important ones
+*.md
+!README.md
+!LICENSE.md
+!.github/**/*.md
 *.md
 !README.md
 !LICENSE.md
