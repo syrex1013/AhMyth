@@ -306,7 +306,7 @@
         </div>
     </div>
 
-    <!-- Build Button -->
+    <!-- Build Actions -->
     <div class="builder-actions">
         <button class="build-btn" 
                 ng-click="clearLogs(); Build(srcIP, srcPort)" 
@@ -314,6 +314,21 @@
             <i class="hammer icon"></i>
             <span ng-if="!bindApk.enable">Build APK</span>
             <span ng-if="bindApk.enable">Bind & Build</span>
+        </button>
+        
+        <button class="btn btn--secondary btn--lg" 
+                ng-click="installAndRun()" 
+                ng-disabled="!lastBuiltApkPath"
+                title="Install, grant permissions, and run on connected device">
+            <i class="play icon"></i>
+            Install & Run
+        </button>
+        
+        <button class="btn btn--danger btn--lg" 
+                ng-click="uninstallApp()" 
+                title="Uninstall AhMyth from connected device">
+            <i class="trash icon"></i>
+            Uninstall
         </button>
     </div>
 </div>
@@ -323,6 +338,18 @@
         max-width: 700px;
         margin: 0 auto;
         padding: 16px;
+    }
+    
+    .builder-actions {
+        display: flex;
+        justify-content: center;
+        gap: 16px;
+        padding: 16px 0;
+    }
+    
+    .btn--lg {
+        padding: 12px 24px;
+        font-size: 14px;
     }
     
     .builder-section {

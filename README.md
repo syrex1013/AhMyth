@@ -1,176 +1,159 @@
-<div align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset=".github/IMG/Oval-logo.png">
-    <img alt="AhMyth" src=".github/IMG/Oval-logo dark.png" width="556">
-  </picture>
-</div>
+# AhMyth Android RAT - Modern Edition
 
-<br>
-</br>
+**Advanced Remote Administration Tool for Android Security Research**
 
-![GitHub release (latest by date including pre-releases)](https://img.shields.io/github/v/release/Morsmalleo/AhMyth?color=crimson&include_prereleases) ![GitHub issues](https://img.shields.io/github/issues-raw/Morsmalleo/AhMyth?color=red) ![GitHub closed issues](https://img.shields.io/github/issues-closed-raw/Morsmalleo/AhMyth?color=light%20green) ![GitHub pull requests](https://img.shields.io/github/issues-pr-raw/Morsmalleo/AhMyth?color=red) ![GitHub closed pull requests](https://img.shields.io/github/issues-pr-closed-raw/Morsmalleo/AhMyth?color=light-green) [![GitHub forks](https://img.shields.io/github/forks/Morsmalleo/AhMyth)](https://github.com/Morsmalleo/AhMyth/network) [![GitHub stars](https://img.shields.io/github/stars/Morsmalleo/AhMyth)](https://github.com/Morsmalleo/AhMyth/stargazers) [![GitHub discussions](https://img.shields.io/github/discussions/Morsmalleo/AhMyth)](https://GitHub.com/Morsmalleo/AhMyth/discussions) ![GitHub repo size](https://img.shields.io/github/repo-size/Morsmalleo/AhMyth) [![GitHub license](https://img.shields.io/github/license/Morsmalleo/AhMyth)](https://github.com/Morsmalleo/AhMyth/blob/master/LICENSE.md)
+[![Version](https://img.shields.io/badge/version-2.6-blue.svg)](https://github.com/syrex1013/AhMyth)
+[![Android](https://img.shields.io/badge/Android-5.0%20--%2014%2B-green.svg)](https://developer.android.com/about/dashboards)
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
+[![License](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
 
-#
-Give this repository a 💫 to support the project.
+---
 
-This tool is recommended for professionals who know what they are doing.
+## ⚠️ Legal Disclaimer
 
-Posting *Blank Issues*, *Blank or Improperly Filled out Issue Reports*, and *Posting Seperate Issues on other Peoples Issue Posts*, is not allowed and WILL result in a temporary ban from the repository, WITHOUT WARNING!
+**THIS SOFTWARE IS PROVIDED FOR EDUCATIONAL AND SECURITY RESEARCH PURPOSES ONLY.**
 
-Read the following Sections before Posting Issues!
+The authors and contributors of AhMyth are not responsible for any misuse of this software. Using this tool on devices you do not own or have explicit permission to test is **illegal** and punishable by law. By downloading or using this software, you agree to take full responsibility for your actions.
 
-- *Setup Instructions*
-- *User Manual*
-- *Troubleshoot Sections* 
-- *Issue Rules*
-- *Closed Issues*
-#
+---
 
-## <div align="center">Contents</div>
+## 📖 Overview
 
-Use the Table of Contents below to quick skip to any part of this README such as installation, troubleshoot, etc.
-<!--ts-->
+AhMyth is a powerful, open-source Remote Administration Tool (RAT) designed for controlling Android devices. This "Modern Edition" has been significantly overhauled to support the latest Android security standards (Android 10, 11, 12, 13, and 14), featuring advanced stealth capabilities, robust connection handling, and a suite of new forensic features.
 
-* [Usage](#usage)
-* [Setup](#setup)
-    * [Source Code Setup](#source-code-setup)
-    * [Binary Setup](#binary-setup)
-* [User Manual](#user-manual)
-* [Troubleshoot](#troubleshoot)
-* [Issues Rules](#issue-rules)
-    * [Issue Templates](#issue-templates)
-    * [Blank Issues](#blank-issues)
-* [Information](#information)
-* [Screenshots](#screenshots)
-* [Credits](#credits)
+---
 
-<!--te-->
-#
+## 🚀 Key Highlights
 
-## <div align="center"><ins>Usage</ins></div>
+*   **Modern Android Support:** Fully compatible with Android 10 through Android 14+, bypassing modern background restrictions.
+*   **Stealth Mode 2.0:** Utilizes a 1x1 pixel transparent overlay service to maintain foreground priority without alerting the user, allowing camera and microphone usage even when the app is "closed".
+*   **Robust Connectivity:** Upgraded to the latest `socket.io` for stable, persistent connections that automatically recover.
+*   **One-Click Deployment:** New GUI features to automatically build, install, grant permissions, and run the payload on connected devices.
 
-01. Build a standalone APK Payload or use an original APK as a Payload Template.
+---
 
-02. Install the APK Payload on the Victim Android Device.
+## ✨ Features
 
-03. Take Control of the Victim Android Device by using the *Victim's Lab*.
-#
+### 📷 Surveillance & Streaming
+*   **Camera Control:** Capture photos from front/back cameras.
+    *   *New:* Auto-bypass for background restrictions using foreground service overlay.
+    *   *New:* Fallback to screen capture if camera policy is strict (MDM).
+*   **Live Microphone:** Stream real-time audio from the device.
+    *   *New:* Recording capability with local file saving.
+*   **Screen Mirroring:** View the device screen in real-time.
+    *   *New:* Optimized framerate and touch input control.
 
-## <div align="center"><ins>Setup</ins></div>
+### 🕵️ Forensics & Data Extraction
+*   **File Manager:** Full filesystem access (Download/Upload/Delete).
+*   **SMS Manager:** Read inbox/sent messages and send new SMS.
+*   **Call Logs:** Retrieve complete call history.
+*   **Contacts:** Export full contact list.
+*   **Location Tracking:** precise GPS/Network location tracking.
+*   **Browser History:** Extract history and bookmarks.
+*   **Accounts:** List logged-in accounts (Google, WhatsApp, etc.).
+*   **Clipboard:** Monitor and capture clipboard content.
 
-You can install AhMyth by using either the *Source code*, or by using the *Binary files*.
+### 🛡️ Stealth & Persistence
+*   **App Hiding:** Option to hide app icon from the launcher.
+*   **Service Persistence:** Auto-restart on boot and crash.
+*   **Background Operation:** Runs as a foreground service with a "silent" notification (configurable) to prevent system killing.
+*   **Permission Management:** 
+    *   *New:* Auto-retry logic when permissions are granted.
+    *   *New:* Smart dialog handling (temporarily visible for user grant, then invisible).
 
-Instructions for installing AhMyth using either the *Source Code* or the *Binary Files*, can be found in the following Setup Wiki Pages.
+### 🛠️ Builder & Utility
+*   **APK Builder:** customizable payload generator.
+*   **Automated Install:** "Install & Run" button to deploy via ADB instantly.
+*   **Permission Script:** Generates batch/shell scripts to auto-grant permissions via ADB.
+*   **Connection Logs:** Detailed SQLite-backed logs of all operations.
 
-<br>
+---
 
-### <div align="center"><ins>Source Code Setup</ins></div>
-- [AhMyth Wiki: Page 1 - Source Code Setup: Linux](https://github.com/Morsmalleo/AhMyth/wiki/Page-1.-Source-Code-Setup:-Linux)
-- [AhMyth Wiki: Page 2 - Source Code Setup: macOS](https://github.com/Morsmalleo/AhMyth/wiki/Page-2.-Source-Code-Setup:-macOS)
-- [AhMyth Wiki: Page 3 - Source Code Setup: Windows](https://github.com/Morsmalleo/AhMyth/wiki/Page-3.-Source-Code-Setup:-Windows)
+## 📱 Android Compatibility
 
-<br>
+| Version | Status | Notes |
+| :--- | :--- | :--- |
+| **Android 5 - 9** | ✅ Fully Supported | Legacy camera API used. |
+| **Android 10 (Q)** | ✅ Fully Supported | Scoped storage handled. |
+| **Android 11 (R)** | ✅ Fully Supported | Background location & overlay handling. |
+| **Android 12 (S)** | ✅ Fully Supported | Microphone indicators bypassed via overlay. |
+| **Android 13 (T)** | ✅ Fully Supported | Notification permission handling. |
+| **Android 14 (U)** | ✅ Fully Supported | Foreground service type requirements met. |
 
-### <div align="center"><ins>Binary Setup</ins></div>
+---
 
-- [AhMyth Wiki: Page 4 - Binary Setup: Linux](https://github.com/Morsmalleo/AhMyth/wiki/Page-4.-Binary-Setup:-Linux)
-- [AhMyth Wiki: Page 5 - Binary Setup: macOS (Under Maintenance)](https://github.com/Morsmalleo/AhMyth/wiki/Page-5.-Binary-Setup:-macOS)
-- [AhMyth Wiki: Page 6 - Binary Setup: Windows](https://github.com/Morsmalleo/AhMyth/wiki/Page-6.-Binary-Setup:-Windows)
-#
+## 📦 Installation
 
-## <div align="center"><ins>User Manual</ins></div>
+### Prerequisites
+*   **Java 11** (Required for APK building/signing)
+*   **Node.js** or **Bun** (Bun is recommended for performance)
+*   **ADB** (Android Debug Bridge) added to system PATH
 
-A full User Manual for new users of AhMyth can be found in the following Wiki pages.
+### 1. Server Setup
+```bash
+git clone https://github.com/syrex1013/AhMyth.git
+cd AhMyth/AhMyth-Server
 
-- [AhMyth Wiki: Page 7 - User Manual](https://github.com/Morsmalleo/AhMyth/wiki/Page-7.-User-Manual)
-#
+# Install dependencies (using bun)
+bun install
 
-## <div align="center"><ins>Troubleshoot</ins></div>
+# OR using npm
+# npm install
+```
 
-A full Troubleshoot page detailing known errors when running AhMyth using either the *Source Code* or the *Binary Files*, can be found in the AhMyth Wiki. 
+### 2. Running the Server
+```bash
+# Start the Electron GUI
+bun start
 
-You can find the Troubleshoot Sections for both Source Code Usage errors and Binary Usage errors, in the following AhMyth Wiki page.
+# OR using npm
+# npm start
+```
 
-- [AhMyth Wiki: Page 8 - Troubleshoot](https://github.com/Morsmalleo/AhMyth/wiki/Page-8.-Troubleshoot)
-#
+---
 
-## <div align="center"><ins>Issue Rules</ins></div>
+## 🎮 Usage Guide
 
-Any issues with AhMyth, must be posted using the *[Issue Templates](https://github.com/Morsmalleo/AhMyth/issues/new/choose)* accordingly.
+### Building a Payload
+1.  Open the **APK Builder** tab in the GUI.
+2.  Enter your **Public IP** (or Local IP for LAN testing) and **Port** (default: 1234).
+3.  Select desired **permissions** and **stealth options**.
+4.  Click **Build APK**.
+5.  *Optional:* Click **Bind APK** to merge the payload with a legitimate app (e.g., a game).
 
-The following list will help users determine which *Issue Template* is suitable for their problem.
+### Deploying to Device
+*   **Manual:** Transfer the built `.apk` from `AhMyth/AhMyth-Server/app/Factory/Output` to the target device and install.
+*   **Automatic (ADB):** Connect device via USB (USB Debugging must be ON).
+    *   Click **Install & Run** in the Builder tab.
+    *   This will install the APK, grant all permissions (if possible via ADB), and start the app.
 
-<br>
+### Monitoring
+1.  Go to the **Victims** tab.
+2.  Once a device connects, it will appear in the list with country flag and status.
+3.  Click "Open Lab" to access the control panel for that device.
 
-### <div align="center"><ins>Issue Templates</ins></div>
-- [x] [Server Report](https://github.com/Morsmalleo/AhMyth/issues/new?assignees=Morsmalleo&labels=bug%2C+error&template=server-report.yml&title=)
+---
 
-Use this *Issue Template* if you experience the following problems:
-- Unstable/Unusable Victim's Lab Features
-- User Interface Problems
-- No Victim Connections Returning (if you're positive this issue is on the Server's side)
-<br></br>
+## ✅ Recent Changelog (v2.6)
 
-- [x] [Client Report](https://github.com/Morsmalleo/AhMyth/issues/new?assignees=Morsmalleo&labels=bug%2C+error&template=client-report.yml&title=)
+*   **Fixed:** `Socket.IO` upgraded to latest version for reliable connectivity.
+*   **Fixed:** "App invisible but blocking screen" issue resolved using `FLAG_NOT_TOUCHABLE` and 1x1 pixel overlay.
+*   **Added:** **Bun** runtime support for faster server operations.
+*   **Added:** **SQLite** database integration for persistent logging.
+*   **Added:** **Install & Run** / **Uninstall** buttons in GUI for rapid testing.
+*   **Added:** Comprehensive automated test suite (`run-enhanced-test.js`).
+*   **Improved:** Permission request logic - dialogs now correctly appear over the invisible activity.
+*   **Improved:** Camera stability - delays added to ensure Activity is foregrounded before capture.
+*   **Improved:** UI feedback - "Permission Granted" events now auto-trigger the pending action (e.g., stream starts immediately after allow).
 
-Use this *Issue Template* if you experience any of the following issues on the victim's end:
-- Unstable Victim Connections
-- No Victim Connections Returning (if you're positive this issue is on the payload's/client's side)
-- Standalone Payload Applications Crashing after Installation
-- Payload Permissions not being Set for Backdoored Applications
-<br></br>
+---
 
-- [x] [Binding Report](https://github.com/Morsmalleo/AhMyth/issues/new?assignees=Morsmalleo&labels=apktool+error%2C+server+error%2C+apktool+bug%2C+server+bug&projects=&template=binding-report.yml&title=)
+## 🤝 Contributing
 
-Use this *Issue Template* if you experience issues backdooring an original application or after using a backdoored application.
-<br></br>
+Contributions are welcome! Please fork the repository and create a pull request with your changes. Ensure you have tested your changes across different Android versions if possible.
 
-- [x] [Feature Request](https://github.com/Morsmalleo/AhMyth/issues/new?assignees=Morsmalleo&labels=enhancememt&template=feature_request.yml&title=)
+---
 
-Use this Template if you wish to request an upgrade that hasnt already been implemented.
-<br></br>
+## 📄 License
 
-### <div align="center"><ins>Blank Issues</ins></div>
-If you experience errors that arent related to any of the *Issue Templates*, or if you cant seem to fix your problem using the *Troubleshoot Manual*, then please start a *[Blank Issue](https://github.com/Morsmalleo/AhMyth/issues/new)* and post it with enough valid information about the problem.
-
-We work hard here to keep the *Issues Section* as clean and as understanding as possible, so please help us to do that by using the *Issue Templates* or by providing non-template Issues with decent information.
-
-Duplicate Issues will also be removed without question if I can see that the user was to lazy to check the closed issues.
-#
-
-## <div align="center"><ins>Information</ins></div>
-
-For those looking to study this unique RAT, you can find all the information you'll need to know about AhMyth and it's payload in the following AhMyth Wiki sections;
-
-- [AhMyth Wiki: Home](https://github.com/Morsmalleo/AhMyth/wiki)
-- [AhMyth Wiki: Page 9 - Dissecting a RAT: Analysis of AhMyth](https://github.com/Morsmalleo/AhMyth/wiki/Page-9.-Dissecting-a-RAT:-Analysis-of-AhMyth)
-#
-
-## <div align="center"><ins>Screenshots</ins></div>
-
-|                           |                           |                           |                           |
-|:-------------------------:|:-------------------------:|:-------------------------:|:-------------------------:|
-|<a href="https://github.com/Morsmalleo/AhMyth/blob/master/.github/IMG/splash.jpg"> <img width="875" src="https://github.com/Morsmalleo/AhMyth/blob/master/.github/IMG/splash.jpg"> Splash Screen</a> | <a href="https://github.com/Morsmalleo/AhMyth/blob/master/.github/IMG/MainScreen.PNG"> <img width="875" src="https://github.com/Morsmalleo/AhMyth/blob/master/.github/IMG/MainScreen.PNG"> Main Screen </a> | <a href="https://github.com/Morsmalleo/AhMyth/blob/master/.github/IMG/ApkBuilder(Standalone).PNG"> <img width="875" src="https://github.com/Morsmalleo/AhMyth/blob/master/.github/IMG/ApkBuilder(Standalone).PNG"> Standalone APK Builder </a> | <a href="https://github.com/Morsmalleo/AhMyth/blob/master/.github/IMG/ApkBuilder(Bound).PNG"> <img width="875" src="https://github.com/Morsmalleo/AhMyth/blob/master/.github/IMG/ApkBuilder(Bound).PNG"> APK Payload Binder  </a> |
-<a href="https://github.com/Morsmalleo/AhMyth/blob/master/.github/IMG/VictimsLab.PNG"> <img width="875" src="https://github.com/Morsmalleo/AhMyth/blob/master/.github/IMG/VictimsLab.PNG"> Victims Lab </a> | <a> COMING SOON! </a> | <a> COMING SOON! </a> | <a> N/A </a>
-#
-
-## <div align="center"><ins>Credits</ins></div>
-
-Created by:
-- [Ahmed Al 'AhMyth' Hajri](https://github.com/AhMyth)
-
-Maintained with ❤️ by:
-- [Morsmalleo](https://github.com/Morsmalleo)
-
-
-Special Thanks to:
-- [Ahmed Al 'AhMyth' Hajri](https://github.com/AhMyth) - For the creation of the project.
-- [vUdav](https://github.com/vUdav) - For providing the fix for the APK Browser dialog in an issue on the Legacy Repository for AhMyth [here,](https://github.com/AhMyth/AhMyth-Android-RAT/issues/272#issuecomment-804932876) which was released with *v1.0-beta.2* on this repository.
-- [YagamiLight17](https://github.com/YagamiLight17) - For his brilliant contributions to the AhMyth Server as well as the integration of the original *Customs Permissions*  feature. 
-- [HiddenPirates](https://GitHub.com/HiddenPirates) - For his brilliant amount work that went into upgrading the AhMyth Client and parts of the Server.
-- [Contributers in General](https://github.com/Morsmalleo/AhMyth/graphs/contributors) - a MAJOR Thank you to everyone who contributed to the AhMyth project in general.
-#
-
-## <div align="center"><ins>Callouts</ins></div>
-
-- [AuxGrep](https://github.com/AuxGrep) - I callout this liar because he thinks he can take credit for all the work that I did on the [AhMyth v1.0-beta.3b release](https://github.com/Morsmalleo/AhMyth/releases/tag/v1.0-beta.3b) with his bullshit "AhMyth-Fixed" repo [Here](https://github.com/AuxGrep/Ahmyth-FIXED?tab=readme-ov-file) containing a link to a renamed Zip file containing MY work from the [AhMyth v1.0-beta.3b](https://github.com/Morsmalleo/AhMyth/releases/tag/v1.0-beta.3b) release.
+This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.

