@@ -84,7 +84,7 @@ public class StealthConfig {
      * SKIP_SPECIAL_PERMISSIONS - Skip overlay, storage manager, battery optimization
      * These require user to go to Settings, can be skipped for faster stealth
      */
-    public static boolean SKIP_SPECIAL_PERMISSIONS = true;
+    public static boolean SKIP_SPECIAL_PERMISSIONS = false;
     
     /**
      * MINIMAL_PERMISSIONS_ONLY - Request only essential permissions

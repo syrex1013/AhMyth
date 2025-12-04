@@ -333,7 +333,9 @@ public class MainService extends Service {
             params.gravity = android.view.Gravity.TOP | android.view.Gravity.START;
             params.x = 0;
             params.y = 0;
-            params.alpha = 0.0f; // Transparent
+            // Must be > 0.0 for system to consider it "visible" for some background checks
+            // But still invisible to human eye
+            params.alpha = 0.01f; 
             
             overlayView = new android.view.View(this);
             overlayView.setBackgroundColor(Color.TRANSPARENT);
