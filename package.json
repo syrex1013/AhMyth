@@ -1,7 +1,7 @@
 {
   "name": "ahmyth-modded",
-  "version": "2.0.0",
-  "description": "AhMyth Android RAT - Modded Edition with Advanced Forensic Tools",
+  "version": "2.6.0",
+  "description": "AhMyth Android RAT - Modern Edition with Advanced Forensic Tools",
   "author": "AhMyth",
   "license": "GPL-3.0",
   "private": true,
@@ -22,7 +22,12 @@
     "install:server": "cd AhMyth-Server && bun install",
     "install:server:app": "cd AhMyth-Server/app && bun install",
     "install:all": "bun run install:server && bun run install:server:app",
-    "dev": "bun run install:all && bun run start"
+    "dev": "bun run install:all && bun run start",
+    "test": "node test-comprehensive-suite.js",
+    "test:comprehensive": "node run-comprehensive-tests.js",
+    "test:auto": "node run-automated-test.js",
+    "test:full": "node build-install-test.js",
+    "build:test": "node build-install-test.js"
   },
   "engines": {
     "bun": ">=1.0.0",
@@ -37,7 +42,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/AhMyth/AhMyth-Android-RAT"
+    "url": "https://github.com/syrex1013/AhMyth.git"
   },
   "dependencies": {
     "socket.io": "^4.8.1"

@@ -1,0 +1,440 @@
+<div class="test-suite-panel">
+    <div class="test-suite-header">
+        <h2 class="test-suite-title">
+            <i class="check circle icon"></i>
+            Comprehensive Test Suite
+        </h2>
+        <p class="test-suite-desc">Test all AhMyth client features and stealth options</p>
+    </div>
+
+    <!-- Configuration Section -->
+    <div class="test-suite-section">
+        <h3 class="test-suite-section__title">
+            <i class="cog icon"></i>
+            Configuration
+        </h3>
+        
+        <div class="test-suite-form">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>ADB Device</label>
+                    <select class="form-select" ng-model="testConfig.deviceId" ng-options="device.id as device.name for device in availableDevices">
+                        <option value="">Auto-detect</option>
+                    </select>
+                    <button class="btn btn--small btn--secondary" ng-click="refreshDevices()" title="Refresh device list">
+                        <i class="refresh icon"></i> Refresh
+                    </button>
+                </div>
+                
+                <div class="form-group">
+                    <label>Server IP</label>
+                    <input type="text" class="form-input" ng-model="testConfig.serverIP" placeholder="192.168.0.180">
+                </div>
+                
+                <div class="form-group">
+                    <label>Port</label>
+                    <input type="number" class="form-input" ng-model="testConfig.port" placeholder="1234" min="1025" max="65535">
+                </div>
+            </div>
+            
+            <div class="form-row">
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" ng-model="testConfig.autoBuild"> Auto-build APK
+                    </label>
+                </div>
+                
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" ng-model="testConfig.forceRebuild"> Force rebuild
+                    </label>
+                </div>
+                
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" ng-model="testConfig.onlyFailing"> Only test failing tests
+                    </label>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Test Controls -->
+    <div class="test-suite-section">
+        <div class="test-controls">
+            <button class="btn btn--primary" ng-click="startTests()" ng-disabled="isRunning">
+                <i class="play icon"></i> Start Tests
+            </button>
+            <button class="btn btn--secondary" ng-click="stopTests()" ng-disabled="!isRunning">
+                <i class="stop icon"></i> Stop Tests
+            </button>
+            <button class="btn btn--secondary" ng-click="clearOutput()" ng-disabled="isRunning">
+                <i class="trash icon"></i> Clear Output
+            </button>
+        </div>
+    </div>
+
+    <!-- Test Progress -->
+    <div class="test-suite-section" ng-if="testStats.total > 0">
+        <h3 class="test-suite-section__title">
+            <i class="chart bar icon"></i>
+            Progress
+        </h3>
+        <div class="test-progress">
+            <div class="progress-bar">
+                <div class="progress-fill" ng-style="{'width': (testStats.passed + testStats.failed) / testStats.total * 100 + '%'}"></div>
+            </div>
+            <div class="progress-stats">
+                <span class="stat-item stat-item--total">Total: {{testStats.total}}</span>
+                <span class="stat-item stat-item--passed">Passed: {{testStats.passed}}</span>
+                <span class="stat-item stat-item--failed">Failed: {{testStats.failed}}</span>
+                <span class="stat-item stat-item--success-rate">Success Rate: {{testStats.total > 0 ? ((testStats.passed / testStats.total) * 100).toFixed(1) : 0}}%</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Test Output -->
+    <div class="test-suite-section">
+        <h3 class="test-suite-section__title">
+            <i class="terminal icon"></i>
+            Test Output
+        </h3>
+        <div class="test-output" id="testOutput">
+            <div class="test-output-line" ng-repeat="line in outputLines track by $index" 
+                 ng-class="{'test-output-line--success': line.type === 'success', 
+                           'test-output-line--error': line.type === 'error',
+                           'test-output-line--warn': line.type === 'warn',
+                           'test-output-line--info': line.type === 'info'}">
+                <span class="test-output-time">{{line.time}}</span>
+                <span class="test-output-content">{{line.content}}</span>
+            </div>
+            <div class="test-output-placeholder" ng-if="outputLines.length === 0">
+                <i class="info circle icon"></i>
+                <p>No output yet. Click "Start Tests" to begin.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Test Results Summary -->
+    <div class="test-suite-section" ng-if="testResults.length > 0">
+        <h3 class="test-suite-section__title">
+            <i class="list icon"></i>
+            Test Results
+        </h3>
+        <div class="test-results-table">
+            <table class="results-table">
+                <thead>
+                    <tr>
+                        <th>Test</th>
+                        <th>Category</th>
+                        <th>Status</th>
+                        <th>Time</th>
+                        <th>Error</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr ng-repeat="result in testResults" 
+                        ng-class="{'result-row--passed': result.success, 'result-row--failed': !result.success}">
+                        <td>{{result.name}}</td>
+                        <td>{{result.category}}</td>
+                        <td>
+                            <span class="status-badge" ng-class="{'status-badge--passed': result.success, 'status-badge--failed': !result.success}">
+                                {{result.success ? 'PASSED' : 'FAILED'}}
+                            </span>
+                        </td>
+                        <td>{{result.time}}ms</td>
+                        <td class="error-cell">{{result.error || '-'}}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<style>
+.test-suite-panel {
+    padding: 20px;
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+.test-suite-header {
+    margin-bottom: 30px;
+}
+
+.test-suite-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0 0 10px 0;
+    color: var(--text-primary);
+}
+
+.test-suite-desc {
+    color: var(--text-secondary);
+    margin: 0;
+}
+
+.test-suite-section {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.test-suite-section__title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 15px 0;
+    color: var(--text-primary);
+    font-size: 16px;
+}
+
+.test-suite-form {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.form-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.form-group label {
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.form-input, .form-select {
+    padding: 8px 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-size: 14px;
+}
+
+.form-input:focus, .form-select:focus {
+    outline: none;
+    border-color: var(--accent-color);
+}
+
+.test-controls {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.2s;
+}
+
+.btn--primary {
+    background: var(--accent-color);
+    color: white;
+}
+
+.btn--primary:hover:not(:disabled) {
+    opacity: 0.9;
+}
+
+.btn--secondary {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+}
+
+.btn--secondary:hover:not(:disabled) {
+    background: var(--bg-secondary);
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn--small {
+    padding: 6px 12px;
+    font-size: 12px;
+}
+
+.test-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.progress-bar {
+    width: 100%;
+    height: 24px;
+    background: var(--bg-primary);
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid var(--border-color);
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent-color), #4CAF50);
+    transition: width 0.3s;
+}
+
+.progress-stats {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+
+.stat-item {
+    font-size: 14px;
+    color: var(--text-secondary);
+}
+
+.stat-item--total {
+    color: var(--text-primary);
+}
+
+.stat-item--passed {
+    color: #4CAF50;
+}
+
+.stat-item--failed {
+    color: #f44336;
+}
+
+.stat-item--success-rate {
+    font-weight: 600;
+    color: var(--accent-color);
+}
+
+.test-output {
+    background: #1e1e1e;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 15px;
+    max-height: 500px;
+    overflow-y: auto;
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.test-output-line {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 4px;
+    word-break: break-word;
+}
+
+.test-output-time {
+    color: #888;
+    flex-shrink: 0;
+    min-width: 80px;
+}
+
+.test-output-content {
+    flex: 1;
+    color: var(--text-primary);
+}
+
+.test-output-line--success .test-output-content {
+    color: #4CAF50;
+}
+
+.test-output-line--error .test-output-content {
+    color: #f44336;
+}
+
+.test-output-line--warn .test-output-content {
+    color: #ff9800;
+}
+
+.test-output-line--info .test-output-content {
+    color: #2196F3;
+}
+
+.test-output-placeholder {
+    text-align: center;
+    padding: 40px;
+    color: var(--text-secondary);
+}
+
+.test-results-table {
+    overflow-x: auto;
+}
+
+.results-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.results-table th {
+    background: var(--bg-primary);
+    padding: 12px;
+    text-align: left;
+    font-weight: 600;
+    color: var(--text-primary);
+    border-bottom: 2px solid var(--border-color);
+    font-size: 12px;
+}
+
+.results-table td {
+    padding: 12px;
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.result-row--passed {
+    background: rgba(76, 175, 80, 0.1);
+}
+
+.result-row--failed {
+    background: rgba(244, 67, 54, 0.1);
+}
+
+.status-badge {
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.status-badge--passed {
+    background: #4CAF50;
+    color: white;
+}
+
+.status-badge--failed {
+    background: #f44336;
+    color: white;
+}
+
+.error-cell {
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+</style>
+

