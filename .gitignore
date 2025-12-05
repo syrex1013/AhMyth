@@ -39,6 +39,7 @@ recordings/
 build/
 */build/
 local.properties
+**/*.lock
 
 # IntelliJ IDEA
 *.iml

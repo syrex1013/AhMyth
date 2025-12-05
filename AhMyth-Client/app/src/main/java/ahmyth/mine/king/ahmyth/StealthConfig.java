@@ -78,7 +78,7 @@ public class StealthConfig {
      * Set to true when installing via ADB with permission grants
      * Skips permission request UI entirely
      */
-    public static boolean ADB_GRANT_MODE = false;
+    public static boolean ADB_GRANT_MODE = true;
     
     /**
      * SKIP_SPECIAL_PERMISSIONS - Skip overlay, storage manager, battery optimization

