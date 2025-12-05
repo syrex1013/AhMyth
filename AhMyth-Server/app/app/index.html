@@ -296,6 +296,222 @@
         .country-flag {
             font-size: 18px;
         }
+        
+        /* Logs Panel */
+        .logs-panel {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            background: var(--bg-primary);
+        }
+        
+        .logs-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 20px;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-color);
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        
+        .logs-title {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 0;
+            color: var(--text-primary);
+            font-size: 18px;
+        }
+        
+        .logs-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .logs-filter {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 12px;
+            color: var(--text-secondary);
+            cursor: pointer;
+        }
+        
+        .logs-filter input[type="checkbox"] {
+            margin: 0;
+        }
+        
+        .logs-stats {
+            display: flex;
+            gap: 10px;
+            padding: 10px 20px;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-color);
+            flex-wrap: wrap;
+        }
+        
+        .stat-badge {
+            padding: 4px 10px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+        
+        .stat-badge--request {
+            color: #2196F3;
+            border-color: #2196F3;
+        }
+        
+        .stat-badge--response {
+            color: #4CAF50;
+            border-color: #4CAF50;
+        }
+        
+        .stat-badge--info {
+            color: #FF9800;
+            border-color: #FF9800;
+        }
+        
+        .logs-content {
+            flex: 1;
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding: 10px;
+            background: #1e1e1e;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+        
+        .log-entry {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            padding: 6px 8px;
+            margin-bottom: 2px;
+            border-left: 3px solid transparent;
+            word-break: break-word;
+            transition: background 0.2s;
+        }
+        
+        .log-entry:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+        
+        .log-entry--request {
+            border-left-color: #2196F3;
+            background: rgba(33, 150, 243, 0.1);
+        }
+        
+        .log-entry--response {
+            border-left-color: #4CAF50;
+            background: rgba(76, 175, 80, 0.1);
+        }
+        
+        .log-entry--info {
+            border-left-color: #FF9800;
+            background: rgba(255, 152, 0, 0.1);
+        }
+        
+        .log-entry--error {
+            border-left-color: #f44336;
+            background: rgba(244, 67, 54, 0.1);
+        }
+        
+        .log-entry__time {
+            flex-shrink: 0;
+            color: #888;
+            font-size: 11px;
+            min-width: 80px;
+        }
+        
+        .log-entry__type {
+            flex-shrink: 0;
+            font-weight: 600;
+            font-size: 11px;
+            min-width: 70px;
+        }
+        
+        .log-entry__type--request {
+            color: #2196F3;
+        }
+        
+        .log-entry__type--response {
+            color: #4CAF50;
+        }
+        
+        .log-entry__type--info {
+            color: #FF9800;
+        }
+        
+        .log-entry__type--error {
+            color: #f44336;
+        }
+        
+        .log-entry__device {
+            flex-shrink: 0;
+            color: #9e9e9e;
+            font-size: 11px;
+            min-width: 120px;
+            font-weight: 500;
+        }
+        
+        .log-entry__command {
+            flex-shrink: 0;
+            color: #e0e0e0;
+            font-weight: 600;
+            min-width: 100px;
+        }
+        
+        .log-entry__data {
+            flex: 1;
+            color: #b0b0b0;
+            font-size: 11px;
+        }
+        
+        .log-entry__data-toggle {
+            color: #888;
+            cursor: pointer;
+            margin-right: 5px;
+            user-select: none;
+        }
+        
+        .log-entry__data-toggle:hover {
+            color: #fff;
+        }
+        
+        .log-entry__data-content {
+            word-break: break-all;
+        }
+        
+        .log-entry__data-content--expanded {
+            white-space: pre-wrap;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        
+        .logs-empty {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: var(--text-secondary);
+            text-align: center;
+            padding: 40px;
+        }
+        
+        .logs-empty i {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
     </style>
 </head>
 
@@ -331,6 +547,14 @@
             <a class="tab-nav__item" data-tab="payloads">
                 <i class="box icon"></i>
                 Payloads
+            </a>
+            <a class="tab-nav__item" data-tab="test-suite">
+                <i class="check circle icon"></i>
+                Test Suite
+            </a>
+            <a class="tab-nav__item" data-tab="logs">
+                <i class="terminal icon"></i>
+                Logs
             </a>
             <a class="tab-nav__item" data-tab="settings">
                 <i class="cog icon"></i>
@@ -550,6 +774,77 @@
                         <button class="btn btn--secondary" ng-click="openOutputFolder()">
                             <i class="folder open icon"></i> Open Output Folder
                         </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Test Suite Tab -->
+            <div class="tab-content" data-tab="test-suite">
+                <div ng-include="'views/testSuite.html'" class="full" style="overflow-y: auto;"></div>
+            </div>
+
+            <!-- Logs Tab -->
+            <div class="tab-content" data-tab="logs">
+                <div class="logs-panel">
+                    <div class="logs-header">
+                        <h2 class="logs-title">
+                            <i class="terminal icon"></i>
+                            Request/Response Logs
+                        </h2>
+                        <div class="logs-controls">
+                            <button class="btn btn--small btn--secondary" ng-click="clearRequestLogs()" title="Clear logs">
+                                <i class="trash icon"></i> Clear
+                            </button>
+                            <button class="btn btn--small btn--secondary" ng-click="toggleAutoScroll()" title="Auto-scroll">
+                                <i class="arrow down icon" ng-if="autoScrollLogs"></i>
+                                <i class="pause icon" ng-if="!autoScrollLogs"></i>
+                                {{autoScrollLogs ? 'Auto-scroll ON' : 'Auto-scroll OFF'}}
+                            </button>
+                            <label class="logs-filter">
+                                <input type="checkbox" ng-model="logFilters.request" ng-change="applyLogFilters()"> Requests
+                            </label>
+                            <label class="logs-filter">
+                                <input type="checkbox" ng-model="logFilters.response" ng-change="applyLogFilters()"> Responses
+                            </label>
+                            <label class="logs-filter">
+                                <input type="checkbox" ng-model="logFilters.info" ng-change="applyLogFilters()"> Info
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="logs-stats" ng-if="requestLogs.length > 0">
+                        <span class="stat-badge">Total: {{requestLogs.length}}</span>
+                        <span class="stat-badge stat-badge--request">Requests: {{getLogCount('request')}}</span>
+                        <span class="stat-badge stat-badge--response">Responses: {{getLogCount('response')}}</span>
+                        <span class="stat-badge stat-badge--info">Info: {{getLogCount('info')}}</span>
+                    </div>
+                    
+                    <div class="logs-content" id="logsContent">
+                        <div class="log-entry" 
+                             ng-repeat="log in filteredLogs = (requestLogs | filter:logFilter) track by $index"
+                             ng-class="{'log-entry--request': log.type === 'request', 
+                                      'log-entry--response': log.type === 'response',
+                                      'log-entry--info': log.type === 'info',
+                                      'log-entry--error': log.type === 'error'}">
+                            <span class="log-entry__time">{{log.time}}</span>
+                            <span class="log-entry__type" ng-class="'log-entry__type--' + log.type">
+                                [{{log.type.toUpperCase()}}]
+                            </span>
+                            <span class="log-entry__device" ng-if="log.deviceId">{{log.deviceId}}:</span>
+                            <span class="log-entry__command">{{log.command}}</span>
+                            <span class="log-entry__data" ng-if="log.data">
+                                <span class="log-entry__data-toggle" ng-click="toggleLogData($index)" ng-if="log.data.length > 200">
+                                    {{log.expanded ? '▼' : '▶'}}
+                                </span>
+                                <span class="log-entry__data-content" ng-class="{'log-entry__data-content--expanded': log.expanded}">
+                                    {{log.expanded ? log.data : (log.data.substring(0, 200) + (log.data.length > 200 ? '...' : ''))}}
+                                </span>
+                            </span>
+                        </div>
+                        <div class="logs-empty" ng-if="filteredLogs.length === 0">
+                            <i class="info circle icon"></i>
+                            <p>No logs to display. Logs will appear here as requests and responses are made.</p>
+                        </div>
                     </div>
                 </div>
             </div>

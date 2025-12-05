@@ -71,9 +71,19 @@ public class LiveMicManager {
             }
             
             audioRecord.startRecording();
+            
+            // Verify recording state
+            if (audioRecord.getRecordingState() != AudioRecord.RECORDSTATE_RECORDING) {
+                sendError("AudioRecord failed to start recording");
+                releaseAudioRecord();
+                return;
+            }
+            
             isRecording = true;
             
-            Log.d(TAG, "Recording started, buffer size: " + bufferSize);
+            Log.d(TAG, "Recording started successfully. Buffer size: " + bufferSize + 
+                  ", Sample rate: " + SAMPLE_RATE + 
+                  ", Format: PCM 16-bit, Channels: Mono");
             sendStatus(true, "Recording started");
             
             final int finalBufferSize = bufferSize;
@@ -82,19 +92,70 @@ public class LiveMicManager {
                 public void run() {
                     byte[] buffer = new byte[finalBufferSize];
                     int chunkCount = 0;
+                    int consecutiveZeroReads = 0;
+                    int totalBytesRead = 0;
                     
                     while (isRecording && audioRecord != null) {
                         try {
+                            // Clear buffer before reading to avoid stale data
+                            java.util.Arrays.fill(buffer, (byte) 0);
+                            
                             int read = audioRecord.read(buffer, 0, buffer.length);
+                            
                             if (read > 0) {
-                                sendAudioChunk(buffer, read, ++chunkCount);
+                                totalBytesRead += read;
+                                
+                                // Check if we're getting actual audio data (not just zeros)
+                                boolean hasNonZeroData = false;
+                                for (int i = 0; i < read; i++) {
+                                    if (buffer[i] != 0) {
+                                        hasNonZeroData = true;
+                                        break;
+                                    }
+                                }
+                                
+                                if (hasNonZeroData) {
+                                    consecutiveZeroReads = 0;
+                                    sendAudioChunk(buffer, read, ++chunkCount);
+                                } else {
+                                    consecutiveZeroReads++;
+                                    // Log warning if we get too many zero-only chunks
+                                    if (consecutiveZeroReads == 10) {
+                                        Log.w(TAG, "Warning: Received 10 consecutive zero-only audio chunks. Mic may be muted or not working.");
+                                    }
+                                    // Still send the data (silence is valid audio)
+                                    sendAudioChunk(buffer, read, ++chunkCount);
+                                }
+                                
+                                // Small delay to prevent overwhelming the socket
+                                Thread.sleep(10);
+                            } else if (read == AudioRecord.ERROR_INVALID_OPERATION) {
+                                Log.e(TAG, "AudioRecord ERROR_INVALID_OPERATION - recording may have stopped");
+                                break;
+                            } else if (read == AudioRecord.ERROR_BAD_VALUE) {
+                                Log.e(TAG, "AudioRecord ERROR_BAD_VALUE - invalid parameters");
+                                break;
+                            } else if (read == 0) {
+                                // No data available, wait a bit
+                                Thread.sleep(50);
                             }
+                        } catch (InterruptedException e) {
+                            Log.d(TAG, "Recording thread interrupted");
+                            Thread.currentThread().interrupt();
+                            break;
                         } catch (Exception e) {
                             Log.e(TAG, "Error reading audio", e);
+                            // Continue trying to read
+                            try {
+                                Thread.sleep(100);
+                            } catch (InterruptedException ie) {
+                                Thread.currentThread().interrupt();
+                                break;
+                            }
                         }
                     }
                     
-                    Log.d(TAG, "Recording thread finished");
+                    Log.d(TAG, "Recording thread finished. Total bytes read: " + totalBytesRead);
                 }
             }, "LiveMicThread");
             

@@ -143,3 +143,4 @@ echo You can now start the server with: bun run server
 echo.
 echo Press any key to exit...
 pause > nul
+

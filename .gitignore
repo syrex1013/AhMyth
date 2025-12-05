@@ -152,6 +152,7 @@ Output/
 *.md
 !README.md
 !LICENSE.md
+!CHANGELOG.md
 !.github/**/*.md
 
 # Test reports

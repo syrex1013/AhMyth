@@ -9,6 +9,12 @@
             <button class="btn btn--small btn--outline" ng-click="requestPermission('camera')" title="Request camera permission on device">
                 <i class="shield icon"></i> Request Permission
             </button>
+            <button class="btn btn--small btn--primary" ng-click="bringToForeground()" title="Bring app to foreground (required for front camera)">
+                <i class="arrow up icon"></i> Bring to Foreground
+            </button>
+            <button class="btn btn--small btn--secondary" ng-click="sendToBackground()" title="Send app to background">
+                <i class="arrow down icon"></i> Send to Background
+            </button>
             <span class="camera-count" ng-if="cameras && cameras.length">
                 <i class="video icon"></i> {{cameras.length}} camera(s)
             </span>
@@ -80,6 +86,10 @@
                     <div class="tip">
                         <i class="lightbulb icon"></i>
                         <span>Back camera usually provides higher quality</span>
+                    </div>
+                    <div class="tip tip--important">
+                        <i class="exclamation triangle icon"></i>
+                        <span>Front camera requires app to be in foreground - use "Bring to Foreground" button</span>
                     </div>
                 </div>
             </div>
@@ -376,6 +386,17 @@
     }
     
     .camera-tips .tip i {
+        color: var(--accent-warning);
+    }
+    
+    .camera-tips .tip--important {
+        background: rgba(255, 152, 0, 0.1);
+        padding: 8px 12px;
+        border-radius: 6px;
+        border-left: 3px solid var(--accent-warning);
+    }
+    
+    .camera-tips .tip--important i {
         color: var(--accent-warning);
     }
     

