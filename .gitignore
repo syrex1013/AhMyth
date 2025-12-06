@@ -50,10 +50,10 @@ AhMyth/Output/
 *.class
 
 # JAR files (but keep gradle-wrapper.jar which is needed for Gradle)
-# Unignore gradle-wrapper.jar first, then ignore other JARs
+# Ignore all JARs, then explicitly unignore gradle-wrapper.jar
+*.jar
 !gradle-wrapper.jar
 !**/gradle-wrapper.jar
-*.jar
 
 # Gradle files
 .gradle/
