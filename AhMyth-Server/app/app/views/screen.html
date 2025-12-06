@@ -38,10 +38,12 @@
         <div class="screen-main">
             <div class="screen-canvas-container" id="canvasContainer">
                 <canvas id="screenCanvas" class="screen-canvas"
+                        tabindex="0"
                         ng-click="handleClick($event)"
                         ng-mousedown="handleMouseDown($event)"
                         ng-mouseup="handleMouseUp($event)"
-                        ng-mousemove="handleMouseMove($event)"></canvas>
+                        ng-mousemove="handleMouseMove($event)"
+                        ng-keydown="handleKeyDown($event)"></canvas>
                 <div class="screen-status" ng-class="{'screen-status--live': isStreaming}">
                     <span class="screen-status__dot"></span>
                     {{isStreaming ? 'LIVE' : 'OFFLINE'}}
@@ -176,6 +178,9 @@
         display: flex;
         flex-direction: column;
         background: var(--bg-secondary);
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
     }
     
     .view-header {
@@ -370,6 +375,8 @@
         padding: 10px 16px;
         background: var(--bg-tertiary);
         border-top: 1px solid var(--border-color);
+        flex-shrink: 0;
+        margin: 0;
     }
     
     .control-group {

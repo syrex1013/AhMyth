@@ -549,32 +549,120 @@ public class SystemInfoManager {
      */
     private float getCpuUsage() {
         try {
+            // Read first sample
             RandomAccessFile reader = new RandomAccessFile("/proc/stat", "r");
             String load = reader.readLine();
             reader.close();
             
-            String[] toks = load.split(" +");
+            if (load == null || !load.startsWith("cpu ")) {
+                Log.w(TAG, "Invalid /proc/stat format");
+                return getCpuUsageAlternative();
+            }
+            
+            String[] toks = load.split("\\s+");
+            
+            // Ensure we have enough tokens (at least 8: cpu, user, nice, system, idle, iowait, irq, softirq)
+            if (toks.length < 8) {
+                Log.w(TAG, "Not enough tokens in /proc/stat: " + toks.length);
+                return getCpuUsageAlternative();
+            }
             
             long idle1 = Long.parseLong(toks[4]);
             long cpu1 = Long.parseLong(toks[1]) + Long.parseLong(toks[2]) + Long.parseLong(toks[3])
                       + Long.parseLong(toks[5]) + Long.parseLong(toks[6]) + Long.parseLong(toks[7]);
             
-            Thread.sleep(360);
+            // Wait at least 1 second for accurate measurement
+            Thread.sleep(1000);
             
+            // Read second sample
             reader = new RandomAccessFile("/proc/stat", "r");
             load = reader.readLine();
             reader.close();
             
-            toks = load.split(" +");
+            if (load == null || !load.startsWith("cpu ")) {
+                Log.w(TAG, "Invalid /proc/stat format on second read");
+                return getCpuUsageAlternative();
+            }
+            
+            toks = load.split("\\s+");
+            
+            if (toks.length < 8) {
+                Log.w(TAG, "Not enough tokens in /proc/stat on second read: " + toks.length);
+                return getCpuUsageAlternative();
+            }
             
             long idle2 = Long.parseLong(toks[4]);
             long cpu2 = Long.parseLong(toks[1]) + Long.parseLong(toks[2]) + Long.parseLong(toks[3])
                       + Long.parseLong(toks[5]) + Long.parseLong(toks[6]) + Long.parseLong(toks[7]);
             
-            return (float)(cpu2 - cpu1) / ((cpu2 + idle2) - (cpu1 + idle1)) * 100;
+            long total1 = cpu1 + idle1;
+            long total2 = cpu2 + idle2;
+            long totalDiff = total2 - total1;
+            long cpuDiff = cpu2 - cpu1;
+            
+            if (totalDiff <= 0) {
+                Log.w(TAG, "Invalid CPU calculation: totalDiff <= 0");
+                return getCpuUsageAlternative();
+            }
+            
+            float usage = (float) cpuDiff / totalDiff * 100.0f;
+            
+            // Clamp to valid range
+            if (usage < 0) usage = 0;
+            if (usage > 100) usage = 100;
+            
+            return usage;
             
         } catch (Exception e) {
-            return -1;
+            Log.e(TAG, "Error reading CPU usage from /proc/stat", e);
+            return getCpuUsageAlternative();
+        }
+    }
+    
+    /**
+     * Alternative method to get CPU usage using ActivityManager
+     */
+    private float getCpuUsageAlternative() {
+        try {
+            ActivityManager am = (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
+            if (am == null) {
+                return 0.0f;
+            }
+            
+            // Get memory info which includes some CPU-related data
+            ActivityManager.MemoryInfo memInfo = new ActivityManager.MemoryInfo();
+            am.getMemoryInfo(memInfo);
+            
+            // Try to get CPU usage from running processes
+            List<ActivityManager.RunningAppProcessInfo> processes = am.getRunningAppProcesses();
+            if (processes != null) {
+                // Calculate approximate CPU usage based on process importance
+                int totalProcesses = processes.size();
+                int foregroundProcesses = 0;
+                int visibleProcesses = 0;
+                
+                for (ActivityManager.RunningAppProcessInfo proc : processes) {
+                    if (proc.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND) {
+                        foregroundProcesses++;
+                    } else if (proc.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE) {
+                        visibleProcesses++;
+                    }
+                }
+                
+                // Rough estimate: foreground processes use more CPU
+                float estimatedUsage = (foregroundProcesses * 5.0f + visibleProcesses * 2.0f) / totalProcesses * 100.0f;
+                
+                if (estimatedUsage > 100) estimatedUsage = 100;
+                if (estimatedUsage < 0) estimatedUsage = 0;
+                
+                return estimatedUsage;
+            }
+            
+            return 0.0f;
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Error in alternative CPU usage calculation", e);
+            return 0.0f; // Return 0 instead of -1 for better UX
         }
     }
     

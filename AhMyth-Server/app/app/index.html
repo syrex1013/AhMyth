@@ -239,11 +239,16 @@
         
         /* Log */
         #log {
-            height: 180px;
+            /* Removed fixed height, min-height, max-height */
+            display: flex;
+            flex-direction: column;
             background: var(--bg-primary);
             border-top: 1px solid var(--border-color);
             border-radius: 0 0 10px 10px;
-            overflow: hidden;
+            overflow: auto; /* Changed to auto for scrollability */
+            resize: vertical; /* Allow vertical resizing */
+            min-height: 50px; /* Minimum height to prevent collapse */
+            max-height: 80vh; /* Maximum height to not cover entire screen */
         }
         
         .log-header {
@@ -253,6 +258,8 @@
             padding: 8px 12px;
             background: var(--bg-secondary);
             border-bottom: 1px solid var(--border-color);
+            flex-shrink: 0;
+            cursor: ns-resize; /* Indicate resizable area */
         }
         
         .log-header__title {
@@ -263,7 +270,8 @@
         }
         
         .log-content {
-            height: calc(100% - 36px);
+            flex: 1;
+            min-height: 0;
             padding: 8px 12px;
             overflow-y: auto;
             overflow-x: hidden;
@@ -273,6 +281,25 @@
             user-select: text;
             -webkit-user-select: text;
             cursor: text;
+            -webkit-overflow-scrolling: touch;
+        }
+        
+        /* Custom scrollbar for console log */
+        .log-content::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        .log-content::-webkit-scrollbar-track {
+            background: #1a1a1a;
+        }
+        
+        .log-content::-webkit-scrollbar-thumb {
+            background: #444;
+            border-radius: 4px;
+        }
+        
+        .log-content::-webkit-scrollbar-thumb:hover {
+            background: #555;
         }
         
         .log-entry {
@@ -302,7 +329,9 @@
             display: flex;
             flex-direction: column;
             height: 100%;
+            min-height: 0;
             background: var(--bg-primary);
+            overflow: hidden;
         }
         
         .logs-header {
@@ -380,6 +409,7 @@
         
         .logs-content {
             flex: 1;
+            min-height: 0;
             overflow-y: auto;
             overflow-x: hidden;
             padding: 10px;
@@ -387,6 +417,26 @@
             font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
             font-size: 12px;
             line-height: 1.6;
+            scroll-behavior: smooth;
+            -webkit-overflow-scrolling: touch;
+        }
+        
+        /* Custom scrollbar for logs */
+        .logs-content::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        .logs-content::-webkit-scrollbar-track {
+            background: #1a1a1a;
+        }
+        
+        .logs-content::-webkit-scrollbar-thumb {
+            background: #444;
+            border-radius: 4px;
+        }
+        
+        .logs-content::-webkit-scrollbar-thumb:hover {
+            background: #555;
         }
         
         .log-entry {
@@ -541,7 +591,7 @@
                 APK Builder
             </a>
             <a class="tab-nav__item" data-tab="dashboard">
-                <i class="chart line icon"></i>
+                <i class="tachometer alternate icon"></i>
                 Dashboard
             </a>
             <a class="tab-nav__item" data-tab="payloads">
@@ -681,7 +731,7 @@
             <!-- Dashboard Tab -->
             <div class="tab-content" data-tab="dashboard">
                 <div class="dashboard-panel">
-                    <h2 class="dashboard-title"><i class="chart line icon"></i> Dashboard</h2>
+                    <h2 class="dashboard-title"><i class="tachometer alternate icon"></i> Dashboard</h2>
                     
                     <div class="stats-grid">
                         <div class="stat-card stat-card--primary">

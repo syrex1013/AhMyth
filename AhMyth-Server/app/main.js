@@ -13,6 +13,7 @@ module.exports = victimsList;
 let win;
 let display;
 var windows = {};
+var fullscreenWindows = {}; // Map fullscreen window ID to parent window webContents ID
 const IOs = {};
 const IOHttpServers = {};
 const AUTO_LISTEN_PORT = process.env.AHMYTH_AUTO_LISTEN_PORT
@@ -941,4 +942,67 @@ ipcMain.on('test-suite:stop', (event) => {
     testSuiteProcess = null;
     event.reply('test-suite:output', { message: 'Test suite stopped', type: 'warn' });
   }
+});
+
+// Register fullscreen window with its parent
+ipcMain.on('register-fullscreen-window', (event, data) => {
+  fullscreenWindows[data.fullscreenId] = data.parentId;
+  log.info(`Registered fullscreen window ${data.fullscreenId} with parent ${data.parentId}`);
+});
+
+// Unregister fullscreen window
+ipcMain.on('unregister-fullscreen-window', (event, fullscreenId) => {
+  delete fullscreenWindows[fullscreenId];
+  log.info(`Unregistered fullscreen window ${fullscreenId}`);
+});
+
+// Handle fullscreen input events from fullscreen window
+ipcMain.on('fullscreen-input', (event, data) => {
+  log.info('Fullscreen input received:', JSON.stringify(data));
+  
+  // Get the fullscreen window that sent this message
+  const fullscreenWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!fullscreenWindow) {
+    log.warn('Could not find fullscreen window from sender');
+    return;
+  }
+  
+  // Find the parent window (lab window) that opened this fullscreen window
+  // First try: use stored parent reference
+  const parentWebContentsId = fullscreenWindows[fullscreenWindow.id];
+  if (parentWebContentsId) {
+    try {
+      const parentWindow = BrowserWindow.fromWebContentsId(parentWebContentsId);
+      if (parentWindow && !parentWindow.isDestroyed()) {
+        parentWindow.webContents.send('fullscreen-input-event', data);
+        log.info('Forwarded fullscreen input to lab window (via stored reference)');
+        return;
+      }
+    } catch (e) {
+      log.warn('Error accessing parent window by ID:', e.message);
+    }
+  }
+  
+  // Second try: use fullscreen window's parent property
+  if (fullscreenWindow.parent && !fullscreenWindow.parent.isDestroyed()) {
+    fullscreenWindow.parent.webContents.send('fullscreen-input-event', data);
+    log.info('Forwarded fullscreen input to parent window (via parent property)');
+    return;
+  }
+  
+  // Last resort: try to find any lab window
+  for (const index in windows) {
+    try {
+      const labWindow = BrowserWindow.fromId(windows[index]);
+      if (labWindow && !labWindow.isDestroyed()) {
+        labWindow.webContents.send('fullscreen-input-event', data);
+        log.info(`Forwarded fullscreen input to lab window ${index} (fallback)`);
+        return;
+      }
+    } catch (e) {
+      // Continue searching
+    }
+  }
+  
+  log.warn('Could not find parent window to forward fullscreen input');
 });

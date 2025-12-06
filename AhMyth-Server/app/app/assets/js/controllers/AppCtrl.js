@@ -886,9 +886,20 @@ app.controller("AppCtrl", ($scope, $sce) => {
             if (log) {
                 const logContent = log.querySelector('.log-content');
                 if (logContent) {
-                    logContent.scrollTop = logContent.scrollHeight;
+                    // Only auto-scroll if user is at the bottom or within 50px of the bottom
+                    const scrollThreshold = 50; // px
+                    const isAtBottom = logContent.scrollHeight - logContent.scrollTop <= logContent.clientHeight + scrollThreshold;
+                    
+                    if (isAtBottom) {
+                        logContent.scrollTop = logContent.scrollHeight;
+                    }
                 } else {
-                    log.scrollTop = log.scrollHeight;
+                    // Fallback for older structure, still apply threshold
+                    const scrollThreshold = 50; // px
+                    const isAtBottom = log.scrollHeight - log.scrollTop <= log.clientHeight + scrollThreshold;
+                    if (isAtBottom) {
+                        log.scrollTop = log.scrollHeight;
+                    }
                 }
             }
         }, 0);
