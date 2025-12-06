@@ -48,8 +48,12 @@ AhMyth/Output/
 # Built application files
 *.dex
 *.class
-*.jar
+
+# JAR files (but keep gradle-wrapper.jar which is needed for Gradle)
+# Unignore gradle-wrapper.jar first, then ignore other JARs
 !gradle-wrapper.jar
+!**/gradle-wrapper.jar
+*.jar
 
 # Gradle files
 .gradle/
@@ -168,11 +172,14 @@ $RECYCLE.BIN/
 # ============================================================================
 
 # Visual Studio Code
-.vscode/
-*.code-workspace
+# Note: We ignore contents of .vscode but allow the directory and example files
+# This approach works because we ignore contents (*) not the directory itself
+.vscode/*
+!.vscode/.gitkeep
 !.vscode/settings.json.example
 !.vscode/tasks.json.example
 !.vscode/launch.json.example
+*.code-workspace
 
 # Eclipse
 .classpath
@@ -220,12 +227,19 @@ Output/
 *.smali.bak
 
 # Ignore temporary .md files, but keep important documentation
+# Note: *.md only matches root-level files, so subdirectory patterns work
 *.md
 !README.md
 !LICENSE.md
 !CHANGELOG.md
 !CONTRIBUTING.md
+# Allow markdown files in .github and docs directories
+# Since *.md only matches root-level files, we explicitly allow those directories
+!.github/
+!.github/**
 !.github/**/*.md
+!docs/
+!docs/**
 !docs/**/*.md
 
 # Test reports and artifacts
