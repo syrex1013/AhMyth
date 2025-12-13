@@ -25,12 +25,18 @@
     <div class="camera-controls">
         <div class="camera-selector">
             <label class="camera-selector__label">Select Camera</label>
-            <div class="camera-buttons">
+            <div class="camera-buttons" ng-if="cameras && cameras.length > 0">
                 <button class="camera-btn" ng-repeat="cam in cameras" 
                         ng-click="selectCamera(cam)"
                         ng-class="{'camera-btn--active': selectedCam && selectedCam.id === cam.id}">
                     <i ng-class="{'camera icon': cam.id == 0, 'camera retro icon': cam.id != 0}"></i>
                     <span>{{cam.name || (cam.id == 0 ? 'Back Camera' : 'Front Camera')}}</span>
+                </button>
+            </div>
+            <div class="camera-buttons" ng-if="!cameras || cameras.length === 0">
+                <button class="camera-btn camera-btn--disabled" disabled>
+                    <i class="camera icon"></i>
+                    <span>No cameras detected</span>
                 </button>
             </div>
         </div>
@@ -208,6 +214,11 @@
         color: var(--accent-primary);
     }
     
+    .camera-btn--disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
     .camera-btn i {
         font-size: 18px;
     }

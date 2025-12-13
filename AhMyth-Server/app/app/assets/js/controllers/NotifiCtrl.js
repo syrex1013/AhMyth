@@ -1,15 +1,22 @@
-const { remote } = require('electron');
+const remote = require('@electron/remote');
 const { ipcRenderer } = require('electron');
 var app = angular.module('myappy', []);
 
 var victim = remote.getCurrentWebContents().victim;
 
+const specialCountryIcons = {
+    local: { type: 'icon', value: 'home', title: 'Local Network' },
+    lan: { type: 'icon', value: 'linkify', title: 'LAN' },
+    bc: { type: 'icon', value: 'linkify', title: 'Blockchain' },
+    blockchain: { type: 'icon', value: 'linkify', title: 'Blockchain' }
+};
+
 // Country code to flag image (using flagcdn.com for reliable rendering)
 const countryCodeToFlag = (countryCode) => {
     if (!countryCode) return { type: 'icon', value: 'globe', title: 'Unknown' };
     const cc = countryCode.toLowerCase();
-    if (cc === 'local') return { type: 'icon', value: 'home', title: 'Local Network' };
-    if (cc === 'lan') return { type: 'icon', value: 'linkify', title: 'LAN' };
+    const special = specialCountryIcons[cc];
+    if (special) return special;
     if (!/^[a-z]{2}$/i.test(cc)) return { type: 'icon', value: 'globe', title: 'Unknown' };
     return { 
         type: 'flag', 

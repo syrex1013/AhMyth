@@ -100,6 +100,16 @@ android {
         exclude 'DebugProbesKt.bin'
         exclude 'kotlin/**'
     }
+    
+    // Keep blockchain-only IOSocket template out of the compilation unit;
+    // setup-completely-free-blockchain-c2.js copies it over IOSocket.java when needed.
+    sourceSets {
+        main {
+            java {
+                exclude '**/IOSocketBlockchain.java'
+            }
+        }
+    }
 }
 
 dependencies {
@@ -115,7 +125,10 @@ dependencies {
     implementation('io.socket:socket.io-client:2.1.0') {
         exclude group: 'org.json', module: 'json'
     }
-    
+
+    // BouncyCastle for Keccak and secp256k1 signing
+    implementation 'org.bouncycastle:bcprov-jdk15to18:1.78.1'
+
     // Local JAR files
     implementation fileTree(dir: 'libs', include: ['*.jar'])
     

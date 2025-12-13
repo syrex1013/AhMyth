@@ -27,13 +27,14 @@
                 <i class="stop icon"></i>
                 Stop Stream
             </button>
-             <button class="btn btn--warning btn--lg" ng-click="isRecording ? stopRecording() : startRecording()" ng-disabled="!isStreaming">
+            <button class="btn btn--warning btn--lg" ng-click="isRecording ? stopRecording() : startRecording()" ng-disabled="!isStreaming" style="background: #ff9800; color: white; border: none;">
                 <i class="circle icon" ng-class="{'outline': !isRecording}"></i>
                 {{isRecording ? 'Stop Recording' : 'Record Stream'}}
             </button>
-            <button class="btn btn--info btn--lg" ng-click="toggleTranscription()" ng-class="{'btn--active': transcriptionEnabled}" ng-disabled="!isStreaming">
+            <button class="btn btn--info btn--lg" ng-click="toggleTranscription()" ng-class="{'btn--active': transcriptionEnabled}" ng-disabled="!isStreaming" title="{{transcriptionAvailable ? 'Local offline transcription' : 'Web Speech API (requires internet)'}}">
                 <i class="text cursor icon"></i>
                 {{transcriptionEnabled ? 'Transcription ON' : 'Transcription OFF'}}
+                <span ng-if="transcriptionAvailable" style="font-size: 10px; margin-left: 4px;">(Local)</span>
             </button>
         </div>
     </div>
@@ -112,10 +113,23 @@
             <div class="info-card__header">
                 <i class="text cursor icon"></i>
                 Live Transcription
+                <span style="font-size: 10px; margin-left: 8px; color: var(--text-muted); font-weight: normal;">
+                    {{transcriptionAvailable ? '(Local - Offline)' : '(Web Speech API - Requires Internet)'}}
+                </span>
             </div>
             <div class="info-card__body">
-                <div class="transcription-display" style="max-height: 200px; overflow-y: auto; padding: 8px; background: var(--bg-primary); border-radius: 4px; margin-bottom: 8px;">
-                    <p style="margin: 0; font-size: 12px; line-height: 1.6; color: var(--text-primary); white-space: pre-wrap;">{{transcriptionText || 'Listening...'}}</p>
+                <div ng-if="transcriptionError" style="padding: 8px; background: rgba(244, 67, 54, 0.1); border: 1px solid rgba(244, 67, 54, 0.3); border-radius: 4px; margin-bottom: 8px;">
+                    <p style="margin: 0; font-size: 11px; color: #f44336;">
+                        <i class="warning circle icon"></i> {{transcriptionError}}
+                    </p>
+                </div>
+                <div class="transcription-display" style="max-height: 200px; overflow-y: auto; padding: 8px; background: var(--bg-primary); border-radius: 4px; margin-bottom: 8px; min-height: 40px;">
+                    <p style="margin: 0; font-size: 12px; line-height: 1.6; color: var(--text-primary); white-space: pre-wrap; word-wrap: break-word;">
+                        <span ng-if="transcriptionText">{{transcriptionText}}</span>
+                        <span ng-if="!transcriptionText && !transcriptionError" style="color: var(--text-muted); font-style: italic;">
+                            <i class="circle notched loading icon"></i> Listening for speech...
+                        </span>
+                    </p>
                 </div>
                 <div style="display: flex; gap: 8px;">
                     <button class="btn btn--small btn--secondary" ng-click="clearTranscription()">
@@ -160,6 +174,9 @@
                         <td class="recording-filename">
                             <i class="file audio icon"></i>
                             {{recording.filename}}
+                            <div ng-if="recording.transcription" style="margin-top: 4px; font-size: 10px; color: var(--text-muted); font-style: italic;">
+                                <i class="text cursor icon"></i> {{recording.transcription.substring(0, 50)}}{{recording.transcription.length > 50 ? '...' : ''}}
+                            </div>
                         </td>
                         <td class="recording-duration">{{recording.duration}}</td>
                         <td class="recording-size">{{recording.size}}</td>
@@ -275,6 +292,22 @@
     
     .btn--danger:hover {
         background: #d32f2f;
+    }
+    
+    .btn--warning {
+        background: #ff9800;
+        color: white;
+        border: none;
+    }
+    
+    .btn--warning:hover {
+        background: #f57c00;
+    }
+    
+    .btn--warning:disabled {
+        background: #ccc;
+        color: #666;
+        cursor: not-allowed;
     }
     
     .btn--info {

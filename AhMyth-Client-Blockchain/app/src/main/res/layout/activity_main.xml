@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/activity_main"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    tools:context="ahmyth.mine.king.ahmyth.MainActivity">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignParentTop="true"
+        android:layout_centerHorizontal="true"
+        android:layout_marginTop="100dp"
+        android:gravity="center_horizontal"
+        android:padding="20dp"
+        android:text="@string/oops_failed_to_open_google_play_please_open_it_manually"
+        android:textAlignment="center"
+        android:textColor="#C70039"
+        android:textSize="18sp" />
+
+    <Button
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/open_google_play"
+        android:gravity="center"
+        android:layout_centerInParent="true"
+        android:padding="15dp"
+        android:background="#1B5E20"
+        android:textColor="#fff"
+        android:id="@+id/openGooglePlayBtn"
+        android:onClick="openGooglePlay"/>
+
+    <Switch
+        android:id="@+id/switch1"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/hide_app_icon"
+        android:textStyle="bold"
+        android:layout_below="@+id/openGooglePlayBtn"
+        android:layout_centerHorizontal="true"
+        android:layout_marginTop="30dp"
+        android:visibility="invisible"/>
+
+
+</RelativeLayout>

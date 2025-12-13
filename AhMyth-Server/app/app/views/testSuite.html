@@ -60,19 +60,94 @@
     </div>
 
     <!-- Test Controls -->
-    <div class="test-suite-section">
-        <div class="test-controls">
-            <button class="btn btn--primary" ng-click="startTests()" ng-disabled="isRunning">
-                <i class="play icon"></i> Start Tests
-            </button>
-            <button class="btn btn--secondary" ng-click="stopTests()" ng-disabled="!isRunning">
-                <i class="stop icon"></i> Stop Tests
-            </button>
-            <button class="btn btn--secondary" ng-click="clearOutput()" ng-disabled="isRunning">
-                <i class="trash icon"></i> Clear Output
-            </button>
+        <div class="test-suite-section">
+            <div class="test-controls">
+                <button class="btn btn--primary" ng-click="startTests()" ng-disabled="isRunning">
+                    <i class="play icon"></i> Start Tests
+                </button>
+                <button class="btn btn--secondary" ng-click="stopTests()" ng-disabled="!isRunning">
+                    <i class="stop icon"></i> Stop Tests
+                </button>
+                <button class="btn btn--secondary" ng-click="clearOutput()" ng-disabled="isRunning">
+                    <i class="trash icon"></i> Clear Output
+                </button>
+            </div>
         </div>
-    </div>
+
+        <!-- Connection Type -->
+        <div class="test-suite-section">
+            <h3 class="test-suite-section__title">
+                <i class="plug icon"></i>
+                Connection Type
+            </h3>
+            <div class="form-row">
+                <label class="form-group" style="flex-direction: row; align-items: center; gap: 8px;">
+                    <input type="radio" ng-model="testConfig.connectionType" value="tcp">
+                    <span>TCP/IP</span>
+                </label>
+                <label class="form-group" style="flex-direction: row; align-items: center; gap: 8px;">
+                    <input type="radio" ng-model="testConfig.connectionType" value="blockchain">
+                    <span>Blockchain C2</span>
+                </label>
+            </div>
+        </div>
+
+        <!-- TCP/IP Configuration -->
+        <div class="test-suite-section" ng-if="testConfig.connectionType === 'tcp'">
+            <h3 class="test-suite-section__title">
+                <i class="server icon"></i>
+                TCP/IP Configuration
+            </h3>
+            <div class="test-suite-form">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Server IP</label>
+                        <input type="text" class="form-input" ng-model="testConfig.serverIP" placeholder="192.168.0.180">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Port</label>
+                        <input type="number" class="form-input" ng-model="testConfig.port" placeholder="1234" min="1025" max="65535">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Blockchain Configuration -->
+        <div class="test-suite-section" ng-if="testConfig.connectionType === 'blockchain'">
+            <h3 class="test-suite-section__title">
+                <i class="linkify icon"></i>
+                Blockchain Configuration
+            </h3>
+            <div class="test-suite-form">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Chain</label>
+                        <select class="form-select" ng-model="testConfig.blockchainChain">
+                            <option value="solana">Solana (memo)</option>
+                            <option value="evm">EVM (legacy)</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>RPC URL</label>
+                        <input type="text" class="form-input" ng-model="testConfig.blockchainRpcUrl" placeholder="https://api.devnet.solana.com">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Channel / Contract Address</label>
+                        <input type="text" class="form-input" ng-model="testConfig.blockchainContract" placeholder="Base58 (Solana) or 0x... (EVM)">
+                    </div>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>AES Key (optional)</label>
+                        <input type="text" class="form-input" ng-model="testConfig.blockchainAesKey" placeholder="BLOCKCHAIN_C2_AES_KEY">
+                    </div>
+                </div>
+            </div>
+        </div>
 
     <!-- Test Progress -->
     <div class="test-suite-section" ng-if="testStats.total > 0">
@@ -100,17 +175,40 @@
             Test Output
         </h3>
         <div class="test-output" id="testOutput">
-            <div class="test-output-line" ng-repeat="line in outputLines track by $index" 
-                 ng-class="{'test-output-line--success': line.type === 'success', 
-                           'test-output-line--error': line.type === 'error',
-                           'test-output-line--warn': line.type === 'warn',
-                           'test-output-line--info': line.type === 'info'}">
+            <div class="test-output-line"
+                 ng-repeat="line in outputLines track by $index"
+                 ng-class="{
+                    'test-output-line--success': line.type === 'success',
+                    'test-output-line--error': line.type === 'error',
+                    'test-output-line--warn': line.type === 'warn',
+                    'test-output-line--info': line.type === 'info'
+                 }">
+                <span class="test-output-badge" ng-class="{
+                    'badge--success': line.type === 'success',
+                    'badge--error': line.type === 'error',
+                    'badge--warn': line.type === 'warn',
+                    'badge--info': line.type === 'info'
+                }">{{ (line.type || 'info').toUpperCase() }}</span>
                 <span class="test-output-time">{{line.time}}</span>
-                <span class="test-output-content">{{line.content}}</span>
+                <span class="test-output-content" ng-bind="line.content"></span>
             </div>
             <div class="test-output-placeholder" ng-if="outputLines.length === 0">
                 <i class="info circle icon"></i>
                 <p>No output yet. Click "Start Tests" to begin.</p>
+            </div>
+        </div>
+
+        <!-- Chunk Status -->
+        <div class="test-suite-section" ng-if="chunkLogs.length > 0">
+            <h3 class="test-suite-section__title">
+                <i class="linkify icon"></i>
+                Chunk Status
+            </h3>
+            <div class="chunk-output">
+                <div class="chunk-line" ng-repeat="line in chunkLogs track by $index">
+                    <span class="chunk-time">{{line.time}}</span>
+                    <span class="chunk-content" ng-bind="line.content"></span>
+                </div>
             </div>
         </div>
     </div>
@@ -340,16 +438,33 @@
 }
 
 .test-output-line {
-    display: flex;
-    gap: 10px;
-    margin-bottom: 4px;
+    display: grid;
+    grid-template-columns: auto auto 1fr;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 6px;
     word-break: break-word;
 }
+
+.test-output-badge {
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #fff;
+    background: #555;
+    text-transform: uppercase;
+}
+.badge--success { background: #2e7d32; }
+.badge--error { background: #c62828; }
+.badge--warn { background: #ed6c02; }
+.badge--info { background: #1976d2; }
 
 .test-output-time {
     color: #888;
     flex-shrink: 0;
     min-width: 80px;
+    font-size: 11px;
 }
 
 .test-output-content {
@@ -371,6 +486,40 @@
 
 .test-output-line--info .test-output-content {
     color: #2196F3;
+}
+
+.chunk-output {
+    background: #151515;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 12px;
+    max-height: 200px;
+    overflow-y: auto;
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 12px;
+}
+
+.chunk-line {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 8px;
+    padding: 2px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+.chunk-line:last-child {
+    border-bottom: none;
+}
+
+.chunk-time {
+    color: #888;
+    min-width: 80px;
+    font-size: 11px;
+}
+
+.chunk-content {
+    color: var(--text-primary);
+    word-break: break-word;
 }
 
 .test-output-placeholder {

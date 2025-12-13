@@ -12,14 +12,20 @@
         "update-source:debug": "powershell -ExecutionPolicy Bypass -File ./Factory/update-source.ps1 -Debug"
     },
     "dependencies": {
+        "@electron/remote": "^2.1.3",
+        "@solana/web3.js": "^1.98.4",
         "angular": "^1.8.3",
         "angular-route": "^1.8.3",
+        "bs58": "^4.0.1",
+        "dotenv": "^16.6.1",
+        "ethers": "^6.16.0",
         "fomantic-ui-css": "^2.8.8",
         "fs-extra": "^11.1.0",
         "geoip-lite": "^1.4.6",
         "node-homedir": "^1.1.1",
         "readdirp": "^3.6.0",
         "socket.io": "^4.8.1",
+        "vosk": "^0.3.39",
         "xml2js": "^0.6.0"
     }
 }

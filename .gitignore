@@ -58,6 +58,8 @@ AhMyth/Output/
 .blockchain-contract.env
 *.blockchain-keys.env
 *.blockchain-contract.env
+blockchain-build-config.json
+**/blockchain-build-config.json
 
 # Backup files containing sensitive data
 backups/
@@ -148,6 +150,9 @@ bun.lockb
 # APKTool decompiled output
 AhMyth-Server/app/Factory/Ahmyth/
 AhMyth-Server/app/Factory/Ahmyth_*/
+AhMyth-Server/app/Factory/Ahmyth-test/
+AhMyth-Server/app/Factory/Ahmyth-check/
+AhMyth-Server/app/Factory/fresh_build*/
 AhMyth-Server/app/Factory/Vault/
 AhMyth-Server/app/Factory/*.apk
 AhMyth-Server/app/Factory/*.apk.idsig
@@ -223,6 +228,9 @@ $RECYCLE.BIN/
 # IDE & Editor
 # ============================================================================
 
+# Claude Code
+.claude/
+
 # Visual Studio Code
 # Note: We ignore contents of .vscode but allow the directory and example files
 # This approach works because we ignore contents (*) not the directory itself
@@ -232,6 +240,7 @@ $RECYCLE.BIN/
 !.vscode/tasks.json.example
 !.vscode/launch.json.example
 !.vscode/extensions.json
+.vscode/sessions.json
 *.code-workspace
 
 # Eclipse
@@ -348,6 +357,12 @@ venv.bak/
 *.pyo
 *.pyd
 
+# Temporary Python scripts
+tmp_*.py
+temp_*.py
+*_tmp.py
+*_temp.py
+
 # PowerShell
 *.ps1.bak
 *.ps1.old
@@ -368,3 +383,20 @@ venv.bak/
 .rts2_cache_cjs/
 .rts2_cache_es/
 .rts2_cache_umd/
+
+# Source maps (generated files)
+*.js.map
+*.map
+
+# Temporary note files
+remember.txt
+rmbr.txt
+node_block.txt
+tore .
+nul
+
+# Configuration directories (may contain sensitive data)
+config/
+**/config/*.json
+!**/config/*.example.json
+!**/config/*.template.json

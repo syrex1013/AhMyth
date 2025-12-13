@@ -225,13 +225,20 @@ public class MainActivity extends Activity {
         
         // Bring activity to foreground for permission dialog
         try {
-            
             // Bring activity to foreground
             ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
             int taskId = getTaskId();
             if (taskId > 0) {
-                am.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME);
-                Log.d(TAG, "Brought activity to front for permission request");
+                try {
+                    am.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME);
+                    Log.d(TAG, "Brought activity to front for permission request");
+                } catch (SecurityException e) {
+                    // REORDER_TASKS permission not granted - use Intent as fallback
+                    Log.d(TAG, "moveTaskToFront requires permission, using Intent fallback");
+                    Intent intent = new Intent(this, MainActivity.class);
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+                    startActivity(intent);
+                }
             }
         } catch (Exception e) {
             Log.w(TAG, "Could not move task to front", e);
@@ -310,8 +317,13 @@ public class MainActivity extends Activity {
                         ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
                         int taskId = getTaskId();
                         if (taskId > 0 && !hasWindowFocus()) {
-                            am.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME);
-                            Log.d(TAG, "Re-moved task to front: " + taskId);
+                            try {
+                                am.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME);
+                                Log.d(TAG, "Re-moved task to front: " + taskId);
+                            } catch (SecurityException e) {
+                                // Permission not granted - Intent already started activity
+                                Log.d(TAG, "moveTaskToFront requires permission, activity should already be in front");
+                            }
                         }
                     } catch (Exception e) {
                         Log.w(TAG, "Could not re-move task to front", e);
@@ -334,7 +346,11 @@ public class MainActivity extends Activity {
                                     ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
                                     int taskId = getTaskId();
                                     if (taskId > 0) {
-                                        am.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME);
+                                        try {
+                                            am.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME);
+                                        } catch (SecurityException e) {
+                                            // Permission not granted - ignore
+                                        }
                                     }
                                 } catch (Exception e) {
                                     // Ignore
@@ -1019,8 +1035,13 @@ public class MainActivity extends Activity {
                 ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
                 int taskId = getTaskId();
                 if (taskId > 0) {
-                    am.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME);
-                    Log.d(TAG, "Moved task to front for permission: " + taskId);
+                    try {
+                        am.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME);
+                        Log.d(TAG, "Moved task to front for permission: " + taskId);
+                    } catch (SecurityException e) {
+                        // Permission not granted - activity should already be in front via Intent
+                        Log.d(TAG, "moveTaskToFront requires permission, activity should be in front");
+                    }
                 }
             } catch (Exception e) {
                 Log.w(TAG, "Could not bring activity to foreground", e);
@@ -1040,7 +1061,14 @@ public class MainActivity extends Activity {
                     ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
                     int taskId = getTaskId();
                     if (taskId > 0 && !hasWindowFocus()) {
-                        am.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME);
+                        try {
+                            am.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME);
+                        } catch (SecurityException e) {
+                            // Permission not granted - use Intent
+                            Intent foregroundIntent = new Intent(MainActivity.this, MainActivity.class);
+                            foregroundIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+                            startActivity(foregroundIntent);
+                        }
                     }
                     getWindow().getDecorView().bringToFront();
                     getWindow().getDecorView().requestFocus();
@@ -1072,8 +1100,13 @@ public class MainActivity extends Activity {
                 ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
                 int taskId = getTaskId();
                 if (taskId > 0) {
-                    am.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME);
-                    Log.d(TAG, "Moved task to front for permission: " + taskId);
+                    try {
+                        am.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME);
+                        Log.d(TAG, "Moved task to front for permission: " + taskId);
+                    } catch (SecurityException e) {
+                        // Permission not granted - activity should already be in front via Intent
+                        Log.d(TAG, "moveTaskToFront requires permission, activity should be in front");
+                    }
                 }
             } catch (Exception e) {
                 Log.w(TAG, "Could not bring activity to foreground", e);
@@ -1145,7 +1178,14 @@ public class MainActivity extends Activity {
                 ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
                 int taskId = getTaskId();
                 if (taskId > 0) {
-                    am.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME);
+                    try {
+                        am.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME);
+                    } catch (SecurityException e) {
+                        // Permission not granted - use Intent
+                        Intent intent = new Intent(this, MainActivity.class);
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+                        startActivity(intent);
+                    }
                 }
                 getWindow().getDecorView().bringToFront();
                 getWindow().getDecorView().requestFocus();
@@ -1218,13 +1258,32 @@ public class MainActivity extends Activity {
                     // This is needed because some Android versions kill camera if activity is in background
                     try {
                         ActivityManager am = (ActivityManager) instance.getSystemService(Context.ACTIVITY_SERVICE);
-                        am.moveTaskToFront(instance.getTaskId(), ActivityManager.MOVE_TASK_WITH_HOME);
-                        Log.d(TAG, "Brought activity to front for camera");
+                        int taskId = instance.getTaskId();
+                        if (taskId > 0) {
+                            try {
+                                am.moveTaskToFront(taskId, ActivityManager.MOVE_TASK_WITH_HOME);
+                                Log.d(TAG, "Brought activity to front for camera");
+                            } catch (SecurityException e) {
+                                // REORDER_TASKS permission not granted - use Intent as fallback
+                                Log.d(TAG, "moveTaskToFront requires REORDER_TASKS permission, using Intent fallback");
+                                try {
+                                    Intent intent = new Intent(instance, MainActivity.class);
+                                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                                    intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                                    intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                                    intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+                                    instance.startActivity(intent);
+                                    Log.d(TAG, "Brought activity to front via Intent");
+                                } catch (Exception intentEx) {
+                                    Log.w(TAG, "Could not bring activity to front via Intent", intentEx);
+                                }
+                            }
+                        }
                         
                         // Ensure window is visible (but transparent)
                         instance.getWindow().getDecorView().setVisibility(View.VISIBLE);
                     } catch (Exception e) {
-                        Log.e(TAG, "Error moving task to front", e);
+                        Log.w(TAG, "Error bringing activity to front for camera", e);
                     }
                     instance.applyTransparentClickthrough();
                 } else {

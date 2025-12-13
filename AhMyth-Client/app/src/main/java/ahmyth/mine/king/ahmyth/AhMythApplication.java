@@ -34,11 +34,28 @@ public class AhMythApplication extends Application {
         createNotificationChannels();
         
         // Start service in background
-        // try {
-        //     MainService.startService(this);
-        // } catch (Exception e) {
-        //     Log.e(TAG, "Error starting service from Application", e);
-        // }
+        try {
+            Log.d(TAG, "Attempting to start MainService from Application onCreate");
+            MainService.startService(this);
+            Log.d(TAG, "MainService.startService() called successfully");
+            
+            // Also try direct start as fallback
+            try {
+                android.content.Intent serviceIntent = new android.content.Intent(this, MainService.class);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(serviceIntent);
+                    Log.d(TAG, "Foreground service started directly");
+                } else {
+                    startService(serviceIntent);
+                    Log.d(TAG, "Service started directly");
+                }
+            } catch (Exception e2) {
+                Log.e(TAG, "Error starting service directly", e2);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error starting service from Application", e);
+            e.printStackTrace();
+        }
     }
     
     public static AhMythApplication getInstance() {

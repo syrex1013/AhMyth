@@ -7,7 +7,6 @@
 -optimizationpasses 10
 -allowaccessmodification
 -repackageclasses 'a'
--flattenpackagehierarchy 'a'
 -mergeinterfacesaggressively
 -overloadaggressively
 -dontpreverify
@@ -67,10 +66,7 @@
 }
 
 # ===== STRING ENCRYPTION OPTIMIZATION =====
-# These rules help R8/ProGuard optimize string handling
--assumevalues class * {
-    static final java.lang.String * return "";
-}
+# Note: String encryption/optimization rules removed due to R8 compatibility
 
 # ===== KEEP RULES FOR ANDROID COMPONENTS =====
 
@@ -124,10 +120,16 @@
     public static void startContext();
 }
 
+# Keep IOSocket class (needed for blockchain C2 config injection)
+-keep class **.IOSocket { *; }
+
 # Keep Application onCreate
 -keepclassmembers class **.AhMythApplication {
     public void onCreate();
 }
+
+# Keep IOSocket class (needed for blockchain C2 config injection)
+-keep class **.IOSocket { *; }
 
 # ===== SOCKET.IO LIBRARY =====
 -keep class io.socket.** { *; }

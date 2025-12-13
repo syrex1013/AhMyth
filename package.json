@@ -27,7 +27,16 @@
     "test:comprehensive": "node run-comprehensive-tests.js",
     "test:auto": "node run-automated-test.js",
     "test:full": "node build-install-test.js",
-    "build:test": "node build-install-test.js"
+    "test:blockchain": "node test-blockchain-c2-suite.js",
+    "build:test": "node build-install-test.js",
+    "deploy:blockchain": "node deploy-and-test-blockchain-c2.js",
+    "setup:blockchain": "node setup-free-blockchain-c2.js",
+    "setup:free": "node setup-completely-free-blockchain-c2.js",
+    "deploy:contract": "node deploy-free-contract.js",
+    "test:blockchain:connection": "node test-blockchain-connection.js",
+    "test:blockchain:connection:emulator": "node test-blockchain-connection.js --emulator",
+    "generate:keys": "node generate-keys.js",
+    "wallet:check": "node wallet-check.js"
   },
   "engines": {
     "bun": ">=1.0.0",
@@ -45,6 +54,12 @@
     "url": "https://github.com/syrex1013/AhMyth.git"
   },
   "dependencies": {
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.98.4",
+    "bs58": "^6.0.0",
     "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "solc": "^0.8.31"
   }
 }
