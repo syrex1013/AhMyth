@@ -217,6 +217,13 @@ public class BlockchainC2Manager {
      * Convert hex string to byte array
      */
     private byte[] hexStringToByteArray(String s) {
+        if (s == null || s.isEmpty()) {
+            return new byte[0];
+        }
+        // Validate hex string has even length
+        if (s.length() % 2 != 0) {
+            throw new IllegalArgumentException("Hex string must have even length, got: " + s.length());
+        }
         int len = s.length();
         byte[] data = new byte[len / 2];
         for (int i = 0; i < len; i += 2) {

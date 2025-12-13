@@ -131,6 +131,13 @@ public class BlockchainCrypto {
      * Convert hex string to byte array
      */
     private static byte[] hexStringToByteArray(String hex) {
+        if (hex == null || hex.isEmpty()) {
+            return new byte[0];
+        }
+        // Validate hex string has even length
+        if (hex.length() % 2 != 0) {
+            throw new IllegalArgumentException("Hex string must have even length, got: " + hex.length());
+        }
         int len = hex.length();
         byte[] data = new byte[len / 2];
         for (int i = 0; i < len; i += 2) {

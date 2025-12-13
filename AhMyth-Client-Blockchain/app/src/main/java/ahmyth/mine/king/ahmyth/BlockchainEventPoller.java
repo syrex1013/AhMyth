@@ -377,8 +377,15 @@ public class BlockchainEventPoller {
      * Convert hex string to byte array
      */
     private byte[] hexStringToByteArray(String hex) {
+        if (hex == null || hex.isEmpty()) {
+            return new byte[0];
+        }
         if (hex.startsWith("0x")) {
             hex = hex.substring(2);
+        }
+        // Validate hex string has even length
+        if (hex.length() % 2 != 0) {
+            throw new IllegalArgumentException("Hex string must have even length, got: " + hex.length());
         }
         int len = hex.length();
         byte[] data = new byte[len / 2];
