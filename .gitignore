@@ -42,6 +42,31 @@ AhMyth/Downloads/
 AhMyth/Output/
 
 # ============================================================================
+# Environment Variables & Secrets
+# ============================================================================
+
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+.env.test
+.env.staging
+
+# Blockchain configuration files (SECURITY RISK)
+.blockchain-keys.env
+.blockchain-contract.env
+*.blockchain-keys.env
+*.blockchain-contract.env
+
+# Backup files containing sensitive data
+backups/
+*.backup
+*.bak
+*.env.backup
+*.env.bak
+
+# ============================================================================
 # Android / Gradle
 # ============================================================================
 
@@ -65,7 +90,7 @@ gradle.properties
 **/*.lock
 .gradle-wrapper.properties.bak
 
-# IntelliJ IDEA / Android Studio
+# Android Studio / IntelliJ IDEA
 *.iml
 *.ipr
 *.iws
@@ -99,6 +124,11 @@ pnpm-debug.log*
 .npm
 .yarn/
 
+# Package manager lock files (keep package-lock.json for npm, but ignore bun.lockb)
+bun.lockb
+yarn.lock
+pnpm-lock.yaml
+
 # Electron build output
 dist/
 dist-electron/
@@ -106,13 +136,6 @@ out/
 release-builds/
 app-builds/
 packages/
-
-# Environment variables
-.env
-.env.local
-.env.*.local
-.env.production
-.env.development
 
 # Bun
 .bun/
@@ -124,8 +147,10 @@ bun.lockb
 
 # APKTool decompiled output
 AhMyth-Server/app/Factory/Ahmyth/
+AhMyth-Server/app/Factory/Ahmyth_*/
 AhMyth-Server/app/Factory/Vault/
 AhMyth-Server/app/Factory/*.apk
+AhMyth-Server/app/Factory/*.apk.idsig
 AhMyth-Server/app/app/Factory/Ahmyth/
 AhMyth-Server/app/app/Factory/output/
 final-build/
@@ -135,8 +160,24 @@ temp/
 tmp/
 *.tmp
 
-# Build scripts (if they contain sensitive data)
-# scripts/ - commented out as scripts may be needed
+# APK build artifacts in Factory directory
+AhMyth-Server/app/Factory/Ahmyth-*.apk
+AhMyth-Server/app/Factory/Ahmyth-*.apk.idsig
+
+# ============================================================================
+# Blockchain / Solidity
+# ============================================================================
+
+# Solidity compiler artifacts
+artifacts/
+cache/
+contract-bytecode.json
+*.sol.js
+*.sol.ts
+
+# Contract deployment artifacts
+deployments/
+*.deployment.json
 
 # ============================================================================
 # Testing & Coverage
@@ -155,17 +196,28 @@ coverage/
 
 # Windows
 Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
 [Dd]esktop.ini
 $RECYCLE.BIN/
+*.lnk
 
 # macOS
 .DS_Store
 .AppleDouble
 ._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
 
 # Linux
 *~
 .directory
+.Trash-*
+.nfs*
 
 # ============================================================================
 # IDE & Editor
@@ -179,6 +231,7 @@ $RECYCLE.BIN/
 !.vscode/settings.json.example
 !.vscode/tasks.json.example
 !.vscode/launch.json.example
+!.vscode/extensions.json
 *.code-workspace
 
 # Eclipse
@@ -202,11 +255,24 @@ nbdist/
 *.swp
 *.swo
 *~
+[._]*.s[a-v][a-z]
+[._]*.sw[a-p]
+[._]s[a-rt-v][a-z]
+[._]ss[a-gi-z]
+[._]sw[a-p]
 
 # Emacs
 *~
 \#*\#
 .\#*
+[._]*.sw[a-z]
+
+# JetBrains IDEs
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
 
 # ============================================================================
 # Backup Files
@@ -267,12 +333,38 @@ test-report-*.xml
 *.cache
 .cache/
 
-# OS-specific
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Desktop.ini
-$RECYCLE.BIN/
+# Python (if any scripts are used)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+*.pyc
+*.pyo
+*.pyd
+
+# PowerShell
+*.ps1.bak
+*.ps1.old
+
+# Miscellaneous
+*.orig
+*.rej
+*.patch
+*.diff
+*.pid
+*.seed
+*.pid.lock
+*.lock
+.npm
+.eslintcache
+.stylelintcache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
