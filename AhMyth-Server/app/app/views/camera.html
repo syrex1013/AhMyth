@@ -101,13 +101,16 @@
             </div>
             
             <!-- Loading -->
-            <div class="camera-loading" ng-if="load === 'loading'">
+            <div class="camera-loading" ng-if="load && load !== ''">
                 <div class="camera-loading__animation">
                     <div class="shutter"></div>
                     <i class="camera icon"></i>
                 </div>
-                <p>Capturing image...</p>
-                <span class="loading-hint">This may take a few seconds</span>
+                <!-- Show progress message if it contains 'Receiving' or 'chunks' -->
+                <p ng-if="load.indexOf && (load.indexOf('Receiving') >= 0 || load.indexOf('chunks') >= 0)">{{load}}</p>
+                <!-- Otherwise show default message -->
+                <p ng-if="!load.indexOf || (load.indexOf('Receiving') < 0 && load.indexOf('chunks') < 0)">Capturing image...</p>
+                <span class="loading-hint">Please wait...</span>
             </div>
         </div>
         
@@ -455,6 +458,20 @@
         font-size: 11px;
         color: var(--text-muted);
         margin-top: 8px;
+    }
+
+    /* Progress message styling */
+    .camera-loading p {
+        font-size: 14px;
+        color: var(--text-primary);
+        font-weight: 500;
+        margin: 0;
+        padding: 0;
+    }
+
+    /* Highlight percentage in progress */
+    .camera-loading p:contains('%') {
+        color: var(--accent-primary);
     }
     
     /* Info Panel */

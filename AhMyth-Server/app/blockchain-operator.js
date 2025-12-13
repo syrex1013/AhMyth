@@ -91,7 +91,7 @@ const RPC_CANDIDATES = [
   'https://api.devnet.solana.com',
   'https://api.testnet.solana.com',
   'https://rpc.ankr.com/solana_devnet',
-  'https://devnet.helius-rpc.com/?api-key=1587a8d0-6581-451d-93a8-4221147748d3'
+  'https://devnet.helius-rpc.com/?api-key=288d548c-1be7-4db4-86c3-60300d282efa'
 ].filter(Boolean).filter((url, index, self) => self.indexOf(url) === index && !url.includes('alchemy'));
 
 const CHANNEL_ADDRESS = loadedEnv.SOLANA_CHANNEL_ADDRESS || loadedEnv.BLOCKCHAIN_CONTRACT_ADDRESS;

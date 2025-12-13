@@ -306,6 +306,7 @@ Output/
 *.md
 !README.md
 !LICENSE.md
+!CLAUDE.md
 !CHANGELOG.md
 !CONTRIBUTING.md
 # Allow markdown files in .github and docs directories

