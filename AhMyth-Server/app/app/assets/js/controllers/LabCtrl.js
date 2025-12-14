@@ -1442,10 +1442,12 @@ app.controller("CamCtrl", function ($scope, $rootScope, $timeout) {
     // Listen for blockchain chunk progress to show upload/download progress
     let currentChunkInfo = null;
     $scope.$on('Blockchain:ChunkReceived', (event, chunkInfo) => {
+        const loadEmpty = !$camCtrl.load || $camCtrl.load === '';
         // Check if we're in a loading state (either initial 'loading' or already receiving chunks)
         const isLoading = $camCtrl.load && ($camCtrl.load === 'loading' || $camCtrl.load.indexOf('Receiving') >= 0);
+        const shouldShowProgress = chunkInfo && (isLoading || loadEmpty);
 
-        if (chunkInfo && isLoading) {
+        if (shouldShowProgress) {
             currentChunkInfo = chunkInfo;
             // Update load message to show progress (always use received count, not part number)
             const receivedCount = chunkInfo.received || 0;
@@ -1458,6 +1460,7 @@ app.controller("CamCtrl", function ($scope, $rootScope, $timeout) {
                 } else {
                     $camCtrl.load = `Receiving image chunks...`;
                 }
+                $scope.load = $camCtrl.load;
             }, 0);
 
             // Log progress every 20 chunks received (based on count, not part number) or when complete
@@ -1851,48 +1854,8 @@ app.controller("CamCtrl", function ($scope, $rootScope, $timeout) {
         $rootScope.Log('[→] Fetching camera list...', CONSTANTS.logStatus.INFO);
         $camCtrl.load = 'loading';
         setResponseTimeout('camera list', 60000);
-        
-        // Store the handler function for reuse
-        const cameraHandler = (data) => {
-            if (responseTimeout) $timeout.cancel(responseTimeout);
-            $camCtrl.load = '';
-            $camCtrl.lastError = null;
-            
-            console.log('[CamCtrl] Received camera data:', data);
-            console.log('[CamCtrl] data.image:', data.image);
-            console.log('[CamCtrl] data.buffer type:', typeof data.buffer);
-            console.log('[CamCtrl] data.buffer length:', data.buffer ? data.buffer.length : 0);
-            console.log('[CamCtrl] data.buffer preview (first 200):', data.buffer ? data.buffer.substring(0, 200) : 'no buffer');
-            console.log('[CamCtrl] data.buffer preview (last 100):', data.buffer ? data.buffer.substring(Math.max(0, data.buffer.length - 100)) : 'no buffer');
-            
-            // Handle error responses
-            if (data.error) {
-                $camCtrl.lastError = data.error;
-                $rootScope.Log(`[✗] Camera error: ${data.error}`, CONSTANTS.logStatus.FAIL);
-                $camCtrl.$apply();
-                return;
-            }
-            
-            if (data.camList == true) {
-                $rootScope.Log(`[✓] Found ${data.list.length} camera(s)`, CONSTANTS.logStatus.SUCCESS);
-                $camCtrl.cameras = data.list;
-                // Auto-select first camera
-                if (data.list.length > 0) {
-                    $camCtrl.selectedCam = data.list[0];
-                    $rootScope.Log(`[ℹ] Auto-selected: ${$camCtrl.selectedCam.name || 'Camera ' + $camCtrl.selectedCam.id}`, CONSTANTS.logStatus.INFO);
-                }
-                $camCtrl.$apply();
-            }
-        };
-        
+        // Main camera listener above already handles camList responses; avoid replacing it
         socket.emit(ORDER, { order: camera, extra: 'camList' });
-        
-        // Re-register the listener after emit (in case sendBlockchainAndPoll removed it)
-        // This is needed because sendBlockchainAndPoll calls socket.once which removes all listeners
-        $timeout(() => {
-            console.log('[CamCtrl] Re-registering camera listener after blockchain request');
-            socket.on(camera, cameraHandler);
-        }, 100); // Small delay to ensure sendBlockchainAndPoll registers first
     }
 });
 
