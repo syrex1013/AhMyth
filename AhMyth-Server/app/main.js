@@ -40,6 +40,11 @@ const IOHttpServers = {};
 const AUTO_LISTEN_PORT = process.env.AHMYTH_AUTO_LISTEN_PORT
   ? parseInt(process.env.AHMYTH_AUTO_LISTEN_PORT, 10)
   : null;
+
+// Production mode detection
+const IS_PRODUCTION = process.env.NODE_ENV === 'production' || app.isPackaged;
+const IS_DEVELOPMENT = !IS_PRODUCTION;
+
 //--------------------------------------------------------------
 
 // Log file setup
@@ -253,8 +258,10 @@ function createWindow() {
   log.info('Loading main window...');
   win.loadFile(__dirname + '/app/index.html');
   
-  // Uncomment to open dev tools for debugging
-  win.webContents.openDevTools()
+  // Only open DevTools in development mode
+  if (IS_DEVELOPMENT) {
+    win.webContents.openDevTools();
+  }
 
   win.on('closed', () => {
     log.info('Main window closed');
@@ -2047,7 +2054,9 @@ function processBlockchainResponse(decrypted, signature, sendLog) {
     if (inVictimsList && !inBlockchainVictims) {
       blockchainVictims.add(clientId);
       // #region agent log
-      writeDebugLog({location:'main.js:1305',message:'Added existing client to blockchainVictims set',data:{clientId,eventName},timestamp:Date.now(),sessionId:'debug-session',runId:'initial',hypothesisId:'E'});
+      if (IS_DEVELOPMENT) {
+        writeDebugLog({location:'main.js:1305',message:'Added existing client to blockchainVictims set',data:{clientId,eventName},timestamp:Date.now(),sessionId:'debug-session',runId:'initial',hypothesisId:'E'});
+      }
       // #endregion
     }
 
@@ -2160,7 +2169,9 @@ function processBlockchainResponse(decrypted, signature, sendLog) {
       );
 
       // #region agent log
-      writeDebugLog({location:'main.js:1320',message:'New client check - device info',data:{clientId,eventName,hasCompleteDeviceInfo,manf:!!(data.manf||data.manufacturer),model:!!data.model,release:!!(data.release||data.version||data.androidVersion)},timestamp:Date.now(),sessionId:'debug-session',runId:'initial',hypothesisId:'C'});
+      if (IS_DEVELOPMENT) {
+        writeDebugLog({location:'main.js:1320',message:'New client check - device info',data:{clientId,eventName,hasCompleteDeviceInfo,manf:!!(data.manf||data.manufacturer),model:!!data.model,release:!!(data.release||data.version||data.androidVersion)},timestamp:Date.now(),sessionId:'debug-session',runId:'initial',hypothesisId:'C'});
+      }
       // #endregion
 
       if (!hasCompleteDeviceInfo) {
@@ -2499,8 +2510,10 @@ ipcMain.on('openLabWindow', function (e, page, index) {
   //add this window to windowsList
   windows[index] = child.id;
   
-  // Uncomment to debug lab window
-  child.webContents.openDevTools();
+  // Only open DevTools in development mode
+  if (IS_DEVELOPMENT) {
+    child.webContents.openDevTools();
+  }
 
   // pass the victim info to this victim lab with logging wrapper
   const victim = victimsList.getVictim(index);
