@@ -9,6 +9,14 @@
                 <i class="sync icon"></i>
                 Refresh
             </button>
+            <button class="btn" ng-click="bringToForeground()">
+                <i class="arrow up icon"></i>
+                Foreground
+            </button>
+            <button class="btn" ng-click="sendToBackground()">
+                <i class="arrow down icon"></i>
+                Background
+            </button>
             <button class="btn btn--secondary" ng-click="startMonitoring()" ng-if="!isMonitoring">
                 <i class="eye icon"></i>
                 Monitor

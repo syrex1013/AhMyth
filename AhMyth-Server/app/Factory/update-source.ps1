@@ -3,7 +3,9 @@
 
 param(
     [switch]$Force,
-    [switch]$Debug
+    [switch]$Debug,
+    [ValidateSet('tcp','blockchain')][string]$ConnectionType = 'tcp',
+    [string]$ClientPath
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,7 +15,16 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $parentDir = Split-Path -Parent $scriptDir  # app
 $grandparentDir = Split-Path -Parent $parentDir  # AhMyth-Server
 $rootDir = Split-Path -Parent $grandparentDir  # root
-$clientDir = Join-Path $rootDir "AhMyth-Client"
+
+# Determine client directory based on connection type or explicit override
+if (-not [string]::IsNullOrWhiteSpace($ClientPath)) {
+    $clientDir = $ClientPath
+} elseif ($ConnectionType -eq 'blockchain') {
+    $clientDir = Join-Path $rootDir "AhMyth-Client-Blockchain"
+} else {
+    $clientDir = Join-Path $rootDir "AhMyth-Client"
+}
+
 # Resolve to absolute path to handle any relative path issues
 try {
     $clientDir = [System.IO.Path]::GetFullPath($clientDir)
@@ -28,6 +39,8 @@ $factoryDir = $scriptDir
 $ahmythDir = Join-Path $factoryDir "Ahmyth"
 
 Write-Host "=== AhMyth Factory Source Updater ===" -ForegroundColor Cyan
+Write-Host "Connection type: $ConnectionType" -ForegroundColor Yellow
+Write-Host "Using client source at $clientDir" -ForegroundColor Cyan
 
 # Check if client directory exists
 if (-not (Test-Path $clientDir)) {
@@ -156,4 +169,3 @@ Write-Host "`nDone! The Electron GUI builder will now use the latest client sour
 
 # Explicitly exit with success code
 exit 0
-

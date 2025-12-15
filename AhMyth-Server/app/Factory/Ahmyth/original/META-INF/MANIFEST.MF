@@ -3,7 +3,7 @@ Built-By: Signflinger
 Created-By: Android Gradle 7.4.2
 
 Name: AndroidManifest.xml
-SHA-256-Digest: 1SowwusS3usfalSvj7yPTAPjyruK2jCc8vaziXm/zUs=
+SHA-256-Digest: /nZmikhv6nuR+gxbL3aoS9+1aFAdRLNzFuCekMhIfKQ=
 
 Name: META-INF/android.arch.core_runtime.version
 SHA-256-Digest: zFL2eISLgUNzdXtGA4O/YZYOSUPCA3Na3eCjULPlCYk=
@@ -117,7 +117,7 @@ Name: androidsupportmultidexversion.txt
 SHA-256-Digest: gi3KDtl7djnYHJxXBKUXJAPnDOAxSe1YbYQyW5pDjkM=
 
 Name: classes.dex
-SHA-256-Digest: dTTPLF1z97XkyLQ15HhlRtjGbF7XWQ+htWoJ9HKsoCI=
+SHA-256-Digest: kA5qRVQ+/rFzTwBsbYdRpT2cMfKq2NqtcIO6vNvzkGY=
 
 Name: okhttp3/internal/publicsuffix/publicsuffixes.gz
 SHA-256-Digest: vo2mhtIIs05LPwv5CqLgt2OClWQRMsPwyqgbA0mQMv8=

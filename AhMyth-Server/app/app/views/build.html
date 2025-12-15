@@ -9,13 +9,13 @@
             <div class="builder-form__group">
                 <label class="builder-form__label">Connection Type</label>
                 <div class="connection-type-selector">
-                    <label class="connection-type-btn" ng-class="{'connection-type-btn--active': connectionType === 'tcp'}">
-                        <input type="radio" name="connectionType" ng-model="connectionType" value="tcp" ng-init="connectionType = connectionType || 'tcp'">
+                    <label class="connection-type-btn" ng-class="{'connection-type-btn--active': builder.connectionType === 'tcp'}">
+                        <input type="radio" name="connectionType" ng-model="builder.connectionType" value="tcp" ng-init="builder.connectionType = builder.connectionType || 'tcp'">
                         <i class="plug icon"></i>
                         <span>TCP/IP</span>
                     </label>
                     <label class="connection-type-btn" ng-class="{'connection-type-btn--active': connectionType === 'blockchain'}">
-                        <input type="radio" name="connectionType" ng-model="connectionType" value="blockchain">
+                        <input type="radio" name="connectionType" ng-model="builder.connectionType" value="blockchain">
                         <i class="linkify icon"></i>
                         <span>Blockchain C2</span>
                     </label>
@@ -24,24 +24,32 @@
             </div>
             
             <!-- TCP/IP Configuration -->
-            <div ng-if="connectionType === 'tcp'" class="tcp-config">
+            <div ng-show="builder.connectionType === 'tcp'" class="tcp-config">
                 <div class="builder-form__group">
                     <label class="builder-form__label">Server IP</label>
-                    <input type="text" class="builder-form__input" ng-model="srcIP" placeholder="192.168.0.227" ng-init="srcIP = srcIP || '192.168.0.227'">
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <input type="text" class="builder-form__input" ng-model="builder.srcIP" ng-change="onBuilderSettingChange()" placeholder="192.168.0.227" style="flex: 1;">
+                        <button class="btn btn--small" ng-click="saveBuilderSettings()" title="Save settings">
+                            <i class="save icon"></i> Save
+                        </button>
+                        <button class="btn btn--small" ng-click="loadBuilderSettings()" title="Load saved settings">
+                            <i class="folder open icon"></i> Load
+                        </button>
+                    </div>
                     <span class="builder-form__hint">Your public or local IP address</span>
                 </div>
                 <div class="builder-form__group">
                     <label class="builder-form__label">Port</label>
-                    <input type="number" class="builder-form__input" ng-model="srcPort" min="1025" max="65535" placeholder="1234" ng-init="srcPort = srcPort || 1234">
+                    <input type="number" class="builder-form__input" ng-model="builder.srcPort" ng-change="onBuilderSettingChange()" min="1025" max="65535" placeholder="1234">
                     <span class="builder-form__hint">Must match the listening port</span>
                 </div>
             </div>
             
             <!-- Blockchain C2 Configuration -->
-            <div ng-if="connectionType === 'blockchain'" class="blockchain-config">
+            <div ng-show="builder.connectionType === 'blockchain'" class="blockchain-config">
                 <div class="builder-form__group">
                     <label class="builder-form__label">Blockchain Mode</label>
-                    <select class="builder-form__input" ng-model="blockchainChain" ng-init="blockchainChain = blockchainChain || 'solana'">
+                    <select class="builder-form__input" ng-model="builder.blockchainChain" ng-init="builder.blockchainChain = builder.blockchainChain || 'solana'">
                         <option value="solana">Solana Memo (recommended)</option>
                         <option value="evm">EVM (legacy)</option>
                     </select>
@@ -49,12 +57,12 @@
                 </div>
                 <div class="builder-form__group">
                     <label class="builder-form__label">RPC URL</label>
-                    <input type="text" class="builder-form__input" ng-model="blockchainRpcUrl" placeholder="https://api.devnet.solana.com">
+                    <input type="text" class="builder-form__input" ng-model="builder.blockchainRpcUrl" placeholder="https://api.devnet.solana.com">
                     <span class="builder-form__hint">Solana RPC endpoint (devnet/mainnet or provider URL)</span>
                 </div>
                 <div class="builder-form__group">
                     <label class="builder-form__label">Channel / Contract Address</label>
-                    <input type="text" class="builder-form__input" ng-model="blockchainContract" placeholder="Solana channel address (base58)">
+                    <input type="text" class="builder-form__input" ng-model="builder.blockchainContract" placeholder="Solana channel address (base58)">
                     <div class="inline-actions">
                         <button class="btn btn--secondary btn--small" type="button" ng-click="loadBlockchainKeys()">Load</button>
                         <button class="btn btn--secondary btn--small" type="button" ng-click="saveBlockchainKeys()">Save</button>
@@ -63,25 +71,25 @@
                 </div>
                 <div class="builder-form__group">
                     <label class="builder-form__label">Block Step</label>
-                    <input type="number" class="builder-form__input" ng-model="blockchainBlockStep" min="1" max="100" placeholder="10" ng-init="blockchainBlockStep = blockchainBlockStep || 10">
+                    <input type="number" class="builder-form__input" ng-model="builder.blockchainBlockStep" min="1" max="100" placeholder="10" ng-init="builder.blockchainBlockStep = builder.blockchainBlockStep || 10">
                     <span class="builder-form__hint">Block interval for endpoint rotation</span>
                 </div>
                 <div class="builder-form__group">
                     <label class="builder-form__label">Candidates Per Cycle</label>
-                    <input type="number" class="builder-form__input" ng-model="blockchainCandidates" min="1" max="20" placeholder="5" ng-init="blockchainCandidates = blockchainCandidates || 5">
+                    <input type="number" class="builder-form__input" ng-model="builder.blockchainCandidates" min="1" max="20" placeholder="5" ng-init="builder.blockchainCandidates = builder.blockchainCandidates || 5">
                     <span class="builder-form__hint">Number of endpoint candidates per rotation</span>
                 </div>
                 <div class="builder-form__group">
                     <label class="builder-form__label">AES Key (Hex, 64 chars)</label>
                     <div class="inline-actions">
-                        <input type="text" class="builder-form__input" ng-model="blockchainC2AesKey" placeholder="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" maxlength="64">
+                        <input type="text" class="builder-form__input" ng-model="builder.blockchainC2AesKey" placeholder="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" maxlength="64">
                         <button class="btn btn--secondary btn--small" type="button" ng-click="generateAesKey()">Generate AES</button>
                     </div>
                     <span class="builder-form__hint">32-byte AES key in hexadecimal format</span>
                 </div>
                 <div class="builder-form__group">
                     <label class="builder-form__label">Operator Private Key</label>
-                    <input type="text" class="builder-form__input" ng-model="blockchainOperatorPrivateKey" placeholder="Base58 (Solana) or 0x... (EVM)" autocomplete="off">
+                    <input type="text" class="builder-form__input" ng-model="builder.blockchainOperatorPrivateKey" placeholder="Base58 (Solana) or 0x... (EVM)" autocomplete="off">
                     <div class="inline-actions">
                         <button class="btn btn--secondary btn--small" type="button" ng-click="generateOperatorKey()">Generate</button>
                         <button class="btn btn--secondary btn--small" type="button" ng-click="loadBlockchainKeys()">Load</button>
@@ -91,7 +99,7 @@
                 </div>
                 <div class="builder-form__group">
                     <label class="builder-form__label">Client Private Key (responses)</label>
-                    <input type="text" class="builder-form__input" ng-model="blockchainClientPrivateKey" placeholder="Base58 64-byte secret (Solana) or 0x..." autocomplete="off">
+                    <input type="text" class="builder-form__input" ng-model="builder.blockchainClientPrivateKey" placeholder="Base58 64-byte secret (Solana) or 0x..." autocomplete="off">
                     <div class="inline-actions">
                         <button class="btn btn--secondary btn--small" type="button" ng-click="generateClientKey()">Generate</button>
                         <button class="btn btn--secondary btn--small" type="button" ng-click="loadBlockchainKeys()">Load</button>
@@ -101,24 +109,24 @@
                 </div>
                 <div class="builder-form__group">
                     <label class="builder-form__label">RPC Fallbacks (comma separated)</label>
-                    <input type="text" class="builder-form__input" ng-model="blockchainRpcFallbacks" placeholder="https://api.devnet.solana.com, https://solana-devnet.g.alchemy.com/v2/KEY">
+                    <input type="text" class="builder-form__input" ng-model="builder.blockchainRpcFallbacks" placeholder="https://api.devnet.solana.com, https://solana-devnet.g.alchemy.com/v2/KEY">
                     <span class="builder-form__hint">Used by builder/tests if the primary RPC is down or rate-limited.</span>
                 </div>
                 <div class="balance-row">
                     <div class="balance-card">
                         <div class="balance-label">Operator</div>
-                        <div class="balance-value">{{blockchainOperatorBalance || 'Balance N/A'}}</div>
+                        <div class="balance-value">{{builder.blockchainOperatorBalance || 'Balance N/A'}}</div>
                         <div class="balance-address">{{blockchainOperatorAddress || 'Not set'}}</div>
                     </div>
                     <div class="balance-card">
                         <div class="balance-label">Client</div>
-                        <div class="balance-value">{{blockchainClientBalance || 'Balance N/A'}}</div>
+                        <div class="balance-value">{{builder.blockchainClientBalance || 'Balance N/A'}}</div>
                         <div class="balance-address">{{blockchainClientAddress || 'Not set'}}</div>
                     </div>
                     <div class="balance-card">
                         <div class="balance-label">Channel</div>
-                        <div class="balance-value">{{blockchainChannelBalance || 'Balance N/A'}}</div>
-                        <div class="balance-address">{{blockchainContract || 'Not set'}}</div>
+                        <div class="balance-value">{{builder.blockchainChannelBalance || 'Balance N/A'}}</div>
+                        <div class="balance-address">{{builder.blockchainContract || 'Not set'}}</div>
                     </div>
                 </div>
                 <div class="blockchain-actions">
@@ -455,7 +463,7 @@
     <!-- Build Actions -->
     <div class="builder-actions">
         <button class="build-btn" 
-                ng-click="clearLogs(); Build(srcIP, srcPort, connectionType, blockchainRpcUrl, blockchainContract, blockchainBlockStep, blockchainCandidates, blockchainC2AesKey, blockchainClientPrivateKey, blockchainChain)" 
+                ng-click="clearLogs(); BuildWithCurrentValues()" 
                 ng-disabled="buildInProgress || (connectionType === 'tcp' && (!srcIP || !srcPort)) || (connectionType === 'blockchain' && (!blockchainRpcUrl || !blockchainC2AesKey || (blockchainC2AesKey && blockchainC2AesKey.length !== 64) || !blockchainClientPrivateKey || blockchainClientPrivateKey.length < 60)) || (bindApk.enable && !filePath)">
             <i class="hammer icon"></i>
             <span ng-if="!bindApk.enable">Build APK</span>

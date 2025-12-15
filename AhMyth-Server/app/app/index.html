@@ -706,8 +706,11 @@
                             <span class="server-controls__label">Port</span>
                             <input type="text" class="server-controls__input" ng-model="port" placeholder="42474">
                         </div>
-                        <button class="btn btn--primary" ng-click="clearLogs(); Listen(port)" ng-disabled="isListen || blockchainListening">
-                            <i class="play icon"></i> Listen
+                        <button class="btn btn--primary" ng-click="clearLogs(); ListenTCP(port)" ng-disabled="isListen">
+                            <i class="play icon"></i> Listen TCP
+                        </button>
+                        <button class="btn btn--primary" ng-click="clearLogs(); ListenBlockchain()" ng-disabled="blockchainListening">
+                            <i class="linkify icon"></i> Listen Blockchain
                         </button>
                         <button class="btn btn--danger" ng-click="clearLogs(); StopListening(port)" ng-disabled="!isListen && !blockchainListening">
                             <i class="stop icon"></i> Stop
@@ -738,7 +741,7 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr ng-repeat="(key, victim) in victims" ng-class="{'victim-offline': !victim.isOnline}">
+                                <tr ng-repeat="(key, victim) in getFilteredVictims()" ng-class="{'victim-offline': !victim.isOnline}">
                                     <td>
                                         <button class="victims-table__open-btn" ng-click="openLab(key)" ng-disabled="!victim.isOnline" title="{{victim.isOnline ? 'Open Lab' : 'Offline'}}">
                                             <i class="external alternate icon"></i> Lab
@@ -1046,7 +1049,7 @@
                             </label>
                             <label class="settings-item">
                                 <span class="settings-label">AES Key (Hex, 64 chars)</span>
-                                <input type="text" class="settings-input" ng-model="blockchainC2AesKey" placeholder="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" maxlength="64" ng-change="saveBlockchainC2Config()">
+                                <input type="text" class="settings-input" ng-model="builder.blockchainC2AesKey" placeholder="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" maxlength="64" ng-change="saveBlockchainC2Config()">
                                 <small class="settings-hint">32-byte AES key in hexadecimal format (set via environment variable: BLOCKCHAIN_C2_AES_KEY)</small>
                             </label>
                             <div class="info-box" style="margin-top: 12px; padding: 12px; background: rgba(33, 150, 243, 0.1); border-left: 3px solid #2196F3; border-radius: 4px;">

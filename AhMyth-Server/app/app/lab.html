@@ -282,7 +282,42 @@
             display: flex;
             gap: 6px;
         }
-        
+
+        .chunk-progress {
+            margin: 8px 0 12px;
+            padding: 10px 12px;
+            background: rgba(0, 255, 136, 0.06);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .chunk-progress__label {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        .chunk-progress__bar {
+            width: 100%;
+            height: 8px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .chunk-progress__fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent) 0%, #00d1ff 100%);
+            transition: width 0.2s ease;
+        }
+
         .btn-sm {
             padding: 4px 10px;
             background: var(--bg-card);
@@ -545,6 +580,15 @@
                     <button class="btn-sm btn-sm--primary" ng-click="refreshData()">
                         <i class="sync icon"></i> Refresh
                     </button>
+                </div>
+            </div>
+            <div class="chunk-progress" ng-if="chunkProgress.active">
+                <div class="chunk-progress__label">
+                    <span>{{chunkProgress.label}}</span>
+                    <span>{{chunkProgress.received}} / {{chunkProgress.total}} ({{chunkProgress.percent}}%)</span>
+                </div>
+                <div class="chunk-progress__bar">
+                    <div class="chunk-progress__fill" ng-style="{'width': (chunkProgress.percent || 0) + '%'}"></div>
                 </div>
             </div>
             <div class="content-view">

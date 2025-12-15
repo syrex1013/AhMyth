@@ -1,0 +1,326 @@
+# ============================================================================
+# AhMyth - Cursor IDE Ignore File
+# ============================================================================
+# This file improves Cursor's indexing speed by excluding build artifacts,
+# dependencies, and other files that don't need to be indexed.
+# ============================================================================
+
+# ============================================================================
+# Build Artifacts & Compiled Files
+# ============================================================================
+
+# Android / Java compiled files
+*.class
+*.dex
+*.jar
+!gradle-wrapper.jar
+!**/gradle-wrapper.jar
+*.apk
+*.apk.idsig
+*.ap_
+*.aab
+*.apks
+*.aar
+*.war
+*.ear
+
+# Gradle build outputs
+.gradle/
+build/
+*/build/
+**/build/
+out/
+bin/
+gen/
+target/
+dist/
+dist-electron/
+
+# Android Studio / IntelliJ build outputs
+.idea/
+*.iml
+*.ipr
+*.iws
+.idea_modules/
+.cxx/
+.externalNativeBuild
+captures/
+
+# ============================================================================
+# Dependencies & Package Managers
+# ============================================================================
+
+# Node.js
+node_modules/
+.npm
+.yarn/
+.pnp
+.pnp.js
+bower_components/
+jspm_packages/
+
+# Bun
+.bun/
+bun.lockb
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+*.pyc
+*.pyo
+*.pyd
+
+# ============================================================================
+# APK Build Tools & Decompiled Output
+# ============================================================================
+
+# APKTool decompiled output (large generated files)
+AhMyth-Server/app/Factory/Ahmyth/
+AhMyth-Server/app/Factory/Ahmyth_*/
+AhMyth-Server/app/Factory/Ahmyth-test/
+AhMyth-Server/app/Factory/Ahmyth-check/
+AhMyth-Server/app/Factory/fresh_build*/
+AhMyth-Server/app/Factory/Vault/
+AhMyth-Server/app/Factory/*.apk
+AhMyth-Server/app/Factory/*.apk.idsig
+AhMyth-Server/app/app/Factory/Ahmyth/
+AhMyth-Server/app/app/Factory/output/
+final-build/
+temp-apk-build/
+temp-apk2/
+*.smali
+*.smali.bak
+
+# ============================================================================
+# Blockchain / Solidity Build Artifacts
+# ============================================================================
+
+# Solidity compiler artifacts
+artifacts/
+cache/
+contract-bytecode.json
+*.sol.js
+*.sol.ts
+deployments/
+*.deployment.json
+
+# ============================================================================
+# Logs & Temporary Files
+# ============================================================================
+
+logs/
+*.log
+*.log.*
+*.tmp
+*.temp
+*.cache
+.cache/
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+*.patch
+*.diff
+
+# ============================================================================
+# Database Files
+# ============================================================================
+
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+victims.db
+victims.db-journal
+victim-data/
+captured-data/
+
+# ============================================================================
+# Archives & Binary Files
+# ============================================================================
+
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+*.tgz
+
+# ============================================================================
+# Testing & Coverage
+# ============================================================================
+
+test-results/
+coverage/
+.nyc_output/
+*.lcov
+.jest/
+*.test.js.snap
+
+# ============================================================================
+# Source Maps & Generated Files
+# ============================================================================
+
+*.js.map
+*.map
+*.min.js
+*.min.css
+
+# ============================================================================
+# Operating System Files
+# ============================================================================
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# macOS
+.DS_Store
+.AppleDouble
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Linux
+*~
+.directory
+.Trash-*
+.nfs*
+
+# ============================================================================
+# IDE & Editor Files
+# ============================================================================
+
+# VS Code (keep settings but ignore cache)
+.vscode/sessions.json
+*.code-workspace
+
+# Eclipse
+.classpath
+.project
+.settings/
+
+# NetBeans
+nbproject/
+nbbuild/
+nbdist/
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+[._]*.s[a-v][a-z]
+[._]*.sw[a-p]
+[._]s[a-rt-v][a-z]
+[._]ss[a-gi-z]
+[._]sw[a-p]
+
+# Emacs
+\#*\#
+.\#*
+[._]*.sw[a-z]
+
+# ============================================================================
+# Project Specific Large Directories
+# ============================================================================
+
+# Screenshots and recordings (large binary files)
+screenshots/
+recordings/
+downloads/
+AhMyth/Logs/
+AhMyth/Downloads/
+AhMyth/Output/
+Output/
+
+# Release builds
+release-builds/
+app-builds/
+packages/
+
+# ============================================================================
+# Lock Files & Package Manager Artifacts
+# ============================================================================
+
+*.lock
+**/*.lock
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+bun.lockb
+gradle-wrapper.properties.bak
+
+# ============================================================================
+# Environment & Configuration (may contain sensitive data)
+# ============================================================================
+
+.env
+.env.*
+.local
+*.env
+*.env.backup
+*.env.bak
+blockchain-build-config.json
+**/blockchain-build-config.json
+local.properties
+gradle.properties
+
+# ============================================================================
+# Miscellaneous
+# ============================================================================
+
+# Temporary note files
+remember.txt
+rmbr.txt
+node_block.txt
+tore .
+nul
+
+# Process IDs
+*.pid
+*.seed
+*.pid.lock
+
+# ESLint / Stylelint cache
+.eslintcache
+.stylelintcache
+
+# TypeScript build info
+*.tsbuildinfo
+
+# RPT2 cache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+
+# Temporary PowerShell files
+*.ps1.bak
+*.ps1.old
+
+# Temporary Python scripts
+tmp_*.py
+temp_*.py
+*_tmp.py
+*_temp.py
